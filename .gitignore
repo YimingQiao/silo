@@ -6,3 +6,6 @@ core
 tags
 config.mk
 out-*
+
+# clion setting
+.idea
