@@ -8,75 +8,71 @@
 #include "../ndb_type_traits.h"
 
 #if NDB_MASSTREE
+
 #include "../masstree/str.hh"
+
 #endif
 
 // the C preprocessor is absolutely wonderful...
 
-template <typename T> struct encoder {};
+template<typename T>
+struct encoder {
+};
 
-template <typename T>
+template<typename T>
 static inline std::string
-Encode(const T &t)
-{
-  const encoder<T> enc;
-  return enc.write(&t);
+Encode(const T &t) {
+    const encoder<T> enc;
+    return enc.write(&t);
 }
 
-template <typename T>
+template<typename T>
 static inline const char *
-Encode(uint8_t *buf, const T &t)
-{
-  const encoder<T> enc;
-  return (const char *) enc.write(buf, &t);
+Encode(uint8_t *buf, const T &t) {
+    const encoder<T> enc;
+    return (const char *) enc.write(buf, &t);
 }
 
-template <typename T>
+template<typename T>
 static inline std::string &
-Encode(std::string &buf, const T &t)
-{
-  const encoder<T> enc;
-  return enc.write(buf, &t);
+Encode(std::string &buf, const T &t) {
+    const encoder<T> enc;
+    return enc.write(buf, &t);
 }
 
-template <typename T>
+template<typename T>
 static inline const T *
-Decode(const std::string &buf, T &obj)
-{
-  const encoder<T> enc;
-  return enc.read(buf.data(), &obj);
+Decode(const std::string &buf, T &obj) {
+    const encoder<T> enc;
+    return enc.read(buf.data(), &obj);
 }
 
-template <typename T>
+template<typename T>
 static inline const T *
-Decode(const char *buf, T &obj)
-{
-  const encoder<T> enc;
-  return enc.read(buf, &obj);
+Decode(const char *buf, T &obj) {
+    const encoder<T> enc;
+    return enc.read(buf, &obj);
 }
 
-template <typename T>
+template<typename T>
 static inline const T *
-PrefixDecode(const std::string &buf, T &obj, size_t prefix)
-{
-  const encoder<T> enc;
-  return enc.prefix_read(buf.data(), &obj, prefix);
+PrefixDecode(const std::string &buf, T &obj, size_t prefix) {
+    const encoder<T> enc;
+    return enc.prefix_read(buf.data(), &obj, prefix);
 }
 
-template <typename T>
+template<typename T>
 static inline const T *
-PrefixDecode(const char *buf, T &obj, size_t prefix)
-{
-  const encoder<T> enc;
-  return enc.read(buf, &obj, prefix);
+PrefixDecode(const char *buf, T &obj, size_t prefix) {
+    const encoder<T> enc;
+    return enc.read(buf, &obj, prefix);
 }
 
-template <typename T>
+template<typename T>
 static inline size_t
-Size(const T &t)
-{
-  const encoder<T> enc;
-  return enc.nbytes(&t);
+Size(const T &t) {
+    const encoder<T> enc;
+    return enc.nbytes(&t);
 }
 
 #define IDENT_TRANSFORM(tpe, expr) (expr)
@@ -612,14 +608,14 @@ Size(const T &t)
   DO_STRUCT_REST_VALUE(name::value) \
   };
 
-template <typename T>
+template<typename T>
 struct schema {
-  typedef T base_type;
-  typedef typename T::key key_type;
-  typedef typename T::value value_type;
-  typedef typename T::value_descriptor value_descriptor_type;
-  typedef encoder<key_type> key_encoder_type;
-  typedef encoder<value_type> value_encoder_type;
+    typedef T base_type;
+    typedef typename T::key key_type;
+    typedef typename T::value value_type;
+    typedef typename T::value_descriptor value_descriptor_type;
+    typedef encoder<key_type> key_encoder_type;
+    typedef encoder<value_type> value_encoder_type;
 };
 
 #endif /* _NDB_BENCH_ENCODER_H_ */

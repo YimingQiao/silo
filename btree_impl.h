@@ -13,7 +13,6 @@
 
 #include "core.h"
 #include "btree.h"
-#include "thread.h"
 #include "txn.h"
 #include "util.h"
 #include "scopedperf.hh"
