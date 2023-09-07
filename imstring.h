@@ -17,9 +17,11 @@
  * Not-really-immutable string, for perf reasons. Also can use
  * RCU for GC
  */
-template <bool RCU> class base_imstring {
+template<bool RCU>
+class base_imstring {
 
-  template <bool R> friend class base_imstring;
+  template<bool R>
+  friend class base_imstring;
 
   // we can't really support keys > 65536, but most DBs impose
   // limits on keys
@@ -37,15 +39,13 @@ template <bool RCU> class base_imstring {
 public:
   base_imstring() : p(NULL), l(0) {}
 
-  base_imstring(const uint8_t *src, size_t l)
-      : p(new uint8_t[l]), l(CheckBounds(l)) {
+  base_imstring(const uint8_t *src, size_t l) : p(new uint8_t[l]), l(CheckBounds(l)) {
     g_evt_imstring_bytes_allocated += l;
     g_evt_avg_imstring_len.offer(l);
     NDB_MEMCPY(p, src, l);
   }
 
-  base_imstring(const std::string &s)
-      : p(new uint8_t[s.size()]), l(CheckBounds(s.size())) {
+  base_imstring(const std::string &s) : p(new uint8_t[s.size()]), l(CheckBounds(s.size())) {
     g_evt_imstring_bytes_allocated += l;
     g_evt_avg_imstring_len.offer(l);
     NDB_MEMCPY(p, s.data(), l);
@@ -55,7 +55,8 @@ public:
   base_imstring(base_imstring &&) = delete;
   base_imstring &operator=(const base_imstring &) = delete;
 
-  template <bool R> inline void swap(base_imstring<R> &that) {
+  template<bool R>
+  inline void swap(base_imstring<R> &that) {
     // std::swap() doesn't work for packed elems
     uint8_t *const temp_p = p;
     p = that.p;
@@ -77,8 +78,7 @@ public:
 private:
   inline void release() {
     if (likely(p)) {
-      if (RCU)
-        rcu::s_instance.free_array(p);
+      if (RCU) rcu::s_instance.free_array(p);
       else
         delete[] p;
     }
@@ -88,17 +88,14 @@ private:
   internal_size_type l;
 } PACKED;
 
-template <bool RCU>
-event_counter base_imstring<RCU>::g_evt_imstring_bytes_allocated(
-    "imstring_bytes_allocated");
+template<bool RCU>
+event_counter base_imstring<RCU>::g_evt_imstring_bytes_allocated("imstring_bytes_allocated");
 
-template <bool RCU>
-event_counter
-    base_imstring<RCU>::g_evt_imstring_bytes_freed("imstring_bytes_freed");
+template<bool RCU>
+event_counter base_imstring<RCU>::g_evt_imstring_bytes_freed("imstring_bytes_freed");
 
-template <bool RCU>
-event_avg_counter
-    base_imstring<RCU>::g_evt_avg_imstring_len("avg_imstring_len");
+template<bool RCU>
+event_avg_counter base_imstring<RCU>::g_evt_avg_imstring_len("avg_imstring_len");
 
 typedef base_imstring<false> imstring;
 typedef base_imstring<true> rcu_imstring;

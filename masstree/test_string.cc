@@ -13,25 +13,24 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-#include "straccum.hh"
-#include "string.hh"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-template <typename T>
-static bool check_straccum_utf8(StringAccum &sa, const char *in, int inlen,
-                                const char *out, int outlen) {
+#include "straccum.hh"
+#include "string.hh"
+
+template<typename T>
+static bool check_straccum_utf8(StringAccum &sa, const char *in, int inlen, const char *out, int outlen) {
   sa.clear();
   Encoding::UTF8Encoder<T> encoder;
   sa.append_encoded(encoder, in, in + inlen);
   return sa.length() == outlen && memcmp(sa.begin(), out, sa.length()) == 0;
 }
 
-template <typename T>
-static bool check_straccum2_utf8(StringAccum &sa, const char *in, int inlen,
-                                 const char *out, int outlen) {
+template<typename T>
+static bool check_straccum2_utf8(StringAccum &sa, const char *in, int inlen, const char *out, int outlen) {
   sa.clear();
   memcpy(sa.reserve(inlen), in, inlen);
   Encoding::UTF8Encoder<T> encoder;
@@ -55,21 +54,18 @@ int main(int argc, char *argv[]) {
   check_straccum_utf8<Encoding::UTF8>(sa, "ab\000cd", 5, "ab\000cd", 5);
   check_straccum_utf8<Encoding::UTF8NoNul>(sa, "ab\000cd", 5, "abcd", 4);
   check_straccum_utf8<Encoding::UTF8>(sa, "\xc3\x9dHi!", 5, "\xc3\x9dHi!", 5);
-  check_straccum_utf8<Encoding::Windows1252>(sa, "\xddHi!", 4, "\xc3\x9dHi!",
-                                             5);
+  check_straccum_utf8<Encoding::Windows1252>(sa, "\xddHi!", 4, "\xc3\x9dHi!", 5);
 
   check_straccum2_utf8<Encoding::UTF8>(sa, "abc", 3, "abc", 3);
   check_straccum2_utf8<Encoding::UTF8>(sa, "", 0, "", 0);
   check_straccum2_utf8<Encoding::UTF8>(sa, "ab\000cd", 5, "ab\000cd", 5);
   check_straccum2_utf8<Encoding::UTF8NoNul>(sa, "ab\000cd", 5, "abcd", 4);
   check_straccum2_utf8<Encoding::UTF8>(sa, "\xc3\x9dHi!", 5, "\xc3\x9dHi!", 5);
-  check_straccum2_utf8<Encoding::Windows1252>(sa, "\xddHi!", 4, "\xc3\x9dHi!",
-                                              5);
+  check_straccum2_utf8<Encoding::Windows1252>(sa, "\xddHi!", 4, "\xc3\x9dHi!", 5);
 
   if (argc == 2) {
     FILE *f;
-    if (strcmp(argv[1], "-") == 0)
-      f = stdin;
+    if (strcmp(argv[1], "-") == 0) f = stdin;
     else if (!(f = fopen(argv[1], "rb"))) {
       perror("test_string");
       exit(1);

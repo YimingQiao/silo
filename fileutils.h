@@ -8,8 +8,7 @@ public:
   static int writeall(int fd, const char *buf, int n) {
     while (n) {
       int r = write(fd, buf, n);
-      if (unlikely(r < 0))
-        return r;
+      if (unlikely(r < 0)) return r;
       buf += r;
       n -= r;
     }
@@ -19,11 +18,9 @@ public:
   static int readall(int fd, char *buf, int n) {
     while (n) {
       int r = read(fd, buf, n);
-      if (r == 0)
-        return EOF;
+      if (r == 0) return EOF;
       if (r < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-          continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) continue;
         return r;
       }
       buf += r;

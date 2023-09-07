@@ -2,6 +2,7 @@
 #define _MYSQL_WRAPPER_H_
 
 #include <mysql/mysql.h>
+
 #include <string>
 
 #include "../macros.h"
@@ -19,16 +20,13 @@ public:
 
   virtual void thread_end();
 
-  virtual void *new_txn(uint64_t txn_flags, str_arena &arena, void *buf,
-                        TxnProfileHint hint);
+  virtual void *new_txn(uint64_t txn_flags, str_arena &arena, void *buf, TxnProfileHint hint);
 
   virtual bool commit_txn(void *txn);
 
   virtual void abort_txn(void *txn);
 
-  virtual abstract_ordered_index *open_index(const std::string &name,
-                                             size_t value_size_hint,
-                                             bool mostly_append);
+  virtual abstract_ordered_index *open_index(const std::string &name, size_t value_size_hint, bool mostly_append);
 
   virtual void close_index(abstract_ordered_index *idx);
 
@@ -44,31 +42,25 @@ class mysql_ordered_index : public abstract_ordered_index {
 public:
   mysql_ordered_index(const std::string &name) : name(name) {}
 
-  virtual bool get(void *txn, const std::string &key, std::string &value,
-                   size_t max_bytes_read);
+  virtual bool get(void *txn, const std::string &key, std::string &value, size_t max_bytes_read);
 
-  virtual const char *put(void *txn, const std::string &key,
-                          const std::string &value);
+  virtual const char *put(void *txn, const std::string &key, const std::string &value);
 
-  virtual const char *insert(void *txn, const std::string &key,
-                             const std::string &value);
+  virtual const char *insert(void *txn, const std::string &key, const std::string &value);
 
-  virtual void scan(void *txn, const std::string &key, const std::string *value,
-                    scan_callback &callback, str_arena *arena) {
+  virtual void scan(void *txn, const std::string &key, const std::string *value, scan_callback &callback,
+                    str_arena *arena) {
     NDB_UNIMPLEMENTED("scan");
   }
 
-  virtual void rscan(void *txn, const std::string &start_key,
-                     const std::string *end_key, scan_callback &callback,
+  virtual void rscan(void *txn, const std::string &start_key, const std::string *end_key, scan_callback &callback,
                      str_arena *arena) {
     NDB_UNIMPLEMENTED("rscan");
   }
 
   virtual size_t size() const { NDB_UNIMPLEMENTED("size"); }
 
-  virtual std::map<std::string, uint64_t> clear() {
-    NDB_UNIMPLEMENTED("clear");
-  }
+  virtual std::map<std::string, uint64_t> clear() { NDB_UNIMPLEMENTED("clear"); }
 
 private:
   std::string name;

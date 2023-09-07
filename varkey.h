@@ -31,16 +31,14 @@ public:
 
   inline varkey(const uint8_t *p, size_t l) : p(p), l(l) {}
 
-  explicit inline varkey(const std::string &s)
-      : p((const uint8_t *)s.data()), l(s.size()) {}
+  explicit inline varkey(const std::string &s) : p((const uint8_t *) s.data()), l(s.size()) {}
 
-  explicit inline varkey(const char *s) : p((const uint8_t *)s), l(strlen(s)) {}
+  explicit inline varkey(const char *s) : p((const uint8_t *) s), l(strlen(s)) {}
 
   explicit inline varkey(const imstring &s) : p(s.data()), l(s.size()) {}
 
   inline bool operator==(const varkey &that) const {
-    if (size() != that.size())
-      return false;
+    if (size() != that.size()) return false;
     return memcmp(data(), that.data(), size()) == 0;
   }
 
@@ -62,16 +60,14 @@ public:
 
   inline uint64_t slice() const {
     uint64_t ret = 0;
-    uint8_t *rp = (uint8_t *)&ret;
-    for (size_t i = 0; i < std::min(l, size_t(8)); i++)
-      rp[i] = p[i];
+    uint8_t *rp = (uint8_t *) &ret;
+    for (size_t i = 0; i < std::min(l, size_t(8)); i++) rp[i] = p[i];
     return util::host_endian_trfm<uint64_t>()(ret);
   }
 
 #if NDB_MASSTREE
   inline uint64_t slice_at(int pos) const {
-    return string_slice<uint64_t>::make_comparable((const char *)p + pos,
-                                                   std::min(int(l - pos), 8));
+    return string_slice<uint64_t>::make_comparable((const char *) p + pos, std::min(int(l - pos), 8));
   }
 #endif
 
@@ -91,10 +87,10 @@ public:
 
   inline const uint8_t *data() const { return p; }
 
-  inline std::string str() const { return std::string((const char *)p, l); }
+  inline std::string str() const { return std::string((const char *) p, l); }
 
   inline std::string &str(std::string &buf) const {
-    buf.assign((const char *)p, l);
+    buf.assign((const char *) p, l);
     return buf;
   }
 
@@ -112,17 +108,18 @@ inline std::ostream &operator<<(std::ostream &o, const varkey &k) {
   return o;
 }
 
-template <bool is_signed, typename T> struct signed_aware_trfm {};
+template<bool is_signed, typename T>
+struct signed_aware_trfm {};
 
-template <typename T> struct signed_aware_trfm<false, T> {
+template<typename T>
+struct signed_aware_trfm<false, T> {
   inline ALWAYS_INLINE T operator()(T t) const { return t; }
 };
 
-template <typename T> struct signed_aware_trfm<true, T> {
+template<typename T>
+struct signed_aware_trfm<true, T> {
   typedef T signed_type;
-  typedef typename std::enable_if<std::is_signed<T>::value,
-                                  typename std::make_unsigned<T>::type>::type
-      unsigned_type;
+  typedef typename std::enable_if<std::is_signed<T>::value, typename std::make_unsigned<T>::type>::type unsigned_type;
   inline ALWAYS_INLINE unsigned_type operator()(signed_type s) const {
     const unsigned_type offset = -std::numeric_limits<signed_type>::min();
     const unsigned_type converted = static_cast<unsigned_type>(s) + offset;
@@ -130,19 +127,16 @@ template <typename T> struct signed_aware_trfm<true, T> {
   }
 };
 
-template <typename T,
-          typename EncodingTrfm =
-              signed_aware_trfm<std::is_signed<T>::value, T>,
-          typename ByteTrfm = util::big_endian_trfm<T>>
+template<typename T, typename EncodingTrfm = signed_aware_trfm<std::is_signed<T>::value, T>,
+         typename ByteTrfm = util::big_endian_trfm<T>>
 class obj_varkey : public varkey {
 public:
-  typedef typename std::enable_if<std::is_integral<T>::value, T>::type
-      integral_type;
+  typedef typename std::enable_if<std::is_integral<T>::value, T>::type integral_type;
 
   inline obj_varkey() : varkey(), obj() {}
 
   inline obj_varkey(integral_type t)
-      : varkey((const uint8_t *)&obj, sizeof(integral_type)),
+      : varkey((const uint8_t *) &obj, sizeof(integral_type)),
         obj(ByteTrfm()(EncodingTrfm()(t))) {}
 
 private:

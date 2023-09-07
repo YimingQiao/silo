@@ -3,6 +3,14 @@
  * used to test the current persistence strategy
  */
 
+#include <fcntl.h>
+#include <getopt.h>
+#include <lz4.h>
+#include <sys/types.h>
+#include <sys/uio.h>
+#include <time.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <cassert>
 #include <cstdint>
@@ -12,15 +20,6 @@
 #include <sstream>
 #include <thread>
 #include <vector>
-
-#include <fcntl.h>
-#include <getopt.h>
-#include <sys/types.h>
-#include <sys/uio.h>
-#include <time.h>
-#include <unistd.h>
-
-#include <lz4.h>
 
 #include "amd64.h"
 #include "circbuf.h"
@@ -36,33 +35,26 @@ struct tidhelpers {
 
   static const uint64_t NBitsNumber = 24;
 
-  static const size_t CoreBits =
-      NMAXCOREBITS; // allow 2^CoreShift distinct threads
+  static const size_t CoreBits = NMAXCOREBITS;// allow 2^CoreShift distinct threads
   static const size_t NMaxCores = NMAXCORES;
 
   static const uint64_t CoreMask = (NMaxCores - 1);
 
   static const uint64_t NumIdShift = CoreBits;
-  static const uint64_t NumIdMask = ((((uint64_t)1) << NBitsNumber) - 1)
-                                    << NumIdShift;
+  static const uint64_t NumIdMask = ((((uint64_t) 1) << NBitsNumber) - 1) << NumIdShift;
 
   static const uint64_t EpochShift = CoreBits + NBitsNumber;
-  static const uint64_t EpochMask = ((uint64_t)-1) << EpochShift;
+  static const uint64_t EpochMask = ((uint64_t) -1) << EpochShift;
 
   static inline uint64_t CoreId(uint64_t v) { return v & CoreMask; }
 
-  static inline uint64_t NumId(uint64_t v) {
-    return (v & NumIdMask) >> NumIdShift;
-  }
+  static inline uint64_t NumId(uint64_t v) { return (v & NumIdMask) >> NumIdShift; }
 
-  static inline uint64_t EpochId(uint64_t v) {
-    return (v & EpochMask) >> EpochShift;
-  }
+  static inline uint64_t EpochId(uint64_t v) { return (v & EpochMask) >> EpochShift; }
 
-  static inline uint64_t MakeTid(uint64_t core_id, uint64_t num_id,
-                                 uint64_t epoch_id) {
+  static inline uint64_t MakeTid(uint64_t core_id, uint64_t num_id, uint64_t epoch_id) {
     // some sanity checking
-    static_assert((CoreMask | NumIdMask | EpochMask) == ((uint64_t)-1), "xx");
+    static_assert((CoreMask | NumIdMask | EpochMask) == ((uint64_t) -1), "xx");
     static_assert((CoreMask & NumIdMask) == 0, "xx");
     static_assert((NumIdMask & EpochMask) == 0, "xx");
     return (core_id) | (num_id << NumIdShift) | (epoch_id << EpochShift);
@@ -70,15 +62,13 @@ struct tidhelpers {
 
   static uint64_t vecidmax(uint64_t coremax, const vector<uint64_t> &v) {
     uint64_t ret = NumId(coremax);
-    for (size_t i = 0; i < v.size(); i++)
-      ret = max(ret, NumId(v[i]));
+    for (size_t i = 0; i < v.size(); i++) ret = max(ret, NumId(v[i]));
     return ret;
   }
 
   static string Str(uint64_t v) {
     ostringstream b;
-    b << "[core=" << CoreId(v) << " | n=" << NumId(v)
-      << " | epoch=" << EpochId(v) << "]";
+    b << "[core=" << CoreId(v) << " | n=" << NumId(v) << " | epoch=" << EpochId(v) << "]";
     return b.str();
   }
 };
@@ -91,24 +81,22 @@ struct tidhelpers {
 //     s[i] = (char) i;
 // }
 
-template <typename PRNG>
-static inline void fillkey(std::string &s, uint64_t idx, size_t sz,
-                           PRNG &prng) {
+template<typename PRNG>
+static inline void fillkey(std::string &s, uint64_t idx, size_t sz, PRNG &prng) {
   s.resize(sz);
   serializer<uint64_t, false> ser;
-  ser.write((uint8_t *)s.data(), idx);
+  ser.write((uint8_t *) s.data(), idx);
 }
 
-template <typename PRNG>
-static inline void fillvalue(std::string &s, uint64_t idx, size_t sz,
-                             PRNG &prng) {
+template<typename PRNG>
+static inline void fillvalue(std::string &s, uint64_t idx, size_t sz, PRNG &prng) {
   uniform_int_distribution<uint32_t> dist(0, 10000);
   s.resize(sz);
   serializer<uint32_t, false> s_uint32_t;
   for (size_t i = 0; i < sz; i += sizeof(uint32_t)) {
     if (i + sizeof(uint32_t) <= sz) {
       const uint32_t x = dist(prng);
-      s_uint32_t.write((uint8_t *)&s[i], x);
+      s_uint32_t.write((uint8_t *) &s[i], x);
     }
   }
 }
@@ -129,8 +117,8 @@ static int g_verbose = 0;
 static int g_fsync_background = 0;
 static size_t g_readset = 30;
 static size_t g_writeset = 16;
-static size_t g_keysize = 8;    // in bytes
-static size_t g_valuesize = 32; // in bytes
+static size_t g_keysize = 8;   // in bytes
+static size_t g_valuesize = 32;// in bytes
 
 /** simulation framework */
 
@@ -140,46 +128,39 @@ public:
   static const unsigned long g_epoch_time_ns = 30000000; /* 30ms in ns */
 
   database_simulation()
-      : keep_going_(true), epoch_thread_(),
-        epoch_number_(1), // start at 1 so 0 can be fully persistent initially
+      : keep_going_(true),
+        epoch_thread_(),
+        epoch_number_(1),// start at 1 so 0 can be fully persistent initially
         system_sync_epoch_(0) {
     // XXX: depends on g_nworkers to be set by now
-    for (size_t i = 0; i < g_nworkers; i++)
-      per_thread_epochs_[i]->store(1, memory_order_release);
+    for (size_t i = 0; i < g_nworkers; i++) per_thread_epochs_[i]->store(1, memory_order_release);
     for (size_t i = 0; i < g_nmax_loggers; i++)
-      for (size_t j = 0; j < g_nworkers; j++)
-        per_thread_sync_epochs_[i].epochs_[j].store(0, memory_order_release);
+      for (size_t j = 0; j < g_nworkers; j++) per_thread_sync_epochs_[i].epochs_[j].store(0, memory_order_release);
   }
 
   virtual ~database_simulation() {}
 
-  virtual void init() {
-    epoch_thread_ = move(thread(&database_simulation::epoch_thread, this));
-  }
+  virtual void init() { epoch_thread_ = move(thread(&database_simulation::epoch_thread, this)); }
 
   virtual void worker(unsigned id) = 0;
 
-  virtual void logger(const vector<int> &fd,
-                      const vector<vector<unsigned>> &assignments) = 0;
+  virtual void logger(const vector<int> &fd, const vector<vector<unsigned>> &assignments) = 0;
 
   virtual void terminate() {
     keep_going_->store(false, memory_order_release);
     epoch_thread_.join();
   }
 
-  static bool AssignmentsValid(const vector<vector<unsigned>> &assignments,
-                               unsigned nfds, unsigned nworkers) {
+  static bool AssignmentsValid(const vector<vector<unsigned>> &assignments, unsigned nfds, unsigned nworkers) {
     // each worker must be assigned exactly once in the assignment
     // there must be <= nfds assignments
 
-    if (assignments.size() > nfds)
-      return false;
+    if (assignments.size() > nfds) return false;
 
     set<unsigned> seen;
-    for (auto &assignment : assignments)
-      for (auto w : assignment) {
-        if (seen.count(w) || w >= nworkers)
-          return false;
+    for (auto &assignment: assignments)
+      for (auto w: assignment) {
+        if (seen.count(w) || w >= nworkers) return false;
         seen.insert(w);
       }
 
@@ -199,22 +180,20 @@ protected:
 
     retry:
       bool allthere = true;
-      for (size_t i = 0;
-           i < g_nworkers && keep_going_->load(memory_order_acquire); i++) {
+      for (size_t i = 0; i < g_nworkers && keep_going_->load(memory_order_acquire); i++) {
         if (per_thread_epochs_[i]->load(memory_order_acquire) < curepoch) {
           allthere = false;
           break;
         }
       }
-      if (!keep_going_->load(memory_order_acquire))
-        return;
+      if (!keep_going_->load(memory_order_acquire)) return;
       if (!allthere) {
         nop_pause();
         goto retry;
       }
 
       // cerr << "bumping epoch" << endl;
-      epoch_number_->store(curepoch + 1, memory_order_release); // bump it
+      epoch_number_->store(curepoch + 1, memory_order_release);// bump it
     }
   }
 
@@ -242,47 +221,40 @@ protected:
 };
 
 struct logbuf_header {
-  uint64_t nentries_; // > 0 for all valid log buffers
-  uint64_t last_tid_; // TID of the last commit
+  uint64_t nentries_;// > 0 for all valid log buffers
+  uint64_t last_tid_;// TID of the last commit
 } PACKED;
 
 struct pbuffer {
-  bool io_scheduled_; // has the logger scheduled IO yet?
-  size_t curoff_;     // current offset into buf_, either for writing
-                      // or during the dep computation phase
-  size_t remaining_;  // number of deps remaining to compute
-  std::string buf_;   // the actual buffer, of size g_buffer_size
+  bool io_scheduled_;// has the logger scheduled IO yet?
+  size_t curoff_;    // current offset into buf_, either for writing
+                     // or during the dep computation phase
+  size_t remaining_; // number of deps remaining to compute
+  std::string buf_;  // the actual buffer, of size g_buffer_size
 
-  inline uint8_t *pointer() { return (uint8_t *)buf_.data() + curoff_; }
+  inline uint8_t *pointer() { return (uint8_t *) buf_.data() + curoff_; }
 
-  inline logbuf_header *header() { return (logbuf_header *)buf_.data(); }
+  inline logbuf_header *header() { return (logbuf_header *) buf_.data(); }
 
-  inline const logbuf_header *header() const {
-    return (const logbuf_header *)buf_.data();
-  }
+  inline const logbuf_header *header() const { return (const logbuf_header *) buf_.data(); }
 };
 
 class onecopy_logbased_simulation : public database_simulation {
 public:
   static const size_t g_perthread_buffers = 64;  // 64 outstanding buffers
   static const size_t g_buffer_size = (1 << 20); // in bytes
-  static const size_t g_horizon_size =
-      (1 << 16); // in bytes, for compression only
+  static const size_t g_horizon_size = (1 << 16);// in bytes, for compression only
 
   static circbuf<pbuffer, g_perthread_buffers> g_all_buffers[NMAXCORES];
   static circbuf<pbuffer, g_perthread_buffers> g_persist_buffers[NMAXCORES];
 
 protected:
-  virtual const uint8_t *
-  read_log_entry(const uint8_t *p, uint64_t &tid,
-                 std::function<void(uint64_t)> readfunctor) = 0;
+  virtual const uint8_t *read_log_entry(const uint8_t *p, uint64_t &tid, std::function<void(uint64_t)> readfunctor) = 0;
 
   virtual uint64_t compute_log_record_space() const = 0;
 
-  virtual void
-  write_log_record(uint8_t *p, uint64_t tidcommit,
-                   const vector<uint64_t> &readset,
-                   const vector<pair<string, string>> &writeset) = 0;
+  virtual void write_log_record(uint8_t *p, uint64_t tidcommit, const vector<uint64_t> &readset,
+                                const vector<pair<string, string>> &writeset) = 0;
 
   virtual void logger_on_io_completion() {}
 
@@ -310,29 +282,25 @@ public:
   }
 
 private:
-  inline size_t inplace_update_persistent_info(
-      vector<pair<uint64_t, uint64_t>> &outstanding_commits,
-      uint64_t cursyncepoch) {
+  inline size_t inplace_update_persistent_info(vector<pair<uint64_t, uint64_t>> &outstanding_commits,
+                                               uint64_t cursyncepoch) {
     size_t ncommits_synced = 0;
     // can erase all entries with x.first <= cursyncepoch
     size_t idx = 0;
     for (; idx < outstanding_commits.size(); idx++) {
-      if (outstanding_commits[idx].first <= cursyncepoch)
-        ncommits_synced += outstanding_commits[idx].second;
+      if (outstanding_commits[idx].first <= cursyncepoch) ncommits_synced += outstanding_commits[idx].second;
       else
         break;
     }
 
     // erase entries [0, idx)
     // XXX: slow
-    outstanding_commits.erase(outstanding_commits.begin(),
-                              outstanding_commits.begin() + idx);
+    outstanding_commits.erase(outstanding_commits.begin(), outstanding_commits.begin() + idx);
 
     return ncommits_synced;
   }
 
-  inline pbuffer *ensure_buffer_with_space(unsigned id, pbuffer *cur,
-                                           size_t space_needed) {
+  inline pbuffer *ensure_buffer_with_space(unsigned id, pbuffer *cur, size_t space_needed) {
     if (!cur) {
       cur = getbuffer(id);
     } else if (g_buffer_size - cur->curoff_ < space_needed) {
@@ -353,16 +321,14 @@ private:
    *
    * returns the compressed size of the horizon
    */
-  inline uint64_t write_horizon(void *lz4ctx, const uint8_t *p, uint64_t sz,
-                                uint64_t nentries, uint64_t lasttid,
+  inline uint64_t write_horizon(void *lz4ctx, const uint8_t *p, uint64_t sz, uint64_t nentries, uint64_t lasttid,
                                 pbuffer *cur) {
 #ifdef CHECK_INVARIANTS
     const uint64_t needed = sizeof(uint32_t) + LZ4_compressBound(sz);
     INVARIANT(g_buffer_size - cur->curoff_ >= needed);
 #endif
 
-    const int ret = LZ4_compress_heap(
-        lz4ctx, (const char *)p, (char *)cur->pointer() + sizeof(uint32_t), sz);
+    const int ret = LZ4_compress_heap(lz4ctx, (const char *) p, (char *) cur->pointer() + sizeof(uint32_t), sz);
 
     INVARIANT(ret >= 0);
     serializer<uint32_t, false> s_uint32_t;
@@ -377,18 +343,17 @@ private:
 protected:
   void worker(unsigned id) OVERRIDE {
     const bool compress = do_compression();
-    uint8_t horizon[g_horizon_size]; // LZ4 looks at 65kb windows
+    uint8_t horizon[g_horizon_size];// LZ4 looks at 65kb windows
 
     // where are we in the window, how many elems in this window?
     size_t horizon_p = 0, horizon_nentries = 0;
-    uint64_t horizon_last_tid = 0; // last committed TID in the horizon
+    uint64_t horizon_last_tid = 0;// last committed TID in the horizon
 
     double cratios = 0.0;
     unsigned long ncompressions = 0;
 
-    void *lz4ctx = nullptr; // holds a heap-allocated LZ4 hash table
-    if (compress)
-      lz4ctx = LZ4_create();
+    void *lz4ctx = nullptr;// holds a heap-allocated LZ4 hash table
+    if (compress) lz4ctx = LZ4_create();
 
     mt19937 prng(id);
 
@@ -397,7 +362,7 @@ protected:
 
     vector<uint64_t> readset(g_readset);
     vector<pair<string, string>> writeset(g_writeset);
-    for (auto &pr : writeset) {
+    for (auto &pr: writeset) {
       pr.first.reserve(g_keysize);
       pr.second.reserve(g_valuesize);
     }
@@ -408,17 +373,14 @@ protected:
     for (size_t i = 0; i < g_ntxns_worker; i++) {
 
       // update epoch info
-      const uint64_t lastepoch =
-          per_thread_epochs_[id]->load(memory_order_acquire);
+      const uint64_t lastepoch = per_thread_epochs_[id]->load(memory_order_acquire);
       const uint64_t curepoch = epoch_number_->load(memory_order_acquire);
 
       if (lastepoch != curepoch) {
         // try to sync outstanding commits
         INVARIANT(curepoch == (lastepoch + 1));
-        const size_t cursyncepoch =
-            system_sync_epoch_->load(memory_order_acquire);
-        ncommits_synced +=
-            inplace_update_persistent_info(outstanding_commits, cursyncepoch);
+        const size_t cursyncepoch = system_sync_epoch_->load(memory_order_acquire);
+        ncommits_synced += inplace_update_persistent_info(outstanding_commits, cursyncepoch);
 
         // add information about the last epoch
         outstanding_commits.emplace_back(lastepoch, ncommits_currentepoch);
@@ -427,8 +389,7 @@ protected:
         per_thread_epochs_[id]->store(curepoch, memory_order_release);
       }
 
-      for (size_t j = 0; j < g_readset; j++)
-        readset[j] = g_database[dist(prng)];
+      for (size_t j = 0; j < g_readset; j++) readset[j] = g_database[dist(prng)];
 
       const uint64_t idmax = tidhelpers::vecidmax(lasttid, readset);
       // XXX: ignore future epochs for now
@@ -446,12 +407,10 @@ protected:
       if (compress) {
         if (horizon_p + space_needed > g_horizon_size) {
           // need to compress and write horizon
-          curbuf = ensure_buffer_with_space(
-              id, curbuf, sizeof(uint32_t) + LZ4_compressBound(horizon_p));
+          curbuf = ensure_buffer_with_space(id, curbuf, sizeof(uint32_t) + LZ4_compressBound(horizon_p));
 
           const uint64_t compsz =
-              write_horizon(lz4ctx, &horizon[0], horizon_p, horizon_nentries,
-                            horizon_last_tid, curbuf);
+              write_horizon(lz4ctx, &horizon[0], horizon_p, horizon_nentries, horizon_last_tid, curbuf);
 
           const double cratio = double(horizon_p) / double(compsz);
           cratios += cratio;
@@ -480,12 +439,10 @@ protected:
 
     if (compress) {
       if (horizon_nentries) {
-        curbuf = ensure_buffer_with_space(
-            id, curbuf, sizeof(uint32_t) + LZ4_compressBound(horizon_p));
+        curbuf = ensure_buffer_with_space(id, curbuf, sizeof(uint32_t) + LZ4_compressBound(horizon_p));
 
         const uint64_t compsz =
-            write_horizon(lz4ctx, &horizon[0], horizon_p, horizon_nentries,
-                          horizon_last_tid, curbuf);
+            write_horizon(lz4ctx, &horizon[0], horizon_p, horizon_nentries, horizon_last_tid, curbuf);
 
         const double cratio = double(horizon_p) / double(compsz);
         cratios += cratio;
@@ -508,16 +465,12 @@ protected:
       outstanding_commits.emplace_back(waitfor, ncommits_currentepoch);
       // cerr << "worker " << id << " waitfor epoch " << waitfor << endl;
       //  get these commits persisted
-      while (system_sync_epoch_->load(memory_order_acquire) < waitfor)
-        nop_pause();
-      ncommits_synced +=
-          inplace_update_persistent_info(outstanding_commits, waitfor);
+      while (system_sync_epoch_->load(memory_order_acquire) < waitfor) nop_pause();
+      ncommits_synced += inplace_update_persistent_info(outstanding_commits, waitfor);
       ALWAYS_ASSERT(outstanding_commits.empty());
     }
 
-    if (g_verbose && compress)
-      cerr << "Average compression ratio: " << cratios / double(ncompressions)
-           << endl;
+    if (g_verbose && compress) cerr << "Average compression ratio: " << cratios / double(ncompressions) << endl;
 
     g_ntxns_committed.fetch_add(ncommits_synced, memory_order_release);
   }
@@ -527,8 +480,7 @@ private:
     for (;;) {
       int ret;
       channel.peek(ret);
-      if (ret == -1)
-        return;
+      if (ret == -1) return;
       ret = fdatasync(fd);
       if (ret == -1) {
         perror("fdatasync");
@@ -542,11 +494,10 @@ private:
     vector<iovec> iovs(g_nworkers * g_perthread_buffers);
     vector<pbuffer *> pxs;
     struct timespec last_io_completed;
-    one_way_post<int> *channel =
-        g_fsync_background ? new one_way_post<int> : nullptr;
+    one_way_post<int> *channel = g_fsync_background ? new one_way_post<int> : nullptr;
     uint64_t total_nbytes_written = 0, total_txns_written = 0;
 
-    bool sense = false; // cur is at sense, prev is at !sense
+    bool sense = false;// cur is at sense, prev is at !sense
     uint64_t nbytes_written[2], txns_written[2], epoch_prefixes[2][g_nworkers];
     memset(&nbytes_written[0], 0, sizeof(nbytes_written));
     memset(&txns_written[0], 0, sizeof(txns_written));
@@ -556,8 +507,7 @@ private:
     clock_gettime(CLOCK_MONOTONIC, &last_io_completed);
     thread fsync_thread;
     if (g_fsync_background) {
-      fsync_thread = move(thread(&onecopy_logbased_simulation::fsyncer, this,
-                                 id, fd, ref(*channel)));
+      fsync_thread = move(thread(&onecopy_logbased_simulation::fsyncer, this, id, fd, ref(*channel)));
       fsync_thread.detach();
     }
 
@@ -579,13 +529,13 @@ private:
 
       size_t nwritten = 0;
       nbytes_written[sense] = txns_written[sense] = 0;
-      for (auto idx : assignment) {
+      for (auto idx: assignment) {
         INVARIANT(idx >= 0 && idx < g_nworkers);
         g_persist_buffers[idx].peekall(pxs);
-        for (auto px : pxs) {
+        for (auto px: pxs) {
           INVARIANT(px);
           INVARIANT(!px->io_scheduled_);
-          iovs[nwritten].iov_base = (void *)px->buf_.data();
+          iovs[nwritten].iov_base = (void *) px->buf_.data();
           iovs[nwritten].iov_len = px->curoff_;
           nbytes_written[sense] += px->curoff_;
           px->io_scheduled_ = true;
@@ -594,11 +544,9 @@ private:
           txns_written[sense] += px->header()->nentries_;
           nwritten++;
           INVARIANT(tidhelpers::CoreId(px->header()->last_tid_) == idx);
-          INVARIANT(epoch_prefixes[sense][idx] <=
-                    tidhelpers::EpochId(px->header()->last_tid_));
+          INVARIANT(epoch_prefixes[sense][idx] <= tidhelpers::EpochId(px->header()->last_tid_));
           INVARIANT(tidhelpers::EpochId(px->header()->last_tid_) > 0);
-          epoch_prefixes[sense][idx] =
-              tidhelpers::EpochId(px->header()->last_tid_) - 1;
+          epoch_prefixes[sense][idx] = tidhelpers::EpochId(px->header()->last_tid_) - 1;
         }
       }
 
@@ -622,8 +570,7 @@ private:
       bool dosense;
       if (g_fsync_background) {
         // wait for fsync from the previous write
-        if (nwritten)
-          channel->post(0, true);
+        if (nwritten) channel->post(0, true);
         else
           INVARIANT(channel->can_post());
         dosense = !sense;
@@ -638,12 +585,9 @@ private:
 
       // update metadata from previous write
       for (size_t i = 0; i < g_nworkers; i++) {
-        const uint64_t x0 =
-            per_thread_sync_epochs_[id].epochs_[i].load(memory_order_acquire);
+        const uint64_t x0 = per_thread_sync_epochs_[id].epochs_[i].load(memory_order_acquire);
         const uint64_t x1 = epoch_prefixes[dosense][i];
-        if (x1 > x0)
-          per_thread_sync_epochs_[id].epochs_[i].store(x1,
-                                                       memory_order_release);
+        if (x1 > x0) per_thread_sync_epochs_[id].epochs_[i].store(x1, memory_order_release);
       }
       total_nbytes_written += nbytes_written[dosense];
       total_txns_written += txns_written[dosense];
@@ -653,7 +597,7 @@ private:
 
       // return all buffers that have been io_scheduled_ - we can do this as
       // soon as write returns
-      for (auto idx : assignment) {
+      for (auto idx: assignment) {
         pbuffer *px;
         while ((px = g_persist_buffers[idx].peek()) && px->io_scheduled_) {
           g_persist_buffers[idx].deq();
@@ -666,14 +610,11 @@ private:
     g_ntxns_written.fetch_add(total_txns_written, memory_order_release);
   }
 
-  inline void
-  advance_system_sync_epoch(const vector<vector<unsigned>> &assignments) {
+  inline void advance_system_sync_epoch(const vector<vector<unsigned>> &assignments) {
     uint64_t min_so_far = numeric_limits<uint64_t>::max();
     for (size_t i = 0; i < assignments.size(); i++)
-      for (auto j : assignments[i])
-        min_so_far = min(
-            per_thread_sync_epochs_[i].epochs_[j].load(memory_order_acquire),
-            min_so_far);
+      for (auto j: assignments[i])
+        min_so_far = min(per_thread_sync_epochs_[i].epochs_[j].load(memory_order_acquire), min_so_far);
 
 #ifdef CHECK_INVARIANTS
     const uint64_t syssync = system_sync_epoch_->load(memory_order_acquire);
@@ -683,8 +624,7 @@ private:
   }
 
 public:
-  void logger(const vector<int> &fds,
-              const vector<vector<unsigned>> &assignments_given) OVERRIDE {
+  void logger(const vector<int> &fds, const vector<vector<unsigned>> &assignments_given) OVERRIDE {
     // compute thread => logger assignment
     vector<thread> writers;
     vector<vector<unsigned>> assignments(assignments_given);
@@ -693,17 +633,14 @@ public:
       // compute assuming homogenous disks
       if (g_nworkers <= fds.size()) {
         // each thread gets its own logging worker
-        for (size_t i = 0; i < g_nworkers; i++)
-          assignments.push_back({(unsigned)i});
+        for (size_t i = 0; i < g_nworkers; i++) assignments.push_back({(unsigned) i});
       } else {
         // XXX: currently we assume each logger is equally as fast- we should
         // adjust ratios accordingly for non-homogenous loggers
         const size_t threads_per_logger = g_nworkers / fds.size();
         for (size_t i = 0; i < fds.size(); i++) {
           assignments.emplace_back(MakeRange<unsigned>(
-              i * threads_per_logger, ((i + 1) == fds.size())
-                                          ? g_nworkers
-                                          : (i + 1) * threads_per_logger));
+              i * threads_per_logger, ((i + 1) == fds.size()) ? g_nworkers : (i + 1) * threads_per_logger));
         }
       }
     }
@@ -712,10 +649,8 @@ public:
 
     timer tt;
     for (size_t i = 0; i < assignments.size(); i++)
-      writers.emplace_back(&onecopy_logbased_simulation::writer, this, i,
-                           fds[i], ref(assignments[i]));
-    if (g_verbose)
-      cerr << "assignments: " << assignments << endl;
+      writers.emplace_back(&onecopy_logbased_simulation::writer, this, i, fds[i], ref(assignments[i]));
+    if (g_verbose) cerr << "assignments: " << assignments << endl;
     while (keep_going_->load(memory_order_acquire)) {
       // periodically compute which epoch is the persistence epoch,
       // and update system_sync_epoch_
@@ -728,25 +663,20 @@ public:
       advance_system_sync_epoch(assignments);
     }
 
-    for (auto &t : writers)
-      t.join();
+    for (auto &t: writers) t.join();
 
     if (g_verbose) {
-      cerr << "current epoch: " << epoch_number_->load(memory_order_acquire)
-           << endl;
-      cerr << "sync epoch   : "
-           << system_sync_epoch_->load(memory_order_acquire) << endl;
+      cerr << "current epoch: " << epoch_number_->load(memory_order_acquire) << endl;
+      cerr << "sync epoch   : " << system_sync_epoch_->load(memory_order_acquire) << endl;
       const double xsec = tt.lap_ms() / 1000.0;
       for (size_t i = 0; i < writers.size(); i++)
         cerr << "writer " << i << " "
-             << (double(g_bytes_written[i].load(memory_order_acquire)) /
-                 double(1UL << 20) / xsec)
-             << " MB/sec" << endl;
+             << (double(g_bytes_written[i].load(memory_order_acquire)) / double(1UL << 20) / xsec) << " MB/sec" << endl;
     }
   }
 
 protected:
-  vector<pbuffer *> pxs_; // just some scratch space
+  vector<pbuffer *> pxs_;// just some scratch space
 };
 
 circbuf<pbuffer, onecopy_logbased_simulation::g_perthread_buffers>
@@ -766,9 +696,7 @@ public:
 protected:
   bool do_compression() const OVERRIDE { return false; }
 
-  const uint8_t *
-  read_log_entry(const uint8_t *p, uint64_t &tid,
-                 std::function<void(uint64_t)> readfunctor) OVERRIDE {
+  const uint8_t *read_log_entry(const uint8_t *p, uint64_t &tid, std::function<void(uint64_t)> readfunctor) OVERRIDE {
     serializer<uint8_t, false> s_uint8_t;
     serializer<uint64_t, false> s_uint64_t;
 
@@ -819,18 +747,16 @@ protected:
     return space_needed;
   }
 
-  void write_log_record(uint8_t *p, uint64_t tidcommit,
-                        const vector<uint64_t> &readset,
+  void write_log_record(uint8_t *p, uint64_t tidcommit, const vector<uint64_t> &readset,
                         const vector<pair<string, string>> &writeset) OVERRIDE {
     serializer<uint8_t, false> s_uint8_t;
     serializer<uint64_t, false> s_uint64_t;
 
     p = s_uint64_t.write(p, tidcommit);
     p = s_uint8_t.write(p, readset.size());
-    for (auto t : readset)
-      p = s_uint64_t.write(p, t);
+    for (auto t: readset) p = s_uint64_t.write(p, t);
     p = s_uint8_t.write(p, writeset.size());
-    for (auto &pr : writeset) {
+    for (auto &pr: writeset) {
       p = s_uint8_t.write(p, pr.first.size());
       memcpy(p, pr.first.data(), pr.first.size());
       p += pr.first.size();
@@ -841,16 +767,15 @@ protected:
   }
 
   void logger_on_io_completion() OVERRIDE {
-    ALWAYS_ASSERT(false); // currently broken
+    ALWAYS_ASSERT(false);// currently broken
     bool changed = true;
     while (changed) {
       changed = false;
       for (size_t i = 0; i < NMAXCORES; i++) {
         g_persist_buffers[i].peekall(pxs_);
-        for (auto px : pxs_) {
+        for (auto px: pxs_) {
           INVARIANT(px);
-          if (!px->io_scheduled_)
-            break;
+          if (!px->io_scheduled_) break;
 
           INVARIANT(px->remaining_ > 0);
           INVARIANT(px->curoff_ < g_buffer_size);
@@ -865,14 +790,11 @@ protected:
 
           while (px->remaining_ && allsat) {
             allsat = true;
-            const uint8_t *nextp =
-                read_log_entry(p, committid, [&allsat](uint64_t readdep) {
-                  if (!allsat)
-                    return;
-                  const uint64_t cid = tidhelpers::CoreId(readdep);
-                  if (readdep > g_persistence_vc[cid])
-                    allsat = false;
-                });
+            const uint8_t *nextp = read_log_entry(p, committid, [&allsat](uint64_t readdep) {
+              if (!allsat) return;
+              const uint64_t cid = tidhelpers::CoreId(readdep);
+              if (readdep > g_persistence_vc[cid]) allsat = false;
+            });
             if (allsat) {
               // cerr << "committid=" << tidhelpers::Str(committid)
               //      << ", g_persistence_vc=" <<
@@ -895,14 +817,13 @@ protected:
             INVARIANT(px->remaining_ == 0);
             // finished entire buffer
             struct pbuffer *pxcheck = g_persist_buffers[i].deq();
-            if (pxcheck != px)
-              INVARIANT(false);
+            if (pxcheck != px) INVARIANT(false);
             g_all_buffers[i].enq(px);
             // cerr << "buffer flused at g_persistence_vc=" <<
             // tidhelpers::Str(g_persistence_vc[i]) << endl;
           } else {
             INVARIANT(px->remaining_ > 0);
-            break; // cannot process core's list any further
+            break;// cannot process core's list any further
           }
         }
       }
@@ -920,9 +841,7 @@ protected:
   bool do_compression() const OVERRIDE { return compress_; }
 
 protected:
-  const uint8_t *
-  read_log_entry(const uint8_t *p, uint64_t &tid,
-                 std::function<void(uint64_t)> readfunctor) OVERRIDE {
+  const uint8_t *read_log_entry(const uint8_t *p, uint64_t &tid, std::function<void(uint64_t)> readfunctor) OVERRIDE {
     serializer<uint8_t, false> s_uint8_t;
     serializer<uint64_t, false> s_uint64_t;
 
@@ -959,15 +878,14 @@ protected:
     return space_needed;
   }
 
-  void write_log_record(uint8_t *p, uint64_t tidcommit,
-                        const vector<uint64_t> &readset,
+  void write_log_record(uint8_t *p, uint64_t tidcommit, const vector<uint64_t> &readset,
                         const vector<pair<string, string>> &writeset) OVERRIDE {
     serializer<uint8_t, false> s_uint8_t;
     serializer<uint64_t, false> s_uint64_t;
 
     p = s_uint64_t.write(p, tidcommit);
     p = s_uint8_t.write(p, writeset.size());
-    for (auto &pr : writeset) {
+    for (auto &pr: writeset) {
       p = s_uint8_t.write(p, pr.first.size());
       memcpy(p, pr.first.data(), pr.first.size());
       p += pr.first.size();
@@ -987,70 +905,65 @@ int main(int argc, char **argv) {
   vector<vector<unsigned>> assignments;
 
   while (1) {
-    static struct option long_options[] = {
-        {"verbose", no_argument, &g_verbose, 1},
-        {"fsync-back", no_argument, &g_fsync_background, 1},
-        {"num-threads", required_argument, 0, 't'},
-        {"strategy", required_argument, 0, 's'},
-        {"readset", required_argument, 0, 'r'},
-        {"writeset", required_argument, 0, 'w'},
-        {"keysize", required_argument, 0, 'k'},
-        {"valuesize", required_argument, 0, 'v'},
-        {"logfile", required_argument, 0, 'l'},
-        {"assignment", required_argument, 0, 'a'},
-        {0, 0, 0, 0}};
+    static struct option long_options[] = {{"verbose", no_argument, &g_verbose, 1},
+                                           {"fsync-back", no_argument, &g_fsync_background, 1},
+                                           {"num-threads", required_argument, 0, 't'},
+                                           {"strategy", required_argument, 0, 's'},
+                                           {"readset", required_argument, 0, 'r'},
+                                           {"writeset", required_argument, 0, 'w'},
+                                           {"keysize", required_argument, 0, 'k'},
+                                           {"valuesize", required_argument, 0, 'v'},
+                                           {"logfile", required_argument, 0, 'l'},
+                                           {"assignment", required_argument, 0, 'a'},
+                                           {0, 0, 0, 0}};
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:s:r:w:k:v:l:a:", long_options,
-                        &option_index);
-    if (c == -1)
-      break;
+    int c = getopt_long(argc, argv, "t:s:r:w:k:v:l:a:", long_options, &option_index);
+    if (c == -1) break;
 
     switch (c) {
-    case 0:
-      if (long_options[option_index].flag != 0)
+      case 0:
+        if (long_options[option_index].flag != 0) break;
+        abort();
         break;
-      abort();
-      break;
 
-    case 't':
-      g_nworkers = strtoul(optarg, nullptr, 10);
-      break;
+      case 't':
+        g_nworkers = strtoul(optarg, nullptr, 10);
+        break;
 
-    case 's':
-      strategy = optarg;
-      break;
+      case 's':
+        strategy = optarg;
+        break;
 
-    case 'r':
-      g_readset = strtoul(optarg, nullptr, 10);
-      break;
+      case 'r':
+        g_readset = strtoul(optarg, nullptr, 10);
+        break;
 
-    case 'w':
-      g_writeset = strtoul(optarg, nullptr, 10);
-      break;
+      case 'w':
+        g_writeset = strtoul(optarg, nullptr, 10);
+        break;
 
-    case 'k':
-      g_keysize = strtoul(optarg, nullptr, 10);
-      break;
+      case 'k':
+        g_keysize = strtoul(optarg, nullptr, 10);
+        break;
 
-    case 'v':
-      g_valuesize = strtoul(optarg, nullptr, 10);
-      break;
+      case 'v':
+        g_valuesize = strtoul(optarg, nullptr, 10);
+        break;
 
-    case 'l':
-      logfiles.emplace_back(optarg);
-      break;
+      case 'l':
+        logfiles.emplace_back(optarg);
+        break;
 
-    case 'a':
-      assignments.emplace_back(
-          ParseCSVString<unsigned, RangeAwareParser<unsigned>>(optarg));
-      break;
+      case 'a':
+        assignments.emplace_back(ParseCSVString<unsigned, RangeAwareParser<unsigned>>(optarg));
+        break;
 
-    case '?':
-      /* getopt_long already printed an error message. */
-      exit(1);
+      case '?':
+        /* getopt_long already printed an error message. */
+        exit(1);
 
-    default:
-      abort();
+      default:
+        abort();
     }
   }
   ALWAYS_ASSERT(g_nworkers >= 1);
@@ -1060,26 +973,20 @@ int main(int argc, char **argv) {
   ALWAYS_ASSERT(g_valuesize >= 0);
   ALWAYS_ASSERT(!logfiles.empty());
   ALWAYS_ASSERT(logfiles.size() <= g_nmax_loggers);
-  ALWAYS_ASSERT(assignments.empty() ||
-                database_simulation::AssignmentsValid(
-                    assignments, logfiles.size(), g_nworkers));
+  ALWAYS_ASSERT(assignments.empty() || database_simulation::AssignmentsValid(assignments, logfiles.size(), g_nworkers));
 
   if (g_verbose)
-    cerr << "{nworkers=" << g_nworkers << ", readset=" << g_readset
-         << ", writeset=" << g_writeset << ", keysize=" << g_keysize
-         << ", valuesize=" << g_valuesize << ", logfiles=" << logfiles
-         << ", strategy=" << strategy
-         << ", fsync_background=" << g_fsync_background
-         << ", assignments=" << assignments << "}" << endl;
+    cerr << "{nworkers=" << g_nworkers << ", readset=" << g_readset << ", writeset=" << g_writeset
+         << ", keysize=" << g_keysize << ", valuesize=" << g_valuesize << ", logfiles=" << logfiles
+         << ", strategy=" << strategy << ", fsync_background=" << g_fsync_background << ", assignments=" << assignments
+         << "}" << endl;
 
-  if (strategy != "deptracking" && strategy != "epoch" &&
-      strategy != "epoch-compress")
-    ALWAYS_ASSERT(false);
+  if (strategy != "deptracking" && strategy != "epoch" && strategy != "epoch-compress") ALWAYS_ASSERT(false);
 
-  g_database.resize(g_nrecords); // all start at TID=0
+  g_database.resize(g_nrecords);// all start at TID=0
 
   vector<int> fds;
-  for (auto &fname : logfiles) {
+  for (auto &fname: logfiles) {
     int fd = open(fname.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0664);
     if (fd == -1) {
       perror("open");
@@ -1089,8 +996,7 @@ int main(int argc, char **argv) {
   }
 
   unique_ptr<database_simulation> sim;
-  if (strategy == "deptracking")
-    sim.reset(new explicit_deptracking_simulation);
+  if (strategy == "deptracking") sim.reset(new explicit_deptracking_simulation);
   else if (strategy == "epoch")
     sim.reset(new epochbased_simulation(false));
   else if (strategy == "epoch-compress")
@@ -1099,15 +1005,12 @@ int main(int argc, char **argv) {
     ALWAYS_ASSERT(false);
   sim->init();
 
-  thread logger_thread(&database_simulation::logger, sim.get(), fds,
-                       ref(assignments));
+  thread logger_thread(&database_simulation::logger, sim.get(), fds, ref(assignments));
 
   vector<thread> workers;
   util::timer tt, tt1;
-  for (size_t i = 0; i < g_nworkers; i++)
-    workers.emplace_back(&database_simulation::worker, sim.get(), i);
-  for (auto &p : workers)
-    p.join();
+  for (size_t i = 0; i < g_nworkers; i++) workers.emplace_back(&database_simulation::worker, sim.get(), i);
+  for (auto &p: workers) p.join();
   sim->terminate();
   logger_thread.join();
 
@@ -1116,8 +1019,7 @@ int main(int argc, char **argv) {
   const double rate = double(ntxns_committed) / xsec;
   if (g_verbose) {
     cerr << "txns commited rate: " << rate << " txns/sec" << endl;
-    cerr << "  (" << size_t(ntxns_committed) << " in " << xsec << " sec)"
-         << endl;
+    cerr << "  (" << size_t(ntxns_committed) << " in " << xsec << " sec)" << endl;
 
     const double ntxns_written = g_ntxns_written.load();
     const double rate1 = double(ntxns_written) / xsec;

@@ -14,5 +14,7 @@
  * is legally binding.
  */
 #include "value_string.hh"
-#include "kvrow.hh"
+
 #include <string.h>
+
+#include "kvrow.hh"

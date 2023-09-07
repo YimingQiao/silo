@@ -1,7 +1,8 @@
+#include "core.h"
+
 #include <unistd.h>
 
 #include "amd64.h"
-#include "core.h"
 #include "util.h"
 
 using namespace std;
@@ -12,10 +13,8 @@ retry:
   unsigned current = g_core_count.load(memory_order_acquire);
   const unsigned rounded = slow_round_up(current, alignment);
   const unsigned replace = rounded + n;
-  if (unlikely(replace > NMaxCores))
-    return -1;
-  if (!g_core_count.compare_exchange_strong(current, replace,
-                                            memory_order_acq_rel)) {
+  if (unlikely(replace > NMaxCores)) return -1;
+  if (!g_core_count.compare_exchange_strong(current, replace, memory_order_acq_rel)) {
     nop_pause();
     goto retry;
   }

@@ -27,131 +27,124 @@
 #include "varkey.h"
 
 namespace private_ {
-template <typename T, typename P> struct u64manip;
-template <typename P> struct u64manip<uint64_t, P> {
-  static inline uint64_t Load(uint64_t t) { return t; }
-  static inline void Store(uint64_t &t, uint64_t v) { t = v; }
-  static inline uint64_t Lock(uint64_t &t) {
+  template<typename T, typename P>
+  struct u64manip;
+  template<typename P>
+  struct u64manip<uint64_t, P> {
+    static inline uint64_t Load(uint64_t t) { return t; }
+    static inline void Store(uint64_t &t, uint64_t v) { t = v; }
+    static inline uint64_t Lock(uint64_t &t) {
 #ifdef CHECK_INVARIANTS
-    INVARIANT(!P::IsLocked(t));
-    t |= P::HDR_LOCKED_MASK;
-    return t;
+      INVARIANT(!P::IsLocked(t));
+      t |= P::HDR_LOCKED_MASK;
+      return t;
 #endif
-    return 0;
-  }
-  static inline uint64_t LockWithSpinCount(uint64_t &t, unsigned &spins) {
-    const uint64_t ret = Lock(t);
-    spins = 0;
-    return ret;
-  }
-  static inline void Unlock(uint64_t &t) {
+      return 0;
+    }
+    static inline uint64_t LockWithSpinCount(uint64_t &t, unsigned &spins) {
+      const uint64_t ret = Lock(t);
+      spins = 0;
+      return ret;
+    }
+    static inline void Unlock(uint64_t &t) {
 #ifdef CHECK_INVARIANTS
-    INVARIANT(P::IsLocked(t));
-    t &= ~(P::HDR_LOCKED_MASK | P::HDR_MODIFYING_MASK);
+      INVARIANT(P::IsLocked(t));
+      t &= ~(P::HDR_LOCKED_MASK | P::HDR_MODIFYING_MASK);
 #endif
-  }
-  static inline uint64_t StableVersion(uint64_t t) {
-    INVARIANT(!P::IsModifying(t));
-    return t;
-  }
-  static inline bool CheckVersion(uint64_t t, uint64_t stablev) {
-    INVARIANT(!P::IsModifying(stablev));
-    INVARIANT((t & ~P::HDR_LOCKED_MASK) == (stablev & ~P::HDR_LOCKED_MASK));
-    return true;
-  }
-};
-template <typename P> struct u64manip<std::atomic<uint64_t>, P> {
-  static inline uint64_t Load(const std::atomic<uint64_t> &t) {
-    return t.load(std::memory_order_acquire);
-  }
-  static inline void Store(std::atomic<uint64_t> &t, uint64_t v) {
-    t.store(v, std::memory_order_release);
-  }
-  static inline uint64_t Lock(std::atomic<uint64_t> &t) {
+    }
+    static inline uint64_t StableVersion(uint64_t t) {
+      INVARIANT(!P::IsModifying(t));
+      return t;
+    }
+    static inline bool CheckVersion(uint64_t t, uint64_t stablev) {
+      INVARIANT(!P::IsModifying(stablev));
+      INVARIANT((t & ~P::HDR_LOCKED_MASK) == (stablev & ~P::HDR_LOCKED_MASK));
+      return true;
+    }
+  };
+  template<typename P>
+  struct u64manip<std::atomic<uint64_t>, P> {
+    static inline uint64_t Load(const std::atomic<uint64_t> &t) { return t.load(std::memory_order_acquire); }
+    static inline void Store(std::atomic<uint64_t> &t, uint64_t v) { t.store(v, std::memory_order_release); }
+    static inline uint64_t Lock(std::atomic<uint64_t> &t) {
 #ifdef SPINLOCK_BACKOFF
-    uint64_t backoff_shift = 0;
+      uint64_t backoff_shift = 0;
 #endif
-    uint64_t v = Load(t);
-    while ((v & P::HDR_LOCKED_MASK) ||
-           !t.compare_exchange_strong(v, v | P::HDR_LOCKED_MASK)) {
+      uint64_t v = Load(t);
+      while ((v & P::HDR_LOCKED_MASK) || !t.compare_exchange_strong(v, v | P::HDR_LOCKED_MASK)) {
 #ifdef SPINLOCK_BACKOFF
-      if (backoff_shift < 63)
-        backoff_shift++;
-      uint64_t spins = (1UL << backoff_shift) * BACKOFF_SPINS_FACTOR;
-      while (spins) {
-        nop_pause();
-        spins--;
-      }
+        if (backoff_shift < 63) backoff_shift++;
+        uint64_t spins = (1UL << backoff_shift) * BACKOFF_SPINS_FACTOR;
+        while (spins) {
+          nop_pause();
+          spins--;
+        }
 #else
-      nop_pause();
-#endif
-      v = Load(t);
-    }
-    COMPILER_MEMORY_FENCE;
-    return v;
-  }
-  static inline uint64_t LockWithSpinCount(std::atomic<uint64_t> &t,
-                                           unsigned &spins) {
-#ifdef SPINLOCK_BACKOFF
-    uint64_t backoff_shift = 0;
-#endif
-    spins = 0;
-    uint64_t v = Load(t);
-    while ((v & P::HDR_LOCKED_MASK) ||
-           !t.compare_exchange_strong(v, v | P::HDR_LOCKED_MASK)) {
-#ifdef SPINLOCK_BACKOFF
-      if (backoff_shift < 63)
-        backoff_shift++;
-      uint64_t backoff_spins = (1UL << backoff_shift) * BACKOFF_SPINS_FACTOR;
-      while (backoff_spins) {
         nop_pause();
-        backoff_spins--;
-      }
-#else
-      nop_pause();
 #endif
-      v = Load(t);
-      spins++;
+        v = Load(t);
+      }
+      COMPILER_MEMORY_FENCE;
+      return v;
     }
-    COMPILER_MEMORY_FENCE;
-    return v;
-  }
-  static inline void Unlock(std::atomic<uint64_t> &v) {
-    INVARIANT(P::IsLocked(v));
-    const uint64_t oldh = Load(v);
-    uint64_t h = oldh;
-    bool newv = false;
-    if ((h & P::HDR_MODIFYING_MASK) || (h & P::HDR_DELETING_MASK)) {
-      newv = true;
-      const uint64_t n = (h & P::HDR_VERSION_MASK) >> P::HDR_VERSION_SHIFT;
-      h &= ~P::HDR_VERSION_MASK;
-      h |= (((n + 1) << P::HDR_VERSION_SHIFT) & P::HDR_VERSION_MASK);
+    static inline uint64_t LockWithSpinCount(std::atomic<uint64_t> &t, unsigned &spins) {
+#ifdef SPINLOCK_BACKOFF
+      uint64_t backoff_shift = 0;
+#endif
+      spins = 0;
+      uint64_t v = Load(t);
+      while ((v & P::HDR_LOCKED_MASK) || !t.compare_exchange_strong(v, v | P::HDR_LOCKED_MASK)) {
+#ifdef SPINLOCK_BACKOFF
+        if (backoff_shift < 63) backoff_shift++;
+        uint64_t backoff_spins = (1UL << backoff_shift) * BACKOFF_SPINS_FACTOR;
+        while (backoff_spins) {
+          nop_pause();
+          backoff_spins--;
+        }
+#else
+        nop_pause();
+#endif
+        v = Load(t);
+        spins++;
+      }
+      COMPILER_MEMORY_FENCE;
+      return v;
     }
-    // clear locked + modifying bits
-    h &= ~(P::HDR_LOCKED_MASK | P::HDR_MODIFYING_MASK);
-    if (newv)
-      INVARIANT(!CheckVersion(oldh, h));
-    INVARIANT(!(h & P::HDR_LOCKED_MASK));
-    INVARIANT(!(h & P::HDR_MODIFYING_MASK));
-    COMPILER_MEMORY_FENCE;
-    Store(v, h);
-  }
-  static inline uint64_t StableVersion(const std::atomic<uint64_t> &t) {
-    uint64_t v = Load(t);
-    while ((v & P::HDR_MODIFYING_MASK)) {
-      nop_pause();
-      v = Load(t);
+    static inline void Unlock(std::atomic<uint64_t> &v) {
+      INVARIANT(P::IsLocked(v));
+      const uint64_t oldh = Load(v);
+      uint64_t h = oldh;
+      bool newv = false;
+      if ((h & P::HDR_MODIFYING_MASK) || (h & P::HDR_DELETING_MASK)) {
+        newv = true;
+        const uint64_t n = (h & P::HDR_VERSION_MASK) >> P::HDR_VERSION_SHIFT;
+        h &= ~P::HDR_VERSION_MASK;
+        h |= (((n + 1) << P::HDR_VERSION_SHIFT) & P::HDR_VERSION_MASK);
+      }
+      // clear locked + modifying bits
+      h &= ~(P::HDR_LOCKED_MASK | P::HDR_MODIFYING_MASK);
+      if (newv) INVARIANT(!CheckVersion(oldh, h));
+      INVARIANT(!(h & P::HDR_LOCKED_MASK));
+      INVARIANT(!(h & P::HDR_MODIFYING_MASK));
+      COMPILER_MEMORY_FENCE;
+      Store(v, h);
     }
-    COMPILER_MEMORY_FENCE;
-    return v;
-  }
-  static inline bool CheckVersion(uint64_t t, uint64_t stablev) {
-    INVARIANT(!(stablev & P::HDR_MODIFYING_MASK));
-    COMPILER_MEMORY_FENCE;
-    return (t & ~P::HDR_LOCKED_MASK) == (stablev & ~P::HDR_LOCKED_MASK);
-  }
-};
-} // namespace private_
+    static inline uint64_t StableVersion(const std::atomic<uint64_t> &t) {
+      uint64_t v = Load(t);
+      while ((v & P::HDR_MODIFYING_MASK)) {
+        nop_pause();
+        v = Load(t);
+      }
+      COMPILER_MEMORY_FENCE;
+      return v;
+    }
+    static inline bool CheckVersion(uint64_t t, uint64_t stablev) {
+      INVARIANT(!(stablev & P::HDR_MODIFYING_MASK));
+      COMPILER_MEMORY_FENCE;
+      return (t & ~P::HDR_LOCKED_MASK) == (stablev & ~P::HDR_LOCKED_MASK);
+    }
+  };
+}// namespace private_
 
 /**
  * manipulates a btree version
@@ -170,19 +163,14 @@ template <typename P> struct u64manip<std::atomic<uint64_t>, P> {
  * to do a memory reads/writes from/to hdr atomically. x86 architectures
  * guarantee that aligned writes are atomic (see intel spec)
  */
-template <typename VersionType, unsigned NKeysPerNode>
+template<typename VersionType, unsigned NKeysPerNode>
 class btree_version_manip {
 
-  typedef
-      typename private_::typeutil<VersionType>::func_param_type LoadVersionType;
+  typedef typename private_::typeutil<VersionType>::func_param_type LoadVersionType;
 
-  typedef private_::u64manip<VersionType,
-                             btree_version_manip<VersionType, NKeysPerNode>>
-      U64Manip;
+  typedef private_::u64manip<VersionType, btree_version_manip<VersionType, NKeysPerNode>> U64Manip;
 
-  static inline constexpr uint64_t LowMask(uint64_t nbits) {
-    return (1UL << nbits) - 1UL;
-  }
+  static inline constexpr uint64_t LowMask(uint64_t nbits) { return (1UL << nbits) - 1UL; }
 
 public:
   static const uint64_t HDR_TYPE_BITS = 1;
@@ -190,43 +178,33 @@ public:
 
   static const uint64_t HDR_KEY_SLOTS_SHIFT = HDR_TYPE_BITS;
   static const uint64_t HDR_KEY_SLOTS_BITS = ceil_log2_const(NKeysPerNode);
-  static const uint64_t HDR_KEY_SLOTS_MASK = LowMask(HDR_KEY_SLOTS_BITS)
-                                             << HDR_KEY_SLOTS_SHIFT;
+  static const uint64_t HDR_KEY_SLOTS_MASK = LowMask(HDR_KEY_SLOTS_BITS) << HDR_KEY_SLOTS_SHIFT;
 
-  static const uint64_t HDR_LOCKED_SHIFT =
-      HDR_KEY_SLOTS_SHIFT + HDR_KEY_SLOTS_BITS;
+  static const uint64_t HDR_LOCKED_SHIFT = HDR_KEY_SLOTS_SHIFT + HDR_KEY_SLOTS_BITS;
   static const uint64_t HDR_LOCKED_BITS = 1;
-  static const uint64_t HDR_LOCKED_MASK = LowMask(HDR_LOCKED_BITS)
-                                          << HDR_LOCKED_SHIFT;
+  static const uint64_t HDR_LOCKED_MASK = LowMask(HDR_LOCKED_BITS) << HDR_LOCKED_SHIFT;
 
   static const uint64_t HDR_IS_ROOT_SHIFT = HDR_LOCKED_SHIFT + HDR_LOCKED_BITS;
   static const uint64_t HDR_IS_ROOT_BITS = 1;
-  static const uint64_t HDR_IS_ROOT_MASK = LowMask(HDR_IS_ROOT_BITS)
-                                           << HDR_IS_ROOT_SHIFT;
+  static const uint64_t HDR_IS_ROOT_MASK = LowMask(HDR_IS_ROOT_BITS) << HDR_IS_ROOT_SHIFT;
 
-  static const uint64_t HDR_MODIFYING_SHIFT =
-      HDR_IS_ROOT_SHIFT + HDR_IS_ROOT_BITS;
+  static const uint64_t HDR_MODIFYING_SHIFT = HDR_IS_ROOT_SHIFT + HDR_IS_ROOT_BITS;
   static const uint64_t HDR_MODIFYING_BITS = 1;
-  static const uint64_t HDR_MODIFYING_MASK = LowMask(HDR_MODIFYING_BITS)
-                                             << HDR_MODIFYING_SHIFT;
+  static const uint64_t HDR_MODIFYING_MASK = LowMask(HDR_MODIFYING_BITS) << HDR_MODIFYING_SHIFT;
 
-  static const uint64_t HDR_DELETING_SHIFT =
-      HDR_MODIFYING_SHIFT + HDR_MODIFYING_BITS;
+  static const uint64_t HDR_DELETING_SHIFT = HDR_MODIFYING_SHIFT + HDR_MODIFYING_BITS;
   static const uint64_t HDR_DELETING_BITS = 1;
-  static const uint64_t HDR_DELETING_MASK = LowMask(HDR_DELETING_BITS)
-                                            << HDR_DELETING_SHIFT;
+  static const uint64_t HDR_DELETING_MASK = LowMask(HDR_DELETING_BITS) << HDR_DELETING_SHIFT;
 
-  static const uint64_t HDR_VERSION_SHIFT =
-      HDR_DELETING_SHIFT + HDR_DELETING_BITS;
-  static const uint64_t HDR_VERSION_MASK = ((uint64_t)-1) << HDR_VERSION_SHIFT;
+  static const uint64_t HDR_VERSION_SHIFT = HDR_DELETING_SHIFT + HDR_DELETING_BITS;
+  static const uint64_t HDR_VERSION_MASK = ((uint64_t) -1) << HDR_VERSION_SHIFT;
 
   // sanity checks
   static_assert(NKeysPerNode >= 1, "XX");
 
   static_assert(std::numeric_limits<uint64_t>::max() ==
-                    (HDR_TYPE_MASK | HDR_KEY_SLOTS_MASK | HDR_LOCKED_MASK |
-                     HDR_IS_ROOT_MASK | HDR_MODIFYING_MASK | HDR_DELETING_MASK |
-                     HDR_VERSION_MASK),
+                    (HDR_TYPE_MASK | HDR_KEY_SLOTS_MASK | HDR_LOCKED_MASK | HDR_IS_ROOT_MASK | HDR_MODIFYING_MASK |
+                     HDR_DELETING_MASK | HDR_VERSION_MASK),
                 "XX");
 
   static_assert(!(HDR_TYPE_MASK & HDR_KEY_SLOTS_MASK), "XX");
@@ -240,76 +218,53 @@ public:
 
   static inline uint64_t Load(LoadVersionType v) { return U64Manip::Load(v); }
 
-  static inline void Store(VersionType &t, uint64_t v) {
-    U64Manip::Store(t, v);
-  }
+  static inline void Store(VersionType &t, uint64_t v) { U64Manip::Store(t, v); }
 
   // accessors
 
-  static inline bool IsLeafNode(LoadVersionType v) {
-    return (Load(v) & HDR_TYPE_MASK) == 0;
-  }
+  static inline bool IsLeafNode(LoadVersionType v) { return (Load(v) & HDR_TYPE_MASK) == 0; }
 
-  static inline bool IsInternalNode(LoadVersionType v) {
-    return !IsLeafNode(v);
-  }
+  static inline bool IsInternalNode(LoadVersionType v) { return !IsLeafNode(v); }
 
-  static inline size_t KeySlotsUsed(LoadVersionType v) {
-    return (Load(v) & HDR_KEY_SLOTS_MASK) >> HDR_KEY_SLOTS_SHIFT;
-  }
+  static inline size_t KeySlotsUsed(LoadVersionType v) { return (Load(v) & HDR_KEY_SLOTS_MASK) >> HDR_KEY_SLOTS_SHIFT; }
 
-  static inline bool IsLocked(LoadVersionType v) {
-    return (Load(v) & HDR_LOCKED_MASK);
-  }
+  static inline bool IsLocked(LoadVersionType v) { return (Load(v) & HDR_LOCKED_MASK); }
 
-  static inline bool IsRoot(LoadVersionType v) {
-    return (Load(v) & HDR_IS_ROOT_MASK);
-  }
+  static inline bool IsRoot(LoadVersionType v) { return (Load(v) & HDR_IS_ROOT_MASK); }
 
-  static inline bool IsModifying(LoadVersionType v) {
-    return (Load(v) & HDR_MODIFYING_MASK);
-  }
+  static inline bool IsModifying(LoadVersionType v) { return (Load(v) & HDR_MODIFYING_MASK); }
 
-  static inline bool IsDeleting(LoadVersionType v) {
-    return (Load(v) & HDR_DELETING_MASK);
-  }
+  static inline bool IsDeleting(LoadVersionType v) { return (Load(v) & HDR_DELETING_MASK); }
 
-  static inline uint64_t Version(LoadVersionType v) {
-    return (Load(v) & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT;
-  }
+  static inline uint64_t Version(LoadVersionType v) { return (Load(v) & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT; }
 
   static std::string VersionInfoStr(LoadVersionType v) {
     std::ostringstream buf;
     buf << "[";
 
-    if (IsLeafNode(v))
-      buf << "LEAF";
+    if (IsLeafNode(v)) buf << "LEAF";
     else
       buf << "INT";
     buf << " | ";
 
     buf << KeySlotsUsed(v) << " | ";
 
-    if (IsLocked(v))
-      buf << "LOCKED";
+    if (IsLocked(v)) buf << "LOCKED";
     else
       buf << "-";
     buf << " | ";
 
-    if (IsRoot(v))
-      buf << "ROOT";
+    if (IsRoot(v)) buf << "ROOT";
     else
       buf << "-";
     buf << " | ";
 
-    if (IsModifying(v))
-      buf << "MOD";
+    if (IsModifying(v)) buf << "MOD";
     else
       buf << "-";
     buf << " | ";
 
-    if (IsDeleting(v))
-      buf << "DEL";
+    if (IsDeleting(v)) buf << "DEL";
     else
       buf << "-";
     buf << " | ";
@@ -331,9 +286,7 @@ public:
     Store(v, h);
   }
 
-  static inline void IncKeySlotsUsed(VersionType &v) {
-    SetKeySlotsUsed(v, KeySlotsUsed(v) + 1);
-  }
+  static inline void IncKeySlotsUsed(VersionType &v) { SetKeySlotsUsed(v, KeySlotsUsed(v) + 1); }
 
   static inline void DecKeySlotsUsed(VersionType &v) {
     INVARIANT(KeySlotsUsed(v) > 0);
@@ -374,9 +327,7 @@ public:
 
   // concurrency control
 
-  static inline uint64_t StableVersion(LoadVersionType v) {
-    return U64Manip::StableVersion(v);
-  }
+  static inline uint64_t StableVersion(LoadVersionType v) { return U64Manip::StableVersion(v); }
 
   static inline uint64_t UnstableVersion(LoadVersionType v) { return Load(v); }
 
@@ -423,16 +374,17 @@ struct single_threaded_btree_traits : public base_btree_config {
  * semantics of total store order (TSO) for correctness. To fix this, we would
  * change compiler fences into actual memory fences, at the very least.
  */
-template <typename P> class btree {
-  template <template <typename> class, typename> friend class base_txn_btree;
+template<typename P>
+class btree {
+  template<template<typename> class, typename>
+  friend class base_txn_btree;
 
 public:
   typedef varkey key_type;
   typedef std::string string_type;
   typedef uint64_t key_slice;
   typedef uint8_t *value_type;
-  typedef typename std::conditional<!P::RcuRespCaller, scoped_rcu_region,
-                                    disabled_rcu_region>::type rcu_region;
+  typedef typename std::conditional<!P::RcuRespCaller, scoped_rcu_region, disabled_rcu_region>::type rcu_region;
 
   // public to assist in testing
   static const unsigned int NKeysPerNode = P::NKeysPerNode;
@@ -441,8 +393,7 @@ public:
 private:
   typedef std::pair<ssize_t, size_t> key_search_ret;
 
-  typedef btree_version_manip<typename P::VersionType, NKeysPerNode>
-      VersionManip;
+  typedef btree_version_manip<typename P::VersionType, NKeysPerNode> VersionManip;
   typedef btree_version_manip<uint64_t, NKeysPerNode> RawVersionManip;
 
   struct node {
@@ -478,13 +429,9 @@ private:
 
     inline bool is_internal_node() const { return !is_leaf_node(); }
 
-    inline size_t key_slots_used() const {
-      return VersionManip::KeySlotsUsed(hdr_);
-    }
+    inline size_t key_slots_used() const { return VersionManip::KeySlotsUsed(hdr_); }
 
-    inline void set_key_slots_used(size_t n) {
-      VersionManip::SetKeySlotsUsed(hdr_, n);
-    }
+    inline void set_key_slots_used(size_t n) { VersionManip::SetKeySlotsUsed(hdr_, n); }
 
     inline void inc_key_slots_used() { VersionManip::IncKeySlotsUsed(hdr_); }
 
@@ -493,9 +440,7 @@ private:
     inline bool is_locked() const { return VersionManip::IsLocked(hdr_); }
 
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
-    inline bool is_lock_owner() const {
-      return std::this_thread::get_id() == lock_owner_;
-    }
+    inline bool is_lock_owner() const { return std::this_thread::get_id() == lock_owner_; }
 #else
     inline bool is_lock_owner() const { return true; }
 #endif /* BTREE_LOCK_OWNERSHIP_CHECKING */
@@ -503,15 +448,12 @@ private:
     inline uint64_t lock() {
 #ifdef ENABLE_EVENT_COUNTERS
       static event_avg_counter evt_avg_btree_leaf_node_lock_acquire_spins(
-          util::cxx_typename<btree<P>>::value() +
-          std::string("_avg_btree_leaf_node_lock_acquire_spins"));
+          util::cxx_typename<btree<P>>::value() + std::string("_avg_btree_leaf_node_lock_acquire_spins"));
       static event_avg_counter evt_avg_btree_internal_node_lock_acquire_spins(
-          util::cxx_typename<btree<P>>::value() +
-          std::string("_avg_btree_internal_node_lock_acquire_spins"));
+          util::cxx_typename<btree<P>>::value() + std::string("_avg_btree_internal_node_lock_acquire_spins"));
       unsigned spins;
       const uint64_t ret = VersionManip::LockWithSpinCount(hdr_, spins);
-      if (is_leaf_node())
-        evt_avg_btree_leaf_node_lock_acquire_spins.offer(spins);
+      if (is_leaf_node()) evt_avg_btree_leaf_node_lock_acquire_spins.offer(spins);
       else
         evt_avg_btree_internal_node_lock_acquire_spins.offer(spins);
 #else
@@ -547,35 +489,25 @@ private:
 
     inline void mark_deleting() { VersionManip::MarkDeleting(hdr_); }
 
-    inline uint64_t unstable_version() const {
-      return VersionManip::UnstableVersion(hdr_);
-    }
+    inline uint64_t unstable_version() const { return VersionManip::UnstableVersion(hdr_); }
 
     /**
      * spin until we get a version which is not modifying (but can be locked)
      */
-    inline uint64_t stable_version() const {
-      return VersionManip::StableVersion(hdr_);
-    }
+    inline uint64_t stable_version() const { return VersionManip::StableVersion(hdr_); }
 
-    inline bool check_version(uint64_t version) const {
-      return VersionManip::CheckVersion(hdr_, version);
-    }
+    inline bool check_version(uint64_t version) const { return VersionManip::CheckVersion(hdr_, version); }
 
-    inline std::string version_info_str() const {
-      return VersionManip::VersionInfoStr(hdr_);
-    }
+    inline std::string version_info_str() const { return VersionManip::VersionInfoStr(hdr_); }
 
     void base_invariant_unique_keys_check() const;
 
     // [min_key, max_key)
-    void base_invariant_checker(const key_slice *min_key,
-                                const key_slice *max_key, bool is_root) const;
+    void base_invariant_checker(const key_slice *min_key, const key_slice *max_key, bool is_root) const;
 
     /** manually simulated virtual function (so we don't make node virtual) */
-    void invariant_checker(const key_slice *min_key, const key_slice *max_key,
-                           const node *left_sibling, const node *right_sibling,
-                           bool is_root) const;
+    void invariant_checker(const key_slice *min_key, const key_slice *max_key, const node *left_sibling,
+                           const node *right_sibling, bool is_root) const;
 
     /** another manually simulated virtual function */
     inline void prefetch() const;
@@ -587,7 +519,7 @@ private:
       node *n_;
     };
 
-    key_slice min_key_; // really is min_key's key slice
+    key_slice min_key_;// really is min_key's key slice
     value_or_node_ptr values_[NKeysPerNode];
 
     // format is:
@@ -602,9 +534,7 @@ private:
     // keys w/ suffixes get removed)
     imstring *suffixes_;
 
-    inline ALWAYS_INLINE varkey suffix(size_t i) const {
-      return suffixes_ ? varkey(suffixes_[i]) : varkey();
-    }
+    inline ALWAYS_INLINE varkey suffix(size_t i) const { return suffixes_ ? varkey(suffixes_[i]) : varkey(); }
 
     // static event_counter g_evt_suffixes_array_created;
 
@@ -617,8 +547,7 @@ private:
 
     inline void ensure_suffixes() {
       INVARIANT(this->is_modifying());
-      if (!suffixes_)
-        alloc_suffixes();
+      if (!suffixes_) alloc_suffixes();
     }
 
     leaf_node();
@@ -673,8 +602,7 @@ private:
         ssize_t i = (lower + upper) / 2;
         key_slice k0 = this->keys_[i];
         size_t len0 = this->keyslice_length(i);
-        if (k0 < k || (k0 == k && len0 < len))
-          lower = i + 1;
+        if (k0 < k || (k0 == k && len0 < len)) lower = i + 1;
         else if (k0 == k && len0 == len)
           return key_search_ret(i, n);
         else
@@ -687,8 +615,7 @@ private:
      * tightest lower bound key, -1 if no such key exists. operates only
      * on key slices (internal nodes have unique key slices)
      */
-    inline key_search_ret key_lower_bound_search(key_slice k,
-                                                 size_t len) const {
+    inline key_search_ret key_lower_bound_search(key_slice k, size_t len) const {
       ssize_t ret = -1;
       size_t n = this->key_slots_used();
       ssize_t lower = 0;
@@ -709,9 +636,7 @@ private:
       return key_search_ret(ret, n);
     }
 
-    void invariant_checker_impl(const key_slice *min_key,
-                                const key_slice *max_key,
-                                const node *left_sibling,
+    void invariant_checker_impl(const key_slice *min_key, const key_slice *max_key, const node *left_sibling,
                                 const node *right_sibling, bool is_root) const;
 
     static inline leaf_node *alloc() {
@@ -721,7 +646,7 @@ private:
     }
 
     static void deleter(void *p) {
-      leaf_node *n = (leaf_node *)p;
+      leaf_node *n = (leaf_node *) p;
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
       n->~leaf_node();
@@ -729,8 +654,7 @@ private:
     }
 
     static inline void release(leaf_node *n) {
-      if (unlikely(!n))
-        return;
+      if (unlikely(!n)) return;
       n->mark_deleting();
       rcu::s_instance.free_with_fn(n, deleter);
     }
@@ -768,8 +692,7 @@ private:
       while (lower < upper) {
         ssize_t i = (lower + upper) / 2;
         key_slice k0 = this->keys_[i];
-        if (k0 == k)
-          return key_search_ret(i, n);
+        if (k0 == k) return key_search_ret(i, n);
         else if (k0 > k)
           upper = i;
         else
@@ -790,8 +713,7 @@ private:
       while (lower < upper) {
         ssize_t i = (lower + upper) / 2;
         key_slice k0 = this->keys_[i];
-        if (k0 == k)
-          return key_search_ret(i, n);
+        if (k0 == k) return key_search_ret(i, n);
         else if (k0 > k)
           upper = i;
         else {
@@ -802,9 +724,7 @@ private:
       return key_search_ret(ret, n);
     }
 
-    void invariant_checker_impl(const key_slice *min_key,
-                                const key_slice *max_key,
-                                const node *left_sibling,
+    void invariant_checker_impl(const key_slice *min_key, const key_slice *max_key, const node *left_sibling,
                                 const node *right_sibling, bool is_root) const;
 
     // XXX: alloc(), deleter(), and release() are copied from leaf_node-
@@ -817,7 +737,7 @@ private:
     }
 
     static void deleter(void *p) {
-      internal_node *n = (internal_node *)p;
+      internal_node *n = (internal_node *) p;
       INVARIANT(n->is_deleting());
       INVARIANT(!n->is_locked());
       n->~internal_node();
@@ -825,8 +745,7 @@ private:
     }
 
     static inline void release(internal_node *n) {
-      if (unlikely(!n))
-        return;
+      if (unlikely(!n)) return;
       n->mark_deleting();
       rcu::s_instance.free_with_fn(n, deleter);
     }
@@ -839,22 +758,18 @@ public:
     ownership_checker<btree<P>, typename btree<P>::node>::NodeLockRegionBegin();
   }
   static inline void AssertAllNodeLocksReleased() {
-    ownership_checker<btree<P>,
-                      typename btree<P>::node>::AssertAllNodeLocksReleased();
+    ownership_checker<btree<P>, typename btree<P>::node>::AssertAllNodeLocksReleased();
   }
 
 private:
   static inline void AddNodeToLockRegion(const node *n) {
-    ownership_checker<btree<P>, typename btree<P>::node>::AddNodeToLockRegion(
-        n);
+    ownership_checker<btree<P>, typename btree<P>::node>::AddNodeToLockRegion(n);
   }
 #endif
 
 #ifdef BTREE_NODE_ALLOC_CACHE_ALIGNED
-  static const size_t LeafNodeAllocSize =
-      util::round_up<size_t, LG_CACHELINE_SIZE>(sizeof(leaf_node));
-  static const size_t InternalNodeAllocSize =
-      util::round_up<size_t, LG_CACHELINE_SIZE>(sizeof(internal_node));
+  static const size_t LeafNodeAllocSize = util::round_up<size_t, LG_CACHELINE_SIZE>(sizeof(leaf_node));
+  static const size_t InternalNodeAllocSize = util::round_up<size_t, LG_CACHELINE_SIZE>(sizeof(internal_node));
 #else
   static const size_t LeafNodeAllocSize = sizeof(leaf_node);
   static const size_t InternalNodeAllocSize = sizeof(internal_node);
@@ -865,23 +780,17 @@ private:
     return static_cast<leaf_node *>(n);
   }
 
-  static inline const leaf_node *AsLeaf(const node *n) {
-    return AsLeaf(const_cast<node *>(n));
-  }
+  static inline const leaf_node *AsLeaf(const node *n) { return AsLeaf(const_cast<node *>(n)); }
 
   static inline internal_node *AsInternal(node *n) {
     INVARIANT(!n || n->is_internal_node());
     return static_cast<internal_node *>(n);
   }
 
-  static inline const internal_node *AsInternal(const node *n) {
-    return AsInternal(const_cast<node *>(n));
-  }
+  static inline const internal_node *AsInternal(const node *n) { return AsInternal(const_cast<node *>(n)); }
 
   static inline leaf_node *AsLeafCheck(node *n, uint64_t v) {
-    return likely(n) && RawVersionManip::IsLeafNode(v)
-               ? static_cast<leaf_node *>(n)
-               : NULL;
+    return likely(n) && RawVersionManip::IsLeafNode(v) ? static_cast<leaf_node *>(n) : NULL;
   }
 
   static inline leaf_node *AsLeafCheck(node *n) {
@@ -892,36 +801,26 @@ private:
     return AsLeafCheck(const_cast<node *>(n), v);
   }
 
-  static inline const leaf_node *AsLeafCheck(const node *n) {
-    return AsLeafCheck(const_cast<node *>(n));
-  }
+  static inline const leaf_node *AsLeafCheck(const node *n) { return AsLeafCheck(const_cast<node *>(n)); }
 
   static inline internal_node *AsInternalCheck(node *n) {
-    return likely(n) && n->is_internal_node() ? static_cast<internal_node *>(n)
-                                              : NULL;
+    return likely(n) && n->is_internal_node() ? static_cast<internal_node *>(n) : NULL;
   }
 
-  static inline const internal_node *AsInternalCheck(const node *n) {
-    return AsInternalCheck(const_cast<node *>(n));
-  }
+  static inline const internal_node *AsInternalCheck(const node *n) { return AsInternalCheck(const_cast<node *>(n)); }
 
-  static inline void
-  UnlockNodes(typename util::vec<node *>::type &locked_nodes) {
-    for (auto it = locked_nodes.begin(); it != locked_nodes.end(); ++it)
-      (*it)->unlock();
+  static inline void UnlockNodes(typename util::vec<node *>::type &locked_nodes) {
+    for (auto it = locked_nodes.begin(); it != locked_nodes.end(); ++it) (*it)->unlock();
     locked_nodes.clear();
   }
 
-  template <typename T>
-  static inline T
-  UnlockAndReturn(typename util::vec<node *>::type &locked_nodes, T t) {
+  template<typename T>
+  static inline T UnlockAndReturn(typename util::vec<node *>::type &locked_nodes, T t) {
     UnlockNodes(locked_nodes);
     return t;
   }
 
-  static bool CheckVersion(uint64_t a, uint64_t b) {
-    return VersionManip::CheckVersion(a, b);
-  }
+  static bool CheckVersion(uint64_t a, uint64_t b) { return VersionManip::CheckVersion(a, b); }
 
   /**
    * Is not thread safe, and does not use RCU to free memory
@@ -945,10 +844,8 @@ public:
 
   btree() : root_(leaf_node::alloc()) {
     static_assert(NKeysPerNode > (sizeof(key_slice) + 2),
-                  "XX"); // so we can always do a split
-    static_assert(NKeysPerNode <= (VersionManip::HDR_KEY_SLOTS_MASK >>
-                                   VersionManip::HDR_KEY_SLOTS_SHIFT),
-                  "XX");
+                  "XX");// so we can always do a split
+    static_assert(NKeysPerNode <= (VersionManip::HDR_KEY_SLOTS_MASK >> VersionManip::HDR_KEY_SLOTS_SHIFT), "XX");
 
 #ifdef CHECK_INVARIANTS
     root_->lock();
@@ -983,15 +880,12 @@ public:
   }
 
   /** Note: invariant checking is not thread safe */
-  inline void invariant_checker() const {
-    root_->invariant_checker(NULL, NULL, NULL, NULL, true);
-  }
+  inline void invariant_checker() const { root_->invariant_checker(NULL, NULL, NULL, NULL, true); }
 
   /** NOTE: the public interface assumes that the caller has taken care
    * of setting up RCU */
 
-  inline bool search(const key_type &k, value_type &v,
-                     versioned_node_t *search_info = nullptr) const {
+  inline bool search(const key_type &k, value_type &v, versioned_node_t *search_info = nullptr) const {
     rcu_region guard;
     typename util::vec<leaf_node *>::type ns;
     return search_impl(k, v, ns, search_info);
@@ -1020,8 +914,7 @@ public:
     /**
      * This key/value pair was read from node n @ version
      */
-    virtual bool invoke(const string_type &k, value_type v,
-                        const node_opaque_t *n, uint64_t version) = 0;
+    virtual bool invoke(const string_type &k, value_type v, const node_opaque_t *n, uint64_t version) = 0;
   };
 
   /**
@@ -1031,8 +924,7 @@ public:
   public:
     virtual void on_resp_node(const node_opaque_t *n, uint64_t version) {}
 
-    virtual bool invoke(const string_type &k, value_type v,
-                        const node_opaque_t *n, uint64_t version) {
+    virtual bool invoke(const string_type &k, value_type v, const node_opaque_t *n, uint64_t version) {
       return invoke(k, v);
     }
 
@@ -1040,40 +932,38 @@ public:
   };
 
 private:
-  template <typename T>
+  template<typename T>
   class type_callback_wrapper : public search_range_callback {
   public:
     type_callback_wrapper(T *callback) : callback_(callback) {}
-    virtual bool invoke(const string_type &k, value_type v) {
-      return callback_->operator()(k, v);
-    }
+    virtual bool invoke(const string_type &k, value_type v) { return callback_->operator()(k, v); }
 
   private:
     T *const callback_;
   };
 
   struct leaf_kvinfo {
-    key_slice key_; // in host endian
+    key_slice key_;// in host endian
     key_slice key_big_endian_;
     typename leaf_node::value_or_node_ptr vn_;
     bool layer_;
     size_t length_;
     varkey suffix_;
-    leaf_kvinfo() {} // for STL
-    leaf_kvinfo(key_slice key, typename leaf_node::value_or_node_ptr vn,
-                bool layer, size_t length, const varkey &suffix)
-        : key_(key), key_big_endian_(util::big_endian_trfm<key_slice>()(key)),
-          vn_(vn), layer_(layer), length_(length), suffix_(suffix) {}
+    leaf_kvinfo() {}// for STL
+    leaf_kvinfo(key_slice key, typename leaf_node::value_or_node_ptr vn, bool layer, size_t length,
+                const varkey &suffix)
+        : key_(key),
+          key_big_endian_(util::big_endian_trfm<key_slice>()(key)),
+          vn_(vn),
+          layer_(layer),
+          length_(length),
+          suffix_(suffix) {}
 
-    inline const char *keyslice() const {
-      return (const char *)&key_big_endian_;
-    }
+    inline const char *keyslice() const { return (const char *) &key_big_endian_; }
   };
 
-  bool search_range_at_layer(leaf_node *leaf, string_type &prefix,
-                             const key_type &lower, bool inc_lower,
-                             const key_type *upper,
-                             low_level_search_range_callback &callback) const;
+  bool search_range_at_layer(leaf_node *leaf, string_type &prefix, const key_type &lower, bool inc_lower,
+                             const key_type *upper, low_level_search_range_callback &callback) const;
 
 public:
   /**
@@ -1121,13 +1011,11 @@ public:
    *   B) no concurrent mutation of string
    * note that string contents upon return are arbitrary
    */
-  void search_range_call(const key_type &lower, const key_type *upper,
-                         low_level_search_range_callback &callback,
+  void search_range_call(const key_type &lower, const key_type *upper, low_level_search_range_callback &callback,
                          string_type *buf = nullptr) const;
 
   // (lower, upper]
-  void rsearch_range_call(const key_type &upper, const key_type *lower,
-                          low_level_search_range_callback &callback,
+  void rsearch_range_call(const key_type &upper, const key_type *lower, low_level_search_range_callback &callback,
                           std::string *buf = nullptr) const {
     NDB_UNIMPLEMENTED("rsearch_range_call");
   }
@@ -1138,16 +1026,16 @@ public:
    * otherwise
    *
    */
-  template <typename T>
-  inline void search_range(const key_type &lower, const key_type *upper,
-                           T &callback, string_type *buf = nullptr) const {
+  template<typename T>
+  inline void search_range(const key_type &lower, const key_type *upper, T &callback,
+                           string_type *buf = nullptr) const {
     type_callback_wrapper<T> w(&callback);
     search_range_call(lower, upper, w, buf);
   }
 
-  template <typename F>
-  inline void rsearch_range(const key_type &upper, const key_type *lower,
-                            F &callback, std::string *buf = nullptr) const {
+  template<typename F>
+  inline void rsearch_range(const key_type &upper, const key_type *lower, F &callback,
+                            std::string *buf = nullptr) const {
     NDB_UNIMPLEMENTED("rsearch_range");
   }
 
@@ -1158,22 +1046,18 @@ public:
    * If false and old_v is not NULL, then the overwritten value of v
    * is written into old_v
    */
-  inline bool insert(const key_type &k, value_type v, value_type *old_v = NULL,
-                     insert_info_t *insert_info = NULL) {
+  inline bool insert(const key_type &k, value_type v, value_type *old_v = NULL, insert_info_t *insert_info = NULL) {
     rcu_region guard;
-    return insert_stable_location((node **)&root_, k, v, false, old_v,
-                                  insert_info);
+    return insert_stable_location((node **) &root_, k, v, false, old_v, insert_info);
   }
 
   /**
    * Only puts k=>v if k does not exist in map. returns true
    * if k inserted, false otherwise (k exists already)
    */
-  inline bool insert_if_absent(const key_type &k, value_type v,
-                               insert_info_t *insert_info = NULL) {
+  inline bool insert_if_absent(const key_type &k, value_type v, insert_info_t *insert_info = NULL) {
     rcu_region guard;
-    return insert_stable_location((node **)&root_, k, v, true, NULL,
-                                  insert_info);
+    return insert_stable_location((node **) &root_, k, v, true, NULL, insert_info);
   }
 
   /**
@@ -1184,16 +1068,14 @@ public:
    */
   inline bool remove(const key_type &k, value_type *old_v = NULL) {
     rcu_region guard;
-    return remove_stable_location((node **)&root_, k, old_v);
+    return remove_stable_location((node **) &root_, k, old_v);
   }
 
 private:
-  bool insert_stable_location(node **root_location, const key_type &k,
-                              value_type v, bool only_if_absent,
+  bool insert_stable_location(node **root_location, const key_type &k, value_type v, bool only_if_absent,
                               value_type *old_v, insert_info_t *insert_info);
 
-  bool remove_stable_location(node **root_location, const key_type &k,
-                              value_type *old_v);
+  bool remove_stable_location(node **root_location, const key_type &k, value_type *old_v);
 
 public:
   /**
@@ -1253,8 +1135,7 @@ public:
   }
 
   // [value, has_suffix]
-  static std::vector<std::pair<value_type, bool>>
-  ExtractValues(const node_opaque_t *n);
+  static std::vector<std::pair<value_type, bool>> ExtractValues(const node_opaque_t *n);
 
   void print() {}
 
@@ -1275,63 +1156,47 @@ private:
    *
    * Note: Assumes that array[n] is valid memory.
    */
-  template <typename T>
-  static inline ALWAYS_INLINE void sift_right(T *array, size_t p, size_t n,
-                                              size_t k = 1) {
-    if (k == 0)
-      return;
-    for (size_t i = n + k - 1; i > p + k - 1; i--)
-      array[i] = array[i - k];
+  template<typename T>
+  static inline ALWAYS_INLINE void sift_right(T *array, size_t p, size_t n, size_t k = 1) {
+    if (k == 0) return;
+    for (size_t i = n + k - 1; i > p + k - 1; i--) array[i] = array[i - k];
   }
 
   // use swap() to do moves, for efficiency- avoid this
   // variant when using primitive arrays
-  template <typename T>
-  static inline ALWAYS_INLINE void sift_swap_right(T *array, size_t p, size_t n,
-                                                   size_t k = 1) {
-    if (k == 0)
-      return;
-    for (size_t i = n + k - 1; i > p + k - 1; i--)
-      array[i].swap(array[i - k]);
+  template<typename T>
+  static inline ALWAYS_INLINE void sift_swap_right(T *array, size_t p, size_t n, size_t k = 1) {
+    if (k == 0) return;
+    for (size_t i = n + k - 1; i > p + k - 1; i--) array[i].swap(array[i - k]);
   }
 
   /**
    * Move the array slice from [p + k, n) to the left by k positions, occupying
    * [p, n - k), overwriting array[p]..array[p+k-1] Has no effect if p + k >= n
    */
-  template <typename T>
-  static inline ALWAYS_INLINE void sift_left(T *array, size_t p, size_t n,
-                                             size_t k = 1) {
-    if (unlikely(p + k >= n))
-      return;
-    for (size_t i = p; i < n - k; i++)
-      array[i] = array[i + k];
+  template<typename T>
+  static inline ALWAYS_INLINE void sift_left(T *array, size_t p, size_t n, size_t k = 1) {
+    if (unlikely(p + k >= n)) return;
+    for (size_t i = p; i < n - k; i++) array[i] = array[i + k];
   }
 
-  template <typename T>
-  static inline ALWAYS_INLINE void sift_swap_left(T *array, size_t p, size_t n,
-                                                  size_t k = 1) {
-    if (unlikely(p + k >= n))
-      return;
-    for (size_t i = p; i < n - k; i++)
-      array[i].swap(array[i + k]);
+  template<typename T>
+  static inline ALWAYS_INLINE void sift_swap_left(T *array, size_t p, size_t n, size_t k = 1) {
+    if (unlikely(p + k >= n)) return;
+    for (size_t i = p; i < n - k; i++) array[i].swap(array[i + k]);
   }
 
   /**
    * Copy [p, n) from source into dest. Has no effect if p >= n
    */
-  template <typename T>
-  static inline ALWAYS_INLINE void copy_into(T *dest, T *source, size_t p,
-                                             size_t n) {
-    for (size_t i = p; i < n; i++)
-      *dest++ = source[i];
+  template<typename T>
+  static inline ALWAYS_INLINE void copy_into(T *dest, T *source, size_t p, size_t n) {
+    for (size_t i = p; i < n; i++) *dest++ = source[i];
   }
 
-  template <typename T>
-  static inline ALWAYS_INLINE void swap_with(T *dest, T *source, size_t p,
-                                             size_t n) {
-    for (size_t i = p; i < n; i++)
-      (dest++)->swap(source[i]);
+  template<typename T>
+  static inline ALWAYS_INLINE void swap_with(T *dest, T *source, size_t p, size_t n) {
+    for (size_t i = p; i < n; i++) (dest++)->swap(source[i]);
   }
 
   leaf_node *leftmost_descend_layer(node *n) const;
@@ -1339,12 +1204,10 @@ private:
   /**
    * Assumes RCU region scope is held
    */
-  bool search_impl(const key_type &k, value_type &v,
-                   typename util::vec<leaf_node *>::type &leaf_nodes,
+  bool search_impl(const key_type &k, value_type &v, typename util::vec<leaf_node *>::type &leaf_nodes,
                    versioned_node_t *search_info = nullptr) const;
 
-  static leaf_node *FindRespLeafNode(leaf_node *leaf, uint64_t kslice,
-                                     uint64_t &version);
+  static leaf_node *FindRespLeafNode(leaf_node *leaf, uint64_t kslice, uint64_t &version);
 
   /**
    * traverses the lower leaf levels for a leaf node resp for kslice such that
@@ -1356,22 +1219,19 @@ private:
    * note to actually use the info, you still need to validate it (the info is
    * tentative as of the version)
    */
-  static leaf_node *FindRespLeafLowerBound(leaf_node *leaf, uint64_t kslice,
-                                           size_t kslicelen, uint64_t &version,
-                                           size_t &n, ssize_t &idxmatch,
-                                           ssize_t &idxlowerbound);
+  static leaf_node *FindRespLeafLowerBound(leaf_node *leaf, uint64_t kslice, size_t kslicelen, uint64_t &version,
+                                           size_t &n, ssize_t &idxmatch, ssize_t &idxlowerbound);
 
-  static leaf_node *FindRespLeafExact(leaf_node *leaf, uint64_t kslice,
-                                      size_t kslicelen, uint64_t &version,
-                                      size_t &n, ssize_t &idxmatch);
+  static leaf_node *FindRespLeafExact(leaf_node *leaf, uint64_t kslice, size_t kslicelen, uint64_t &version, size_t &n,
+                                      ssize_t &idxmatch);
 
   typedef std::pair<node *, uint64_t> insert_parent_entry;
 
   enum insert_status {
-    I_NONE_NOMOD, // no nodes split nor modified
-    I_NONE_MOD,   // no nodes split, but modified
+    I_NONE_NOMOD,// no nodes split nor modified
+    I_NONE_MOD,  // no nodes split, but modified
     I_RETRY,
-    I_SPLIT, // node(s) split
+    I_SPLIT,// node(s) split
   };
 
   /**
@@ -1383,10 +1243,8 @@ private:
    * NOTE: our implementation of insert0() is not as efficient as possible, in
    * favor of code clarity
    */
-  insert_status insert0(node *n, const key_type &k, value_type v,
-                        bool only_if_absent, value_type *old_v,
-                        insert_info_t *insert_info, key_slice &min_key,
-                        node *&new_node,
+  insert_status insert0(node *n, const key_type &k, value_type v, bool only_if_absent, value_type *old_v,
+                        insert_info_t *insert_info, key_slice &min_key, node *&new_node,
                         typename util::vec<insert_parent_entry>::type &parents,
                         typename util::vec<node *>::type &locked_nodes);
 
@@ -1401,8 +1259,7 @@ private:
     R_REPLACE_NODE,
   };
 
-  inline ALWAYS_INLINE void remove_pos_from_leaf_node(leaf_node *leaf,
-                                                      size_t pos, size_t n) {
+  inline ALWAYS_INLINE void remove_pos_from_leaf_node(leaf_node *leaf, size_t pos, size_t n) {
     INVARIANT(leaf->key_slots_used() == n);
     INVARIANT(pos < n);
     if (leaf->value_is_layer(pos)) {
@@ -1412,7 +1269,7 @@ private:
       leaf->values_[pos].n_->mark_deleting();
       INVARIANT(leaf->values_[pos].n_->is_leaf_node());
       INVARIANT(leaf->values_[pos].n_->key_slots_used() == 0);
-      leaf_node::release((leaf_node *)leaf->values_[pos].n_);
+      leaf_node::release((leaf_node *) leaf->values_[pos].n_);
 #ifdef CHECK_INVARIANTS
       leaf->values_[pos].n_->unlock();
 #endif
@@ -1420,14 +1277,12 @@ private:
     sift_left(leaf->keys_, pos, n);
     sift_left(leaf->values_, pos, n);
     sift_left(leaf->lengths_, pos, n);
-    if (leaf->suffixes_)
-      sift_swap_left(leaf->suffixes_, pos, n);
+    if (leaf->suffixes_) sift_swap_left(leaf->suffixes_, pos, n);
     leaf->dec_key_slots_used();
   }
 
-  inline ALWAYS_INLINE void
-  remove_pos_from_internal_node(internal_node *internal, size_t key_pos,
-                                size_t child_pos, size_t n) {
+  inline ALWAYS_INLINE void remove_pos_from_internal_node(internal_node *internal, size_t key_pos, size_t child_pos,
+                                                          size_t n) {
     INVARIANT(internal->key_slots_used() == n);
     INVARIANT(key_pos < n);
     INVARIANT(child_pos < n + 1);
@@ -1445,27 +1300,27 @@ private:
 
     // default ctor for STL
     remove_parent_entry()
-        : parent_(NULL), parent_left_sibling_(NULL),
-          parent_right_sibling_(NULL), parent_version_(0) {}
+        : parent_(NULL),
+          parent_left_sibling_(NULL),
+          parent_right_sibling_(NULL),
+          parent_version_(0) {}
 
-    remove_parent_entry(node *parent, node *parent_left_sibling,
-                        node *parent_right_sibling, uint64_t parent_version)
-        : parent_(parent), parent_left_sibling_(parent_left_sibling),
+    remove_parent_entry(node *parent, node *parent_left_sibling, node *parent_right_sibling, uint64_t parent_version)
+        : parent_(parent),
+          parent_left_sibling_(parent_left_sibling),
           parent_right_sibling_(parent_right_sibling),
           parent_version_(parent_version) {}
   };
 
-  remove_status remove0(node *np, key_slice *min_key, key_slice *max_key,
-                        const key_type &k, value_type *old_v, node *left_node,
-                        node *right_node, key_slice &new_key,
-                        node *&replace_node,
+  remove_status remove0(node *np, key_slice *min_key, key_slice *max_key, const key_type &k, value_type *old_v,
+                        node *left_node, node *right_node, key_slice &new_key, node *&replace_node,
                         typename util::vec<remove_parent_entry>::type &parents,
                         typename util::vec<node *>::type &locked_nodes);
 };
 
-template <typename P> inline void btree<P>::node::prefetch() const {
-  if (is_leaf_node())
-    AsLeaf(this)->prefetch();
+template<typename P>
+inline void btree<P>::node::prefetch() const {
+  if (is_leaf_node()) AsLeaf(this)->prefetch();
   else
     AsInternal(this)->prefetch();
 }

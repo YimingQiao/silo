@@ -1,8 +1,9 @@
 #ifndef _ABSTRACT_ORDERED_INDEX_H_
 #define _ABSTRACT_ORDERED_INDEX_H_
 
-#include <map>
 #include <stdint.h>
+
+#include <map>
 #include <string>
 #include <utility>
 
@@ -36,16 +37,14 @@ public:
     //
     // we keep value as std::string b/c we have more control over how those
     // strings are generated
-    virtual bool invoke(const char *keyp, size_t keylen,
-                        const std::string &value) = 0;
+    virtual bool invoke(const char *keyp, size_t keylen, const std::string &value) = 0;
   };
 
   /**
    * Search [start_key, *end_key) if end_key is not null, otherwise
    * search [start_key, +infty)
    */
-  virtual void scan(void *txn, const std::string &start_key,
-                    const std::string *end_key, scan_callback &callback,
+  virtual void scan(void *txn, const std::string &start_key, const std::string *end_key, scan_callback &callback,
                     str_arena *arena = nullptr) = 0;
 
   /**
@@ -53,8 +52,7 @@ public:
    * search (-infty, start_key] (starting at start_key and traversing
    * backwards)
    */
-  virtual void rscan(void *txn, const std::string &start_key,
-                     const std::string *end_key, scan_callback &callback,
+  virtual void rscan(void *txn, const std::string &start_key, const std::string *end_key, scan_callback &callback,
                      str_arena *arena = nullptr) = 0;
 
   /**
@@ -71,12 +69,10 @@ public:
    * returned is guaranteed to be valid memory until the key associated with
    * value is overriden.
    */
-  virtual const char *put(void *txn, const std::string &key,
-                          const std::string &value) = 0;
+  virtual const char *put(void *txn, const std::string &key, const std::string &value) = 0;
 
   virtual const char *put(void *txn, std::string &&key, std::string &&value) {
-    return put(txn, static_cast<const std::string &>(key),
-               static_cast<const std::string &>(value));
+    return put(txn, static_cast<const std::string &>(key), static_cast<const std::string &>(value));
   }
 
   /**
@@ -88,15 +84,12 @@ public:
    *
    * Default implementation calls put(). See put() for meaning of return value.
    */
-  virtual const char *insert(void *txn, const std::string &key,
-                             const std::string &value) {
+  virtual const char *insert(void *txn, const std::string &key, const std::string &value) {
     return put(txn, key, value);
   }
 
-  virtual const char *insert(void *txn, std::string &&key,
-                             std::string &&value) {
-    return insert(txn, static_cast<const std::string &>(key),
-                  static_cast<const std::string &>(value));
+  virtual const char *insert(void *txn, std::string &&key, std::string &&value) {
+    return insert(txn, static_cast<const std::string &>(key), static_cast<const std::string &>(value));
   }
 
   /**
@@ -104,9 +97,7 @@ public:
    */
   virtual void remove(void *txn, const std::string &key) { put(txn, key, ""); }
 
-  virtual void remove(void *txn, std::string &&key) {
-    remove(txn, static_cast<const std::string &>(key));
-  }
+  virtual void remove(void *txn, std::string &&key) { remove(txn, static_cast<const std::string &>(key)); }
 
   /**
    * Only an estimate, not transactional!

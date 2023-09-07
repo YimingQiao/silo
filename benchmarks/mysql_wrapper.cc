@@ -1,3 +1,5 @@
+#include "mysql_wrapper.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,7 +10,6 @@
 #include <sstream>
 
 #include "../macros.h"
-#include "mysql_wrapper.h"
 
 using namespace std;
 static bool embed_active = false;
@@ -19,8 +20,7 @@ static inline void print_error_and_bail(MYSQL *conn) {
 }
 
 static inline void check_result(MYSQL *conn, int result) {
-  if (likely(result == 0))
-    return;
+  if (likely(result == 0)) return;
   print_error_and_bail(conn);
 }
 
@@ -59,17 +59,16 @@ mysql_wrapper::mysql_wrapper(const string &dir, const string &db) : db(db) {
       "--skip-grant-tables",
       dir_arg,
       "--character-set-server=utf8",
-      "--innodb-buffer-pool-size=4G", // XXX: don't hardocde
-      "--innodb_log_file_size=1792M", // max log file size
+      "--innodb-buffer-pool-size=4G",// XXX: don't hardocde
+      "--innodb_log_file_size=1792M",// max log file size
       "--transaction_isolation=serializable",
       "--innodb_flush_method=O_DIRECT",
-      "--innodb_flush_log_at_trx_commit=0", // only flush log once every second
+      "--innodb_flush_log_at_trx_commit=0",// only flush log once every second
       "--sync_binlog=0",
       "--language=" MYSQL_SHARE_DIR,
   };
 
-  check_result(
-      0, mysql_library_init(ARRAY_NELEMS(mysql_av), (char **)mysql_av, 0));
+  check_result(0, mysql_library_init(ARRAY_NELEMS(mysql_av), (char **) mysql_av, 0));
 
   MYSQL *conn = new_connection("");
   ostringstream b;
@@ -97,11 +96,10 @@ void mysql_wrapper::thread_end() {
   mysql_thread_end();
 }
 
-void *mysql_wrapper::new_txn(uint64_t txn_flags, str_arena &arena, void *buf,
-                             TxnProfileHint hint) {
+void *mysql_wrapper::new_txn(uint64_t txn_flags, str_arena &arena, void *buf, TxnProfileHint hint) {
   ALWAYS_ASSERT(tl_conn);
   check_result(tl_conn, mysql_real_query(tl_conn, "BEGIN", 5));
-  return (void *)tl_conn;
+  return (void *) tl_conn;
 }
 
 bool mysql_wrapper::commit_txn(void *p) {
@@ -114,10 +112,8 @@ void mysql_wrapper::abort_txn(void *p) {
   check_result(tl_conn, mysql_rollback(tl_conn));
 }
 
-abstract_ordered_index *mysql_wrapper::open_index(const string &name,
-                                                  size_t value_size_hint,
-                                                  bool mostly_append) {
-  ALWAYS_ASSERT(value_size_hint <= 256); // limitation
+abstract_ordered_index *mysql_wrapper::open_index(const string &name, size_t value_size_hint, bool mostly_append) {
+  ALWAYS_ASSERT(value_size_hint <= 256);// limitation
   MYSQL *conn = new_connection(db);
   ostringstream b_create, b_truncate;
   b_create << "CREATE TABLE IF NOT EXISTS " << name
@@ -141,16 +137,14 @@ static inline string my_escape(MYSQL *conn, const char *p, size_t l) {
   return string(&buf[0], newl);
 }
 
-bool mysql_ordered_index::get(void *txn, const string &key, string &value,
-                              size_t max_bytes_read) {
+bool mysql_ordered_index::get(void *txn, const string &key, string &value, size_t max_bytes_read) {
   INVARIANT(txn == mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(key.size() <= 256);
   ostringstream b;
   b << "SELECT tbl_value FROM " << name << " WHERE tbl_key = '"
     << my_escape(mysql_wrapper::tl_conn, key.data(), key.size()) << "';";
   string q = b.str();
-  check_result(mysql_wrapper::tl_conn,
-               mysql_real_query(mysql_wrapper::tl_conn, q.data(), q.size()));
+  check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q.data(), q.size()));
   MYSQL_RES *res = mysql_store_result(mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(res);
   MYSQL_ROW row = mysql_fetch_row(res);
@@ -164,58 +158,43 @@ bool mysql_ordered_index::get(void *txn, const string &key, string &value,
   return ret;
 }
 
-const char *mysql_ordered_index::put(void *txn, const string &key,
-                                     const string &value) {
+const char *mysql_ordered_index::put(void *txn, const string &key, const string &value) {
   INVARIANT(txn == mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(key.size() <= 256);
   ALWAYS_ASSERT(value.size() <= 256);
-  string escaped_key =
-      my_escape(mysql_wrapper::tl_conn, key.data(), key.size());
-  string escaped_value =
-      my_escape(mysql_wrapper::tl_conn, value.data(), value.size());
+  string escaped_key = my_escape(mysql_wrapper::tl_conn, key.data(), key.size());
+  string escaped_value = my_escape(mysql_wrapper::tl_conn, value.data(), value.size());
   ostringstream b;
-  b << "UPDATE " << name << " SET tbl_value='" << escaped_value
-    << "' WHERE tbl_key='" << escaped_key << "';";
+  b << "UPDATE " << name << " SET tbl_value='" << escaped_value << "' WHERE tbl_key='" << escaped_key << "';";
   string q = b.str();
-  check_result(mysql_wrapper::tl_conn,
-               mysql_real_query(mysql_wrapper::tl_conn, q.data(), q.size()));
+  check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q.data(), q.size()));
   my_ulonglong ret = mysql_affected_rows(mysql_wrapper::tl_conn);
-  if (unlikely(ret == (my_ulonglong)-1))
-    print_error_and_bail(mysql_wrapper::tl_conn);
-  if (ret)
-    return 0;
+  if (unlikely(ret == (my_ulonglong) -1)) print_error_and_bail(mysql_wrapper::tl_conn);
+  if (ret) return 0;
   ostringstream b1;
-  b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '"
-     << escaped_value << "');";
+  b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '" << escaped_value << "');";
   string q1 = b1.str();
-  check_result(mysql_wrapper::tl_conn,
-               mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));
+  check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));
   return 0;
 }
 
-const char *mysql_ordered_index::insert(void *txn, const string &key,
-                                        const string &value) {
+const char *mysql_ordered_index::insert(void *txn, const string &key, const string &value) {
   INVARIANT(txn == mysql_wrapper::tl_conn);
   ALWAYS_ASSERT(key.size() <= 256);
   ALWAYS_ASSERT(value.size() <= 256);
-  string escaped_key =
-      my_escape(mysql_wrapper::tl_conn, key.data(), key.size());
-  string escaped_value =
-      my_escape(mysql_wrapper::tl_conn, value.data(), value.size());
+  string escaped_key = my_escape(mysql_wrapper::tl_conn, key.data(), key.size());
+  string escaped_value = my_escape(mysql_wrapper::tl_conn, value.data(), value.size());
   ostringstream b1;
-  b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '"
-     << escaped_value << "');";
+  b1 << "INSERT INTO " << name << " VALUES ('" << escaped_key << "', '" << escaped_value << "');";
   string q1 = b1.str();
-  check_result(mysql_wrapper::tl_conn,
-               mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));
+  check_result(mysql_wrapper::tl_conn, mysql_real_query(mysql_wrapper::tl_conn, q1.data(), q1.size()));
   return 0;
 }
 
 MYSQL *mysql_wrapper::new_connection(const string &db) {
   MYSQL *conn = mysql_init(0);
   mysql_options(conn, MYSQL_OPT_USE_EMBEDDED_CONNECTION, 0);
-  if (!mysql_real_connect(conn, 0, 0, 0, db.c_str(), 0, 0,
-                          CLIENT_FOUND_ROWS | CLIENT_MULTI_STATEMENTS)) {
+  if (!mysql_real_connect(conn, 0, 0, 0, db.c_str(), 0, 0, CLIENT_FOUND_ROWS | CLIENT_MULTI_STATEMENTS)) {
     mysql_close(conn);
     cerr << "mysql_real_connect: " << mysql_error(conn) << endl;
     ALWAYS_ASSERT(false);

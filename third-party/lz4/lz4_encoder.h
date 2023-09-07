@@ -60,7 +60,7 @@
 #endif
 
 #define HASHTABLE_NBCELLS (1U << HASHLOG)
-#define LZ4_HASH(i) (((i)*2654435761U) >> ((MINMATCH * 8) - HASHLOG))
+#define LZ4_HASH(i) (((i) *2654435761U) >> ((MINMATCH * 8) - HASHLOG))
 #define LZ4_HASHVALUE(p) LZ4_HASH(A32(p))
 
 //****************************
@@ -78,19 +78,19 @@ int FUNCTION_NAME(
 #endif
 ) {
 #ifdef USE_HEAPMEMORY
-  CURRENT_H_TYPE *HashTable = (CURRENT_H_TYPE *)ctx;
+  CURRENT_H_TYPE *HashTable = (CURRENT_H_TYPE *) ctx;
 #else
   CURRENT_H_TYPE HashTable[HASHTABLE_NBCELLS] = {0};
 #endif
 
-  const BYTE *ip = (BYTE *)source;
+  const BYTE *ip = (BYTE *) source;
   CURRENTBASE(base);
   const BYTE *anchor = ip;
   const BYTE *const iend = ip + inputSize;
   const BYTE *const mflimit = iend - MFLIMIT;
 #define matchlimit (iend - LASTLITERALS)
 
-  BYTE *op = (BYTE *)dest;
+  BYTE *op = (BYTE *) dest;
 #ifdef LIMITED_OUTPUT
   BYTE *const oend = op + maxOutputSize;
 #endif
@@ -100,18 +100,16 @@ int FUNCTION_NAME(
   U32 forwardH;
 
   // Init
-  if (inputSize < MINLENGTH)
-    goto _last_literals;
+  if (inputSize < MINLENGTH) goto _last_literals;
 #ifdef COMPRESS_64K
-  if (inputSize > LZ4_64KLIMIT)
-    return 0; // Size too large (not within 64K limit)
+  if (inputSize > LZ4_64KLIMIT) return 0;// Size too large (not within 64K limit)
 #endif
 #ifdef USE_HEAPMEMORY
-  memset((void *)HashTable, 0, HASHTABLESIZE);
+  memset((void *) HashTable, 0, HASHTABLESIZE);
 #endif
 
   // First Byte
-  HashTable[LZ4_HASHVALUE(ip)] = (CURRENT_H_TYPE)(ip - base);
+  HashTable[LZ4_HASHVALUE(ip)] = (CURRENT_H_TYPE) (ip - base);
   ip++;
   forwardH = LZ4_HASHVALUE(ip);
 
@@ -129,49 +127,44 @@ int FUNCTION_NAME(
       ip = forwardIp;
       forwardIp = ip + step;
 
-      if unlikely (forwardIp > mflimit) {
-        goto _last_literals;
-      }
+      if unlikely (forwardIp > mflimit) { goto _last_literals; }
 
       forwardH = LZ4_HASHVALUE(forwardIp);
       ref = base + HashTable[h];
-      HashTable[h] = (CURRENT_H_TYPE)(ip - base);
+      HashTable[h] = (CURRENT_H_TYPE) (ip - base);
 
     } while ((ref < ip - MAX_DISTANCE) || (A32(ref) != A32(ip)));
 
     // Catch up
-    while ((ip > anchor) && (ref > (BYTE *)source) &&
-           unlikely(ip[-1] == ref[-1])) {
+    while ((ip > anchor) && (ref > (BYTE *) source) && unlikely(ip[-1] == ref[-1])) {
       ip--;
       ref--;
     }
 
     // Encode Literal length
-    length = (int)(ip - anchor);
+    length = (int) (ip - anchor);
     token = op++;
 #ifdef LIMITED_OUTPUT
-    if unlikely (op + length + (2 + 1 + LASTLITERALS) + (length >> 8) > oend)
-      return 0; // Check output limit
+    if unlikely (op + length + (2 + 1 + LASTLITERALS) + (length >> 8) > oend) return 0;// Check output limit
 #endif
-    if (length >= (int)RUN_MASK) {
+    if (length >= (int) RUN_MASK) {
       int len = length - RUN_MASK;
       *token = (RUN_MASK << ML_BITS);
-      for (; len >= 255; len -= 255)
-        *op++ = 255;
-      *op++ = (BYTE)len;
+      for (; len >= 255; len -= 255) *op++ = 255;
+      *op++ = (BYTE) len;
     } else
-      *token = (BYTE)(length << ML_BITS);
+      *token = (BYTE) (length << ML_BITS);
 
     // Copy Literals
     LZ4_BLINDCOPY(anchor, op, length);
 
   _next_match:
     // Encode Offset
-    LZ4_WRITE_LITTLEENDIAN_16(op, (U16)(ip - ref));
+    LZ4_WRITE_LITTLEENDIAN_16(op, (U16) (ip - ref));
 
     // Start Counting
     ip += MINMATCH;
-    ref += MINMATCH; // MinMatch already verified
+    ref += MINMATCH;// MinMatch already verified
     anchor = ip;
     while
       likely(ip < matchlimit - (STEPSIZE - 1)) {
@@ -193,17 +186,15 @@ int FUNCTION_NAME(
       ip += 2;
       ref += 2;
     }
-    if ((ip < matchlimit) && (*ref == *ip))
-      ip++;
+    if ((ip < matchlimit) && (*ref == *ip)) ip++;
   _endCount:
 
     // Encode MatchLength
-    length = (int)(ip - anchor);
+    length = (int) (ip - anchor);
 #ifdef LIMITED_OUTPUT
-    if unlikely (op + (1 + LASTLITERALS) + (length >> 8) > oend)
-      return 0; // Check output limit
+    if unlikely (op + (1 + LASTLITERALS) + (length >> 8) > oend) return 0;// Check output limit
 #endif
-    if (length >= (int)ML_MASK) {
+    if (length >= (int) ML_MASK) {
       *token += ML_MASK;
       length -= ML_MASK;
       for (; length > 509; length -= 510) {
@@ -214,9 +205,9 @@ int FUNCTION_NAME(
         length -= 255;
         *op++ = 255;
       }
-      *op++ = (BYTE)length;
+      *op++ = (BYTE) length;
     } else
-      *token += (BYTE)(length);
+      *token += (BYTE) (length);
 
     // Test end of chunk
     if (ip > mflimit) {
@@ -225,11 +216,11 @@ int FUNCTION_NAME(
     }
 
     // Fill table
-    HashTable[LZ4_HASHVALUE(ip - 2)] = (CURRENT_H_TYPE)(ip - 2 - base);
+    HashTable[LZ4_HASHVALUE(ip - 2)] = (CURRENT_H_TYPE) (ip - 2 - base);
 
     // Test next position
     ref = base + HashTable[LZ4_HASHVALUE(ip)];
-    HashTable[LZ4_HASHVALUE(ip)] = (CURRENT_H_TYPE)(ip - base);
+    HashTable[LZ4_HASHVALUE(ip)] = (CURRENT_H_TYPE) (ip - base);
     if ((ref >= ip - MAX_DISTANCE) && (A32(ref) == A32(ip))) {
       token = op++;
       *token = 0;
@@ -244,26 +235,24 @@ int FUNCTION_NAME(
 _last_literals:
   // Encode Last Literals
   {
-    int lastRun = (int)(iend - anchor);
+    int lastRun = (int) (iend - anchor);
 #ifdef LIMITED_OUTPUT
-    if (((char *)op - dest) + lastRun + 1 + ((lastRun + 255 - RUN_MASK) / 255) >
-        (U32)maxOutputSize)
-      return 0; // Check output limit
+    if (((char *) op - dest) + lastRun + 1 + ((lastRun + 255 - RUN_MASK) / 255) > (U32) maxOutputSize)
+      return 0;// Check output limit
 #endif
-    if (lastRun >= (int)RUN_MASK) {
+    if (lastRun >= (int) RUN_MASK) {
       *op++ = (RUN_MASK << ML_BITS);
       lastRun -= RUN_MASK;
-      for (; lastRun >= 255; lastRun -= 255)
-        *op++ = 255;
-      *op++ = (BYTE)lastRun;
+      for (; lastRun >= 255; lastRun -= 255) *op++ = 255;
+      *op++ = (BYTE) lastRun;
     } else
-      *op++ = (BYTE)(lastRun << ML_BITS);
+      *op++ = (BYTE) (lastRun << ML_BITS);
     memcpy(op, anchor, iend - anchor);
     op += iend - anchor;
   }
 
   // End
-  return (int)(((char *)op) - dest);
+  return (int) (((char *) op) - dest);
 }
 
 //****************************

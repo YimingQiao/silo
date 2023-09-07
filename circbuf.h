@@ -11,17 +11,14 @@
 // Thread safety is ensured for many concurrent enqueuers but only one
 // concurrent dequeuer. That is, the head end is thread safe, but the tail end
 // can only be manipulated by a single thread.
-template <typename Tp, unsigned int Capacity> class circbuf {
+template<typename Tp, unsigned int Capacity>
+class circbuf {
 public:
-  circbuf() : head_(0), tail_(0) {
-    memset(&buf_[0], 0, Capacity * sizeof(buf_[0]));
-  }
+  circbuf() : head_(0), tail_(0) { memset(&buf_[0], 0, Capacity * sizeof(buf_[0])); }
 
   inline bool empty() const {
-    return head_.load(std::memory_order_acquire) ==
-               tail_.load(std::memory_order_acquire) &&
-           !buf_[head_.load(std::memory_order_acquire)].load(
-               std::memory_order_acquire);
+    return head_.load(std::memory_order_acquire) == tail_.load(std::memory_order_acquire) &&
+           !buf_[head_.load(std::memory_order_acquire)].load(std::memory_order_acquire);
   }
 
   // blocks until something enqs()
@@ -38,8 +35,7 @@ public:
 
     // found an empty spot, so we now race for it
     unsigned inext = (icur + 1) % Capacity;
-    if (!head_.compare_exchange_strong(icur, inext,
-                                       std::memory_order_acq_rel)) {
+    if (!head_.compare_exchange_strong(icur, inext, std::memory_order_acq_rel)) {
       nop_pause();
       goto retry;
     }
@@ -50,24 +46,17 @@ public:
 
   // blocks until something deqs()
   inline Tp *deq() {
-    while (!buf_[tail_.load(std::memory_order_acquire)].load(
-        std::memory_order_acquire))
-      nop_pause();
-    Tp *ret = buf_[tail_.load(std::memory_order_acquire)].load(
-        std::memory_order_acquire);
+    while (!buf_[tail_.load(std::memory_order_acquire)].load(std::memory_order_acquire)) nop_pause();
+    Tp *ret = buf_[tail_.load(std::memory_order_acquire)].load(std::memory_order_acquire);
     buf_[postincr(tail_)].store(nullptr, std::memory_order_release);
     INVARIANT(ret);
     return ret;
   }
 
-  inline Tp *peek() {
-    return buf_[tail_.load(std::memory_order_acquire)].load(
-        std::memory_order_acquire);
-  }
+  inline Tp *peek() { return buf_[tail_.load(std::memory_order_acquire)].load(std::memory_order_acquire); }
 
   // takes a current snapshot of all entries in the queue
-  inline void peekall(std::vector<Tp *> &ps,
-                      size_t limit = std::numeric_limits<size_t>::max()) {
+  inline void peekall(std::vector<Tp *> &ps, size_t limit = std::numeric_limits<size_t>::max()) {
     ps.clear();
     const unsigned t = tail_.load(std::memory_order_acquire);
     unsigned i = t;

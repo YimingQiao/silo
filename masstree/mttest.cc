@@ -57,6 +57,9 @@
 #include <malloc.h>
 #endif
 
+#include <algorithm>
+#include <numeric>
+
 #include "clp.h"
 #include "json.hh"
 #include "kvio.hh"
@@ -71,8 +74,6 @@
 #include "nodeversion.hh"
 #include "query_masstree.hh"
 #include "timestamp.hh"
-#include <algorithm>
-#include <numeric>
 
 static std::vector<int> cores;
 volatile bool timeout[2] = {false, false};
@@ -94,8 +95,7 @@ static int tcpthreads = 0;
 static bool tree_stats = false;
 static bool json_stats = false;
 static bool pinthreads = false;
-volatile uint64_t globalepoch =
-    1; // global epoch, updated by main thread regularly
+volatile uint64_t globalepoch = 1;// global epoch, updated by main thread regularly
 kvepoch_t global_log_epoch = 0;
 static int port = 2117;
 static int rscale_ncores = 0;
@@ -108,30 +108,28 @@ struct mttest_numainfo {
 std::vector<mttest_numainfo> numa;
 #endif
 
-volatile bool recovering =
-    false; // so don't add log entries, and free old value immediately
+volatile bool recovering = false;// so don't add log entries, and free old value immediately
 kvtimestamp_t initial_timestamp;
 
-static const char *threadcounter_names[(int)tc_max];
+static const char *threadcounter_names[(int) tc_max];
 
 /* running local tests */
 void test_timeout(int) {
   size_t n;
-  for (n = 0; n < arraysize(timeout) && timeout[n]; ++n)
-    /* do nothing */;
+  for (n = 0; n < arraysize(timeout) && timeout[n]; ++n) /* do nothing */
+    ;
   if (n < arraysize(timeout)) {
     timeout[n] = true;
-    if (n + 1 < arraysize(timeout) && duration[n + 1])
-      xalarm(duration[n + 1]);
+    if (n + 1 < arraysize(timeout) && duration[n + 1]) xalarm(duration[n + 1]);
   }
 }
 
-template <typename T> struct kvtest_client {
+template<typename T>
+struct kvtest_client {
   kvtest_client() : limit_(test_limit), ncores_(udpthreads), kvo_() {}
 
   ~kvtest_client() {
-    if (kvo_)
-      free_kvout(kvo_);
+    if (kvo_) free_kvout(kvo_);
   }
 
   int nthreads() const { return udpthreads; }
@@ -144,11 +142,7 @@ template <typename T> struct kvtest_client {
   }
 
   void reset(const String &test, int trial) {
-    report_ = Json()
-                  .set("table", T().name())
-                  .set("test", test)
-                  .set("trial", trial)
-                  .set("thread", ti_->index());
+    report_ = Json().set("table", T().name()).set("test", test).set("trial", trial).set("thread", ti_->index());
   }
 
   static void start_timer() {
@@ -191,9 +185,7 @@ template <typename T> struct kvtest_client {
 
   void get_check(const Str &key, const Str &expected);
 
-  void get_check(const char *key, const char *expected) {
-    get_check(Str(key), Str(expected));
-  }
+  void get_check(const char *key, const char *expected) { get_check(Str(key), Str(expected)); }
 
   void get_check(long ikey, long iexpected) {
     quick_istr key(ikey), expected(iexpected);
@@ -223,11 +215,9 @@ template <typename T> struct kvtest_client {
   }
   // void many_get_check(int nk, long ikey[], long iexpected[]);
 
-  void scan_sync(const Str &firstkey, int n, std::vector<Str> &keys,
-                 std::vector<Str> &values);
+  void scan_sync(const Str &firstkey, int n, std::vector<Str> &keys, std::vector<Str> &values);
 
-  void rscan_sync(const Str &firstkey, int n, std::vector<Str> &keys,
-                  std::vector<Str> &values);
+  void rscan_sync(const Str &firstkey, int n, std::vector<Str> &keys, std::vector<Str> &values);
 
   void put(const Str &key, const Str &value);
 
@@ -295,8 +285,7 @@ template <typename T> struct kvtest_client {
 
   void rcu_quiesce() {
     uint64_t e = timestamp() >> 16;
-    if (e != globalepoch)
-      globalepoch = e;
+    if (e != globalepoch) globalepoch = e;
     ti_->rcu_quiesce();
   }
 
@@ -311,12 +300,9 @@ template <typename T> struct kvtest_client {
   void finish() {
     Json counters;
     for (int i = 0; i < tc_max; ++i)
-      if (uint64_t c = ti_->counter(threadcounter(i)))
-        counters.set(threadcounter_names[i], c);
-    if (counters)
-      report_.set("counters", counters);
-    if (!quiet)
-      fprintf(stderr, "%d: %s\n", ti_->index(), report_.unparse().c_str());
+      if (uint64_t c = ti_->counter(threadcounter(i))) counters.set(threadcounter_names[i], c);
+    if (counters) report_.set("counters", counters);
+    if (!quiet) fprintf(stderr, "%d: %s\n", ti_->index(), report_.unparse().c_str());
   }
 
   T *table_;
@@ -329,63 +315,60 @@ template <typename T> struct kvtest_client {
   kvout *kvo_;
 
 private:
-  void output_scan(const Json &req, std::vector<Str> &keys,
-                   std::vector<Str> &values) const;
+  void output_scan(const Json &req, std::vector<Str> &keys, std::vector<Str> &values) const;
 };
 
 static volatile int kvtest_printing;
 
-template <typename T>
+template<typename T>
 inline void kvtest_print(const T &table, FILE *f, int indent, threadinfo *ti) {
   // only print out the tree from the first failure
-  while (!bool_cmpxchg((int *)&kvtest_printing, 0, ti->index() + 1))
-    /* spin */;
+  while (!bool_cmpxchg((int *) &kvtest_printing, 0, ti->index() + 1)) /* spin */
+    ;
   table.print(f, indent);
 }
 
-template <typename T>
+template<typename T>
 inline void kvtest_json_stats(T &table, Json &j, threadinfo &ti) {
   table.json_stats(j, ti);
 }
 
-template <typename T> void kvtest_client<T>::get(long ikey) {
+template<typename T>
+void kvtest_client<T>::get(long ikey) {
   quick_istr key(ikey);
   Str val;
-  (void)q_[0].run_get1(table_->table(), key.string(), 0, val, *ti_);
+  (void) q_[0].run_get1(table_->table(), key.string(), 0, val, *ti_);
 }
 
-template <typename T> bool kvtest_client<T>::get_sync(const Str &key) {
+template<typename T>
+bool kvtest_client<T>::get_sync(const Str &key) {
   Str val;
   return q_[0].run_get1(table_->table(), key, 0, val, *ti_);
 }
 
-template <typename T>
+template<typename T>
 bool kvtest_client<T>::get_sync(const Str &key, Str &value) {
   return q_[0].run_get1(table_->table(), key, 0, value, *ti_);
 }
 
-template <typename T>
+template<typename T>
 void kvtest_client<T>::get_check(const Str &key, const Str &expected) {
   Str val;
   if (!q_[0].run_get1(table_->table(), key, 0, val, *ti_))
-    fail("get(%.*s) failed (expected %.*s)\n", key.len, key.s, expected.len,
-         expected.s);
+    fail("get(%.*s) failed (expected %.*s)\n", key.len, key.s, expected.len, expected.s);
   else if (expected != val)
-    fail("get(%.*s) returned unexpected value %.*s (expected %.*s)\n", key.len,
-         key.s, std::min(val.len, 40), val.s, expected.len, expected.s);
+    fail("get(%.*s) returned unexpected value %.*s (expected %.*s)\n", key.len, key.s, std::min(val.len, 40), val.s,
+         expected.len, expected.s);
 }
 
-template <typename T>
-void kvtest_client<T>::get_col_check(const Str &key, int col,
-                                     const Str &expected) {
+template<typename T>
+void kvtest_client<T>::get_col_check(const Str &key, int col, const Str &expected) {
   Str val;
   if (!q_[0].run_get1(table_->table(), key, col, val, *ti_))
-    fail("get.%d(%.*s) failed (expected %.*s)\n", col, key.len, key.s,
-         expected.len, expected.s);
+    fail("get.%d(%.*s) failed (expected %.*s)\n", col, key.len, key.s, expected.len, expected.s);
   else if (expected != val)
-    fail("get.%d(%.*s) returned unexpected value %.*s (expected %.*s)\n", col,
-         key.len, key.s, std::min(val.len, 40), val.s, expected.len,
-         expected.s);
+    fail("get.%d(%.*s) returned unexpected value %.*s (expected %.*s)\n", col, key.len, key.s, std::min(val.len, 40),
+         val.s, expected.len, expected.s);
 }
 
 /*template <typename T>
@@ -407,27 +390,22 @@ void kvtest_client<T>::many_get_check(int nk, long ikey[], long iexpected[]) {
     }
 }*/
 
-template <typename T>
-void kvtest_client<T>::scan_sync(const Str &firstkey, int n,
-                                 std::vector<Str> &keys,
-                                 std::vector<Str> &values) {
+template<typename T>
+void kvtest_client<T>::scan_sync(const Str &firstkey, int n, std::vector<Str> &keys, std::vector<Str> &values) {
   Json req = Json::array(0, 0, firstkey, n);
   q_[0].run_scan(table_->table(), req, *ti_);
   output_scan(req, keys, values);
 }
 
-template <typename T>
-void kvtest_client<T>::rscan_sync(const Str &firstkey, int n,
-                                  std::vector<Str> &keys,
-                                  std::vector<Str> &values) {
+template<typename T>
+void kvtest_client<T>::rscan_sync(const Str &firstkey, int n, std::vector<Str> &keys, std::vector<Str> &values) {
   Json req = Json::array(0, 0, firstkey, n);
   q_[0].run_rscan(table_->table(), req, *ti_);
   output_scan(req, keys, values);
 }
 
-template <typename T>
-void kvtest_client<T>::output_scan(const Json &req, std::vector<Str> &keys,
-                                   std::vector<Str> &values) const {
+template<typename T>
+void kvtest_client<T>::output_scan(const Json &req, std::vector<Str> &keys, std::vector<Str> &values) const {
   keys.clear();
   values.clear();
   for (int i = 2; i != req.size(); i += 2) {
@@ -436,58 +414,58 @@ void kvtest_client<T>::output_scan(const Json &req, std::vector<Str> &keys,
   }
 }
 
-template <typename T>
+template<typename T>
 void kvtest_client<T>::put(const Str &key, const Str &value) {
   q_[0].run_replace(table_->table(), key, value, *ti_);
 }
 
-template <typename T>
+template<typename T>
 void kvtest_client<T>::put_col(const Str &key, int col, const Str &value) {
 #if !MASSTREE_ROW_TYPE_STR
-  if (!kvo_)
-    kvo_ = new_kvout(-1, 2048);
+  if (!kvo_) kvo_ = new_kvout(-1, 2048);
   Json x[2] = {Json(col), Json(String::make_stable(value))};
   q_[0].run_put(table_->table(), key, &x[0], &x[2], *ti_);
 #else
-  (void)key, (void)col, (void)value;
+  (void) key, (void) col, (void) value;
   assert(0);
 #endif
 }
 
-template <typename T>
+template<typename T>
 inline bool kvtest_remove(kvtest_client<T> &client, const Str &key) {
   return client.q_[0].run_remove(client.table_->table(), key, *client.ti_);
 }
 
-template <typename T> void kvtest_client<T>::remove(const Str &key) {
-  (void)kvtest_remove(*this, key);
+template<typename T>
+void kvtest_client<T>::remove(const Str &key) {
+  (void) kvtest_remove(*this, key);
 }
 
-template <typename T> bool kvtest_client<T>::remove_sync(const Str &key) {
+template<typename T>
+bool kvtest_client<T>::remove_sync(const Str &key) {
   return kvtest_remove(*this, key);
 }
 
-template <typename T>
+template<typename T>
 String kvtest_client<T>::make_message(lcdf::StringAccum &sa) const {
   const char *begin = sa.begin();
-  while (begin != sa.end() && isspace((unsigned char)*begin))
-    ++begin;
+  while (begin != sa.end() && isspace((unsigned char) *begin)) ++begin;
   String s = String(begin, sa.end());
-  if (!s.empty() && s.back() != '\n')
-    s += '\n';
+  if (!s.empty() && s.back() != '\n') s += '\n';
   return s;
 }
 
-template <typename T> void kvtest_client<T>::notice(const char *fmt, ...) {
+template<typename T>
+void kvtest_client<T>::notice(const char *fmt, ...) {
   va_list val;
   va_start(val, fmt);
   String m = make_message(lcdf::StringAccum().vsnprintf(500, fmt, val));
   va_end(val);
-  if (m && !quiet)
-    fprintf(stderr, "%d: %s", ti_->index(), m.c_str());
+  if (m && !quiet) fprintf(stderr, "%d: %s", ti_->index(), m.c_str());
 }
 
-template <typename T> void kvtest_client<T>::fail(const char *fmt, ...) {
+template<typename T>
+void kvtest_client<T>::fail(const char *fmt, ...) {
   static nodeversion failing_lock(false);
   static nodeversion fail_message_lock(false);
   static String fail_message;
@@ -496,8 +474,7 @@ template <typename T> void kvtest_client<T>::fail(const char *fmt, ...) {
   va_start(val, fmt);
   String m = make_message(lcdf::StringAccum().vsnprintf(500, fmt, val));
   va_end(val);
-  if (!m)
-    m = "unknown failure";
+  if (!m) m = "unknown failure";
 
   fail_message_lock.lock();
   if (fail_message != m) {
@@ -546,28 +523,15 @@ MAKE_TESTRUNNER(rwsmall24, kvtest_rwsmall24(client));
 MAKE_TESTRUNNER(rwsep24, kvtest_rwsep24(client));
 MAKE_TESTRUNNER(wscale, kvtest_wscale(client));
 MAKE_TESTRUNNER(ruscale_init, kvtest_ruscale_init(client));
-MAKE_TESTRUNNER(rscale, if (client.ti_->index() < ::rscale_ncores)
-                            kvtest_rscale(client));
+MAKE_TESTRUNNER(rscale, if (client.ti_->index() < ::rscale_ncores) kvtest_rscale(client));
 MAKE_TESTRUNNER(uscale, kvtest_uscale(client));
 MAKE_TESTRUNNER(bdb, kvtest_bdb(client));
-MAKE_TESTRUNNER(wcol1,
-                kvtest_wcol1at(client, client.id() % 24,
-                               kvtest_first_seed + client.id() % 48, 5000000));
-MAKE_TESTRUNNER(rcol1,
-                kvtest_rcol1at(client, client.id() % 24,
-                               kvtest_first_seed + client.id() % 48, 5000000));
-MAKE_TESTRUNNER(wcol1o1,
-                kvtest_wcol1at(client, (client.id() + 1) % 24,
-                               kvtest_first_seed + client.id() % 48, 5000000));
-MAKE_TESTRUNNER(rcol1o1,
-                kvtest_rcol1at(client, (client.id() + 1) % 24,
-                               kvtest_first_seed + client.id() % 48, 5000000));
-MAKE_TESTRUNNER(wcol1o2,
-                kvtest_wcol1at(client, (client.id() + 2) % 24,
-                               kvtest_first_seed + client.id() % 48, 5000000));
-MAKE_TESTRUNNER(rcol1o2,
-                kvtest_rcol1at(client, (client.id() + 2) % 24,
-                               kvtest_first_seed + client.id() % 48, 5000000));
+MAKE_TESTRUNNER(wcol1, kvtest_wcol1at(client, client.id() % 24, kvtest_first_seed + client.id() % 48, 5000000));
+MAKE_TESTRUNNER(rcol1, kvtest_rcol1at(client, client.id() % 24, kvtest_first_seed + client.id() % 48, 5000000));
+MAKE_TESTRUNNER(wcol1o1, kvtest_wcol1at(client, (client.id() + 1) % 24, kvtest_first_seed + client.id() % 48, 5000000));
+MAKE_TESTRUNNER(rcol1o1, kvtest_rcol1at(client, (client.id() + 1) % 24, kvtest_first_seed + client.id() % 48, 5000000));
+MAKE_TESTRUNNER(wcol1o2, kvtest_wcol1at(client, (client.id() + 2) % 24, kvtest_first_seed + client.id() % 48, 5000000));
+MAKE_TESTRUNNER(rcol1o2, kvtest_rcol1at(client, (client.id() + 2) % 24, kvtest_first_seed + client.id() % 48, 5000000));
 MAKE_TESTRUNNER(scan1, kvtest_scan1(client, 0));
 MAKE_TESTRUNNER(scan1q80, kvtest_scan1(client, 0.8));
 MAKE_TESTRUNNER(rscan1, kvtest_rscan1(client, 0));
@@ -575,13 +539,10 @@ MAKE_TESTRUNNER(rscan1q80, kvtest_rscan1(client, 0.8));
 MAKE_TESTRUNNER(splitremove1, kvtest_splitremove1(client));
 MAKE_TESTRUNNER(url, kvtest_url(client));
 
-enum {
-  test_thread_initialize = 1,
-  test_thread_destroy = 2,
-  test_thread_stats = 3
-};
+enum { test_thread_initialize = 1, test_thread_destroy = 2, test_thread_stats = 3 };
 
-template <typename T> struct test_thread {
+template<typename T>
+struct test_thread {
   test_thread(threadinfo *ti) {
     client_.set_table(table_, ti);
     client_.ti_->rcu_start();
@@ -619,8 +580,7 @@ template <typename T> struct test_thread {
 #endif
 
     test_thread<T> tt(ti);
-    if (fetch_and_add(&active_threads_, 1) == 0)
-      tt.ready_timeouts();
+    if (fetch_and_add(&active_threads_, 1) == 0) tt.ready_timeouts();
     String test = ::current_test_name;
     int subtestno = 0;
     for (int pos = 0; pos < test.length();) {
@@ -628,15 +588,12 @@ template <typename T> struct test_thread {
       comma = (comma < 0 ? test.length() : comma);
       String subtest = test.substr(pos, comma - pos), tname;
       testrunner *tr = testrunner::find(subtest);
-      tname =
-          (subtest == test ? subtest : test + String("@") + String(subtestno));
+      tname = (subtest == test ? subtest : test + String("@") + String(subtestno));
       tt.client_.reset(tname, ::current_trial);
-      if (tr)
-        tr->run(tt.client_);
+      if (tr) tr->run(tt.client_);
       else
         tt.client_.fail("unknown test %s", subtest.c_str());
-      if (comma == test.length())
-        break;
+      if (comma == test.length()) break;
       pthread_mutex_lock(&subtest_mutex);
       if (fetch_and_add(&active_threads_, -1) == 1) {
         pthread_cond_broadcast(&subtest_cond);
@@ -650,16 +607,12 @@ template <typename T> struct test_thread {
       ++subtestno;
     }
     int at = fetch_and_add(&active_threads_, -1);
-    if (at == 1 && print_table)
-      kvtest_print(*table_, stdout, 0, tt.client_.ti_);
+    if (at == 1 && print_table) kvtest_print(*table_, stdout, 0, tt.client_.ti_);
     if (at == 1 && json_stats) {
       Json j;
       kvtest_json_stats(*table_, j, *tt.client_.ti_);
       if (j) {
-        fprintf(stderr, "%s\n",
-                j.unparse(Json::indent_depth(1).tab_width(2).newline_terminator(
-                              true))
-                    .c_str());
+        fprintf(stderr, "%s\n", j.unparse(Json::indent_depth(1).tab_width(2).newline_terminator(true)).c_str());
         tt.client_.report_.merge(j);
       }
     }
@@ -668,10 +621,8 @@ template <typename T> struct test_thread {
   }
 
   void ready_timeouts() {
-    for (size_t i = 0; i < arraysize(timeout); ++i)
-      timeout[i] = false;
-    if (!lazy_timer && duration[0])
-      xalarm(duration[0]);
+    for (size_t i = 0; i < arraysize(timeout); ++i) timeout[i] = false;
+    if (!lazy_timer && duration[0]) xalarm(duration[0]);
   }
 
   static T *table_;
@@ -679,8 +630,10 @@ template <typename T> struct test_thread {
   kvtest_client<T> client_;
 };
 
-template <typename T> T *test_thread<T>::table_;
-template <typename T> unsigned test_thread<T>::active_threads_;
+template<typename T>
+T *test_thread<T>::table_;
+template<typename T>
+unsigned test_thread<T>::active_threads_;
 
 typedef test_thread<Masstree::default_table> masstree_test_thread;
 
@@ -690,40 +643,35 @@ static struct {
   void *(*go_func)(threadinfo *);
 
   void (*setup_func)(threadinfo *, int);
-} test_thread_map[] = {
-    {"masstree", masstree_test_thread::go, masstree_test_thread::setup},
-    {"mass", masstree_test_thread::go, masstree_test_thread::setup},
-    {"mbtree", masstree_test_thread::go, masstree_test_thread::setup},
-    {"mb", masstree_test_thread::go, masstree_test_thread::setup},
-    {"m", masstree_test_thread::go, masstree_test_thread::setup}};
+} test_thread_map[] = {{"masstree", masstree_test_thread::go, masstree_test_thread::setup},
+                       {"mass", masstree_test_thread::go, masstree_test_thread::setup},
+                       {"mbtree", masstree_test_thread::go, masstree_test_thread::setup},
+                       {"mb", masstree_test_thread::go, masstree_test_thread::setup},
+                       {"m", masstree_test_thread::go, masstree_test_thread::setup}};
 
-void runtest(int nthreads, void *(*func)(threadinfo *)) {
+void runtest(int nthreads, void *(*func)(threadinfo *) ) {
   std::vector<threadinfo *> tis;
-  for (int i = 0; i < nthreads; ++i)
-    tis.push_back(threadinfo::make(threadinfo::TI_PROCESS, i));
+  for (int i = 0; i < nthreads; ++i) tis.push_back(threadinfo::make(threadinfo::TI_PROCESS, i));
   signal(SIGALRM, test_timeout);
   for (int i = 0; i < nthreads; ++i) {
     int r = tis[i]->run(func);
     always_assert(r == 0);
   }
-  for (int i = 0; i < nthreads; ++i)
-    pthread_join(tis[i]->threadid(), 0);
+  for (int i = 0; i < nthreads; ++i) pthread_join(tis[i]->threadid(), 0);
 }
 
-static const char *const kvstats_name[] = {"ops_per_sec", "puts_per_sec",
-                                           "gets_per_sec", "scans_per_sec"};
+static const char *const kvstats_name[] = {"ops_per_sec", "puts_per_sec", "gets_per_sec", "scans_per_sec"};
 
 static Json experiment_stats;
 
 void *stat_collector(void *arg) {
-  int p = (int)(intptr_t)arg;
+  int p = (int) (intptr_t) arg;
   FILE *f = fdopen(p, "r");
   char buf[8192];
   while (fgets(buf, sizeof(buf), f)) {
     Json result = Json::parse(buf);
     if (result && result["table"] && result["test"]) {
-      String key = result["test"].to_s() + "/" + result["table"].to_s() + "/" +
-                   result["trial"].to_s();
+      String key = result["test"].to_s() + "/" + result["table"].to_s() + "/" + result["trial"].to_s();
       Json &thisex = experiment_stats.get_insert(key);
       thisex[result["thread"].to_i()] = result;
     } else
@@ -759,35 +707,35 @@ enum {
   opt_stats,
   opt_help
 };
-static const Clp_Option options[] = {
-    {"pin", 'p', opt_pin, 0, Clp_Negate},
-    {"port", 0, opt_port, Clp_ValInt, 0},
-    {"duration", 'd', opt_duration, Clp_ValDouble, 0},
-    {"lazy-timer", 0, opt_lazy_timer, 0, 0},
-    {"limit", 'l', opt_limit, clp_val_suffixdouble, 0},
-    {"normalize", 0, opt_normalize, clp_val_normalize, Clp_Negate},
-    {"test", 0, opt_test, Clp_ValString, 0},
-    {"rscale_ncores", 'r', opt_rscale_ncores, Clp_ValInt, 0},
-    {"test-rw1", 0, opt_test_name, 0, 0},
-    {"test-rw2", 0, opt_test_name, 0, 0},
-    {"test-rw3", 0, opt_test_name, 0, 0},
-    {"test-rw4", 0, opt_test_name, 0, 0},
-    {"test-rd1", 0, opt_test_name, 0, 0},
-    {"threads", 'j', opt_threads, Clp_ValInt, 0},
-    {"trials", 'T', opt_trials, Clp_ValInt, 0},
-    {"quiet", 'q', opt_quiet, 0, Clp_Negate},
-    {"print", 0, opt_print, 0, Clp_Negate},
-    {"notebook", 'b', opt_notebook, Clp_ValString, Clp_Negate},
-    {"gid", 'g', opt_gid, Clp_ValString, 0},
-    {"tree-stats", 0, opt_tree_stats, 0, 0},
-    {"stats", 0, opt_stats, 0, 0},
-    {"compare", 'c', opt_compare, Clp_ValString, 0},
-    {"cores", 0, opt_cores, Clp_ValString, 0},
-    {"no-run", 'n', opt_no_run, 0, 0},
-    {"help", 0, opt_help, 0, 0}};
+static const Clp_Option options[] = {{"pin", 'p', opt_pin, 0, Clp_Negate},
+                                     {"port", 0, opt_port, Clp_ValInt, 0},
+                                     {"duration", 'd', opt_duration, Clp_ValDouble, 0},
+                                     {"lazy-timer", 0, opt_lazy_timer, 0, 0},
+                                     {"limit", 'l', opt_limit, clp_val_suffixdouble, 0},
+                                     {"normalize", 0, opt_normalize, clp_val_normalize, Clp_Negate},
+                                     {"test", 0, opt_test, Clp_ValString, 0},
+                                     {"rscale_ncores", 'r', opt_rscale_ncores, Clp_ValInt, 0},
+                                     {"test-rw1", 0, opt_test_name, 0, 0},
+                                     {"test-rw2", 0, opt_test_name, 0, 0},
+                                     {"test-rw3", 0, opt_test_name, 0, 0},
+                                     {"test-rw4", 0, opt_test_name, 0, 0},
+                                     {"test-rd1", 0, opt_test_name, 0, 0},
+                                     {"threads", 'j', opt_threads, Clp_ValInt, 0},
+                                     {"trials", 'T', opt_trials, Clp_ValInt, 0},
+                                     {"quiet", 'q', opt_quiet, 0, Clp_Negate},
+                                     {"print", 0, opt_print, 0, Clp_Negate},
+                                     {"notebook", 'b', opt_notebook, Clp_ValString, Clp_Negate},
+                                     {"gid", 'g', opt_gid, Clp_ValString, 0},
+                                     {"tree-stats", 0, opt_tree_stats, 0, 0},
+                                     {"stats", 0, opt_stats, 0, 0},
+                                     {"compare", 'c', opt_compare, Clp_ValString, 0},
+                                     {"cores", 0, opt_cores, Clp_ValString, 0},
+                                     {"no-run", 'n', opt_no_run, 0, 0},
+                                     {"help", 0, opt_help, 0, 0}};
 
 static void help() {
-  printf("Masstree-beta mttest\n\
+  printf(
+      "Masstree-beta mttest\n\
 Usage: mttest [-jTHREADS] [OPTIONS] [PARAM=VALUE...] TEST...\n\
        mttest -n -c TESTNAME...\n\
 \n\
@@ -805,32 +753,29 @@ Options:\n\
   -c, --compare=EXPERIMENT Generated plot compares to EXPERIMENT.\n\
 \n\
 Known TESTs:\n",
-         (int)sysconf(_SC_NPROCESSORS_ONLN));
+      (int) sysconf(_SC_NPROCESSORS_ONLN));
   testrunner_base::print_names(stdout, 5);
-  printf("Or say TEST1,TEST2,... to run several tests in sequence\n\
+  printf(
+      "Or say TEST1,TEST2,... to run several tests in sequence\n\
 on the same tree.\n");
   exit(0);
 }
 
-static void run_one_test(int trial, const char *treetype, const char *test,
-                         const int *collectorpipe, int nruns);
+static void run_one_test(int trial, const char *treetype, const char *test, const int *collectorpipe, int nruns);
 
 enum { normtype_none, normtype_pertest, normtype_firsttest };
 
-static void print_gnuplot(FILE *f, const char *const *types_begin,
-                          const char *const *types_end,
+static void print_gnuplot(FILE *f, const char *const *types_begin, const char *const *types_end,
                           std::vector<String> &comparisons, int normalizetype);
 
 static void update_labnotebook(String notebook);
 
 #if HAVE_EXECINFO_H
-static const int abortable_signals[] = {SIGSEGV, SIGBUS, SIGILL, SIGABRT,
-                                        SIGFPE};
+static const int abortable_signals[] = {SIGSEGV, SIGBUS, SIGILL, SIGABRT, SIGFPE};
 
 static void abortable_signal_handler(int) {
   // reset signals so if a signal recurs, we exit
-  for (const int *it = abortable_signals;
-       it != abortable_signals + arraysize(abortable_signals); ++it)
+  for (const int *it = abortable_signals; it != abortable_signals + arraysize(abortable_signals); ++it)
     signal(*it, SIG_DFL);
   // dump backtrace to standard error
   void *return_addrs[50];
@@ -842,164 +787,150 @@ static void abortable_signal_handler(int) {
 #endif
 
 int main(int argc, char *argv[]) {
-  threadcounter_names[(int)tc_root_retry] = "root_retry";
-  threadcounter_names[(int)tc_internode_retry] = "internode_retry";
-  threadcounter_names[(int)tc_leaf_retry] = "leaf_retry";
-  threadcounter_names[(int)tc_leaf_walk] = "leaf_walk";
-  threadcounter_names[(int)tc_stable_internode_insert] =
-      "stable_internode_insert";
-  threadcounter_names[(int)tc_stable_internode_split] =
-      "stable_internode_split";
-  threadcounter_names[(int)tc_stable_leaf_insert] = "stable_leaf_insert";
-  threadcounter_names[(int)tc_stable_leaf_split] = "stable_leaf_split";
-  threadcounter_names[(int)tc_internode_lock] = "internode_lock_retry";
-  threadcounter_names[(int)tc_leaf_lock] = "leaf_lock_retry";
+  threadcounter_names[(int) tc_root_retry] = "root_retry";
+  threadcounter_names[(int) tc_internode_retry] = "internode_retry";
+  threadcounter_names[(int) tc_leaf_retry] = "leaf_retry";
+  threadcounter_names[(int) tc_leaf_walk] = "leaf_walk";
+  threadcounter_names[(int) tc_stable_internode_insert] = "stable_internode_insert";
+  threadcounter_names[(int) tc_stable_internode_split] = "stable_internode_split";
+  threadcounter_names[(int) tc_stable_leaf_insert] = "stable_leaf_insert";
+  threadcounter_names[(int) tc_stable_leaf_split] = "stable_leaf_split";
+  threadcounter_names[(int) tc_internode_lock] = "internode_lock_retry";
+  threadcounter_names[(int) tc_leaf_lock] = "leaf_lock_retry";
 
-  int ret, ntrials = 1, normtype = normtype_pertest, firstcore = -1,
-           corestride = 1;
+  int ret, ntrials = 1, normtype = normtype_pertest, firstcore = -1, corestride = 1;
   std::vector<const char *> tests, treetypes;
   std::vector<String> comparisons;
   const char *notebook = "notebook-mttest.json";
   tcpthreads = udpthreads = sysconf(_SC_NPROCESSORS_ONLN);
 
-  Clp_Parser *clp = Clp_NewParser(argc, argv, (int)arraysize(options), options);
-  Clp_AddStringListType(clp, clp_val_normalize, 0, "none", (int)normtype_none,
-                        "pertest", (int)normtype_pertest, "test",
-                        (int)normtype_pertest, "firsttest",
-                        (int)normtype_firsttest, (const char *)0);
-  Clp_AddType(clp, clp_val_suffixdouble, Clp_DisallowOptions,
-              clp_parse_suffixdouble, 0);
+  Clp_Parser *clp = Clp_NewParser(argc, argv, (int) arraysize(options), options);
+  Clp_AddStringListType(clp, clp_val_normalize, 0, "none", (int) normtype_none, "pertest", (int) normtype_pertest,
+                        "test", (int) normtype_pertest, "firsttest", (int) normtype_firsttest, (const char *) 0);
+  Clp_AddType(clp, clp_val_suffixdouble, Clp_DisallowOptions, clp_parse_suffixdouble, 0);
   int opt;
   while ((opt = Clp_Next(clp)) != Clp_Done) {
     switch (opt) {
-    case opt_pin:
-      pinthreads = !clp->negated;
-      break;
-    case opt_threads:
-      tcpthreads = udpthreads = clp->val.i;
-      break;
-    case opt_trials:
-      ntrials = clp->val.i;
-      break;
-    case opt_quiet:
-      quiet = !clp->negated;
-      break;
-    case opt_print:
-      print_table = !clp->negated;
-      break;
-    case opt_rscale_ncores:
-      rscale_ncores = clp->val.i;
-      break;
-    case opt_port:
-      port = clp->val.i;
-      break;
-    case opt_duration:
-      duration[0] = clp->val.d;
-      break;
-    case opt_lazy_timer:
-      lazy_timer = true;
-      break;
-    case opt_limit:
-      test_limit = uint64_t(clp->val.d);
-      break;
-    case opt_test:
-      tests.push_back(clp->vstr);
-      break;
-    case opt_test_name:
-      tests.push_back(clp->option->long_name + 5);
-      break;
-    case opt_normalize:
-      normtype = clp->negated ? normtype_none : clp->val.i;
-      break;
-    case opt_gid:
-      gid = clp->vstr;
-      break;
-    case opt_tree_stats:
-      tree_stats = true;
-      break;
-    case opt_stats:
-      json_stats = true;
-      break;
-    case opt_notebook:
-      if (clp->negated)
-        notebook = 0;
-      else if (clp->have_val)
-        notebook = clp->vstr;
-      else
-        notebook = "notebook-mttest.json";
-      break;
-    case opt_compare:
-      comparisons.push_back(clp->vstr);
-      break;
-    case opt_no_run:
-      ntrials = 0;
-      break;
-    case opt_cores:
-      if (firstcore >= 0 || cores.size() > 0) {
-        Clp_OptionError(clp, "%<%O%> already given");
-        exit(EXIT_FAILURE);
-      } else {
-        const char *plus = strchr(clp->vstr, '+');
-        Json ij = Json::parse(clp->vstr),
-             aj = Json::parse(String("[") + String(clp->vstr) + String("]")),
-             pj1 = Json::parse(plus ? String(clp->vstr, plus) : "x"),
-             pj2 = Json::parse(plus ? String(plus + 1) : "x");
-        for (int i = 0; aj && i < aj.size(); ++i)
-          if (!aj[i].is_int() || aj[i].to_i() < 0)
-            aj = Json();
-        if (ij && ij.is_int() && ij.to_i() >= 0)
-          firstcore = ij.to_i(), corestride = 1;
-        else if (pj1 && pj2 && pj1.is_int() && pj1.to_i() >= 0 && pj2.is_int())
-          firstcore = pj1.to_i(), corestride = pj2.to_i();
-        else if (aj) {
-          for (int i = 0; i < aj.size(); ++i)
-            cores.push_back(aj[i].to_i());
-        } else {
-          Clp_OptionError(clp, "bad %<%O%>, expected %<CORE1%>, "
-                               "%<CORE1+STRIDE%>, or %<CORE1,CORE2,...%>");
-          exit(EXIT_FAILURE);
-        }
-      }
-      break;
-    case opt_help:
-      help();
-      break;
-    case Clp_NotOption:
-      // check for parameter setting
-      if (const char *eqchr = strchr(clp->vstr, '=')) {
-        Json &param = test_param[String(clp->vstr, eqchr)];
-        const char *end_vstr = clp->vstr + strlen(clp->vstr);
-        if (param.assign_parse(eqchr + 1, end_vstr))
-          /* OK, param was valid JSON */;
-        else if (eqchr[1] != 0)
-          param = String(eqchr + 1, end_vstr);
+      case opt_pin:
+        pinthreads = !clp->negated;
+        break;
+      case opt_threads:
+        tcpthreads = udpthreads = clp->val.i;
+        break;
+      case opt_trials:
+        ntrials = clp->val.i;
+        break;
+      case opt_quiet:
+        quiet = !clp->negated;
+        break;
+      case opt_print:
+        print_table = !clp->negated;
+        break;
+      case opt_rscale_ncores:
+        rscale_ncores = clp->val.i;
+        break;
+      case opt_port:
+        port = clp->val.i;
+        break;
+      case opt_duration:
+        duration[0] = clp->val.d;
+        break;
+      case opt_lazy_timer:
+        lazy_timer = true;
+        break;
+      case opt_limit:
+        test_limit = uint64_t(clp->val.d);
+        break;
+      case opt_test:
+        tests.push_back(clp->vstr);
+        break;
+      case opt_test_name:
+        tests.push_back(clp->option->long_name + 5);
+        break;
+      case opt_normalize:
+        normtype = clp->negated ? normtype_none : clp->val.i;
+        break;
+      case opt_gid:
+        gid = clp->vstr;
+        break;
+      case opt_tree_stats:
+        tree_stats = true;
+        break;
+      case opt_stats:
+        json_stats = true;
+        break;
+      case opt_notebook:
+        if (clp->negated) notebook = 0;
+        else if (clp->have_val)
+          notebook = clp->vstr;
         else
-          param = Json();
-      } else {
-        // otherwise, tree or test
-        bool is_treetype = false;
-        for (int i = 0; i < (int)arraysize(test_thread_map) && !is_treetype;
-             ++i)
-          is_treetype = (strcmp(test_thread_map[i].treetype, clp->vstr) == 0);
-        (is_treetype ? treetypes.push_back(clp->vstr)
-                     : tests.push_back(clp->vstr));
-      }
-      break;
-    default:
-      fprintf(stderr, "Usage: mttest [-jN] TESTS...\n\
+          notebook = "notebook-mttest.json";
+        break;
+      case opt_compare:
+        comparisons.push_back(clp->vstr);
+        break;
+      case opt_no_run:
+        ntrials = 0;
+        break;
+      case opt_cores:
+        if (firstcore >= 0 || cores.size() > 0) {
+          Clp_OptionError(clp, "%<%O%> already given");
+          exit(EXIT_FAILURE);
+        } else {
+          const char *plus = strchr(clp->vstr, '+');
+          Json ij = Json::parse(clp->vstr), aj = Json::parse(String("[") + String(clp->vstr) + String("]")),
+               pj1 = Json::parse(plus ? String(clp->vstr, plus) : "x"),
+               pj2 = Json::parse(plus ? String(plus + 1) : "x");
+          for (int i = 0; aj && i < aj.size(); ++i)
+            if (!aj[i].is_int() || aj[i].to_i() < 0) aj = Json();
+          if (ij && ij.is_int() && ij.to_i() >= 0) firstcore = ij.to_i(), corestride = 1;
+          else if (pj1 && pj2 && pj1.is_int() && pj1.to_i() >= 0 && pj2.is_int())
+            firstcore = pj1.to_i(), corestride = pj2.to_i();
+          else if (aj) {
+            for (int i = 0; i < aj.size(); ++i) cores.push_back(aj[i].to_i());
+          } else {
+            Clp_OptionError(clp,
+                            "bad %<%O%>, expected %<CORE1%>, "
+                            "%<CORE1+STRIDE%>, or %<CORE1,CORE2,...%>");
+            exit(EXIT_FAILURE);
+          }
+        }
+        break;
+      case opt_help:
+        help();
+        break;
+      case Clp_NotOption:
+        // check for parameter setting
+        if (const char *eqchr = strchr(clp->vstr, '=')) {
+          Json &param = test_param[String(clp->vstr, eqchr)];
+          const char *end_vstr = clp->vstr + strlen(clp->vstr);
+          if (param.assign_parse(eqchr + 1, end_vstr)) /* OK, param was valid JSON */
+            ;
+          else if (eqchr[1] != 0)
+            param = String(eqchr + 1, end_vstr);
+          else
+            param = Json();
+        } else {
+          // otherwise, tree or test
+          bool is_treetype = false;
+          for (int i = 0; i < (int) arraysize(test_thread_map) && !is_treetype; ++i)
+            is_treetype = (strcmp(test_thread_map[i].treetype, clp->vstr) == 0);
+          (is_treetype ? treetypes.push_back(clp->vstr) : tests.push_back(clp->vstr));
+        }
+        break;
+      default:
+        fprintf(stderr,
+                "Usage: mttest [-jN] TESTS...\n\
 Try 'mttest --help' for options.\n");
-      exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);
     }
   }
   Clp_DeleteParser(clp);
-  if (firstcore < 0)
-    firstcore = cores.size() ? cores.back() + 1 : 0;
-  for (; (int)cores.size() < udpthreads; firstcore += corestride)
-    cores.push_back(firstcore);
+  if (firstcore < 0) firstcore = cores.size() ? cores.back() + 1 : 0;
+  for (; (int) cores.size() < udpthreads; firstcore += corestride) cores.push_back(firstcore);
 
 #if PMC_ENABLED
-  always_assert(pinthreads &&
-                "Using performance counter requires pinning threads to cores!");
+  always_assert(pinthreads && "Using performance counter requires pinning threads to cores!");
 #endif
 #if MEMSTATS && HAVE_NUMA_H && HAVE_LIBNUMA
   if (numa_available() != -1)
@@ -1009,15 +940,12 @@ Try 'mttest --help' for options.\n");
     }
 #endif
 #if HAVE_EXECINFO_H
-  for (const int *it = abortable_signals;
-       it != abortable_signals + arraysize(abortable_signals); ++it)
+  for (const int *it = abortable_signals; it != abortable_signals + arraysize(abortable_signals); ++it)
     signal(*it, abortable_signal_handler);
 #endif
 
-  if (treetypes.empty())
-    treetypes.push_back("m");
-  if (tests.empty())
-    tests.push_back("rw1");
+  if (treetypes.empty()) treetypes.push_back("m");
+  if (tests.empty()) tests.push_back("rw1");
 
   // arrange for a per-thread threadinfo pointer
   ret = pthread_key_create(&threadinfo::key, 0);
@@ -1032,15 +960,14 @@ Try 'mttest --help' for options.\n");
   test_output_file = fdopen(p[1], "w");
 
   pthread_t collector;
-  ret = pthread_create(&collector, 0, stat_collector, (void *)(intptr_t)p[0]);
+  ret = pthread_create(&collector, 0, stat_collector, (void *) (intptr_t) p[0]);
   always_assert(ret == 0);
   initial_timestamp = timestamp();
 
   // run tests
-  int nruns = ntrials * (int)tests.size() * (int)treetypes.size();
+  int nruns = ntrials * (int) tests.size() * (int) treetypes.size();
   std::vector<int> runlist(nruns, 0);
-  for (int i = 0; i < nruns; ++i)
-    runlist[i] = i;
+  for (int i = 0; i < nruns; ++i) runlist[i] = i;
 
   for (int counter = 0; counter < nruns; ++counter) {
     int x = random() % runlist.size();
@@ -1054,59 +981,50 @@ Try 'mttest --help' for options.\n");
     run /= tests.size();
     int tt = run;
 
-    fprintf(stderr, "%d/%u %s/%s%s", counter + 1,
-            (int)(ntrials * tests.size() * treetypes.size()), tests[t],
+    fprintf(stderr, "%d/%u %s/%s%s", counter + 1, (int) (ntrials * tests.size() * treetypes.size()), tests[t],
             treetypes[tt], quiet ? "      " : "\n");
 
     run_one_test(trial, treetypes[tt], tests[t], p, nruns);
     struct timeval delay;
     delay.tv_sec = 0;
     delay.tv_usec = 250000;
-    (void)select(0, 0, 0, 0, &delay);
+    (void) select(0, 0, 0, 0, &delay);
 
-    if (quiet)
-      fprintf(stderr, "\r%60s\r", "");
+    if (quiet) fprintf(stderr, "\r%60s\r", "");
   }
 
   fclose(test_output_file);
   pthread_join(collector, 0);
 
   // update lab notebook
-  if (notebook)
-    update_labnotebook(notebook);
+  if (notebook) update_labnotebook(notebook);
 
   // print Gnuplot
-  if (ntrials != 0)
-    comparisons.insert(comparisons.begin(), "");
+  if (ntrials != 0) comparisons.insert(comparisons.begin(), "");
   if (!isatty(STDOUT_FILENO))
-    print_gnuplot(stdout, kvstats_name, kvstats_name + arraysize(kvstats_name),
-                  comparisons, normtype);
+    print_gnuplot(stdout, kvstats_name, kvstats_name + arraysize(kvstats_name), comparisons, normtype);
 
   return 0;
 }
 
-static void run_one_test_body(int trial, const char *treetype,
-                              const char *test) {
+static void run_one_test_body(int trial, const char *treetype, const char *test) {
   threadinfo *main_ti = threadinfo::make(threadinfo::TI_MAIN, -1);
   main_ti->run();
   globalepoch = timestamp() >> 16;
-  for (int i = 0; i < (int)arraysize(test_thread_map); ++i)
+  for (int i = 0; i < (int) arraysize(test_thread_map); ++i)
     if (strcmp(test_thread_map[i].treetype, treetype) == 0) {
       current_test_name = test;
       current_trial = trial;
       test_thread_map[i].setup_func(main_ti, test_thread_initialize);
       runtest(tcpthreads, test_thread_map[i].go_func);
-      if (tree_stats)
-        test_thread_map[i].setup_func(main_ti, test_thread_stats);
+      if (tree_stats) test_thread_map[i].setup_func(main_ti, test_thread_stats);
       test_thread_map[i].setup_func(main_ti, test_thread_destroy);
       break;
     }
 }
 
-static void run_one_test(int trial, const char *treetype, const char *test,
-                         const int *collectorpipe, int nruns) {
-  if (nruns == 1)
-    run_one_test_body(trial, treetype, test);
+static void run_one_test(int trial, const char *treetype, const char *test, const int *collectorpipe, int nruns) {
+  if (nruns == 1) run_one_test_body(trial, treetype, test);
   else {
     pid_t c = fork();
     if (c == 0) {
@@ -1114,23 +1032,22 @@ static void run_one_test(int trial, const char *treetype, const char *test,
       run_one_test_body(trial, treetype, test);
       exit(0);
     } else
-      while (waitpid(c, 0, 0) == -1 && errno == EINTR)
-        /* loop */;
+      while (waitpid(c, 0, 0) == -1 && errno == EINTR) /* loop */
+        ;
   }
 }
 
 static double level(const std::vector<double> &v, double frac) {
   frac *= v.size() - 1;
-  int base = (int)frac;
-  if (base == frac)
-    return v[base];
+  int base = (int) frac;
+  if (base == frac) return v[base];
   else
     return v[base] * (1 - (frac - base)) + v[base + 1] * (frac - base);
 }
 
 static String experiment_test_table_trial(const String &key) {
   const char *l = key.begin(), *r = key.end();
-  if (l + 2 < r && l[0] == 'x' && isdigit((unsigned char)l[1])) {
+  if (l + 2 < r && l[0] == 'x' && isdigit((unsigned char) l[1])) {
     for (const char *s = l; s != r; ++s)
       if (*s == '/') {
         l = s + 1;
@@ -1146,7 +1063,7 @@ static String experiment_run_test_table(const String &key) {
     if (s[-1] == '/') {
       r = s - 1;
       break;
-    } else if (!isdigit((unsigned char)s[-1]))
+    } else if (!isdigit((unsigned char) s[-1]))
       break;
   return key.substring(l, r);
 }
@@ -1156,189 +1073,156 @@ static String experiment_test_table(const String &key) {
 }
 
 namespace {
-struct gnuplot_info {
-  static constexpr double trialdelta = 0.015, treetypedelta = 0.04,
-                          testdelta = 0.08, typedelta = 0.2;
-  double pos;
-  double nextdelta;
-  double normalization;
-  String last_test;
-  int normalizetype;
+  struct gnuplot_info {
+    static constexpr double trialdelta = 0.015, treetypedelta = 0.04, testdelta = 0.08, typedelta = 0.2;
+    double pos;
+    double nextdelta;
+    double normalization;
+    String last_test;
+    int normalizetype;
 
-  std::vector<lcdf::StringAccum> candlesticks;
-  std::vector<lcdf::StringAccum> medians;
-  lcdf::StringAccum xtics;
+    std::vector<lcdf::StringAccum> candlesticks;
+    std::vector<lcdf::StringAccum> medians;
+    lcdf::StringAccum xtics;
 
-  gnuplot_info(int nt)
-      : pos(1 - trialdelta), nextdelta(trialdelta), normalization(-1),
-        normalizetype(nt) {}
+    gnuplot_info(int nt) : pos(1 - trialdelta), nextdelta(trialdelta), normalization(-1), normalizetype(nt) {}
 
-  void one(const String &xname, int ti, const String &datatype_name);
+    void one(const String &xname, int ti, const String &datatype_name);
 
-  void print(FILE *f, const char *const *types_begin);
-};
+    void print(FILE *f, const char *const *types_begin);
+  };
 
-constexpr double gnuplot_info::trialdelta, gnuplot_info::treetypedelta,
-    gnuplot_info::testdelta, gnuplot_info::typedelta;
+  constexpr double gnuplot_info::trialdelta, gnuplot_info::treetypedelta, gnuplot_info::testdelta,
+      gnuplot_info::typedelta;
 
-void gnuplot_info::one(const String &xname, int ti,
-                       const String &datatype_name) {
-  String current_test = experiment_test_table(xname);
-  if (current_test != last_test) {
-    last_test = current_test;
-    if (normalizetype == normtype_pertest)
-      normalization = -1;
-    if (nextdelta == treetypedelta)
-      nextdelta = testdelta;
-  }
-  double beginpos = pos, firstpos = pos + nextdelta;
+  void gnuplot_info::one(const String &xname, int ti, const String &datatype_name) {
+    String current_test = experiment_test_table(xname);
+    if (current_test != last_test) {
+      last_test = current_test;
+      if (normalizetype == normtype_pertest) normalization = -1;
+      if (nextdelta == treetypedelta) nextdelta = testdelta;
+    }
+    double beginpos = pos, firstpos = pos + nextdelta;
 
-  std::vector<int> trials;
-  for (Json::object_iterator it = experiment_stats.obegin();
-       it != experiment_stats.oend(); ++it) {
-    String key = it.key();
-    if (experiment_run_test_table(key) == xname)
-      trials.push_back(strtol(key.c_str() + xname.length() + 1, 0, 0));
-  }
-  std::sort(trials.begin(), trials.end());
+    std::vector<int> trials;
+    for (Json::object_iterator it = experiment_stats.obegin(); it != experiment_stats.oend(); ++it) {
+      String key = it.key();
+      if (experiment_run_test_table(key) == xname) trials.push_back(strtol(key.c_str() + xname.length() + 1, 0, 0));
+    }
+    std::sort(trials.begin(), trials.end());
 
-  for (std::vector<int>::iterator tit = trials.begin(); tit != trials.end();
-       ++tit) {
-    Json &this_trial = experiment_stats[xname + "/" + String(*tit)];
-    std::vector<double> values;
-    for (int jn = 0; jn < this_trial.size(); ++jn)
-      if (this_trial[jn].get(datatype_name).is_number())
-        values.push_back(this_trial[jn].get(datatype_name).to_d());
-    if (values.size()) {
-      pos += nextdelta;
-      std::sort(values.begin(), values.end());
-      if (normalization < 0)
-        normalization = normalizetype == normtype_none ? 1 : level(values, 0.5);
-      if (int(candlesticks.size()) <= ti) {
-        candlesticks.resize(ti + 1);
-        medians.resize(ti + 1);
+    for (std::vector<int>::iterator tit = trials.begin(); tit != trials.end(); ++tit) {
+      Json &this_trial = experiment_stats[xname + "/" + String(*tit)];
+      std::vector<double> values;
+      for (int jn = 0; jn < this_trial.size(); ++jn)
+        if (this_trial[jn].get(datatype_name).is_number()) values.push_back(this_trial[jn].get(datatype_name).to_d());
+      if (values.size()) {
+        pos += nextdelta;
+        std::sort(values.begin(), values.end());
+        if (normalization < 0) normalization = normalizetype == normtype_none ? 1 : level(values, 0.5);
+        if (int(candlesticks.size()) <= ti) {
+          candlesticks.resize(ti + 1);
+          medians.resize(ti + 1);
+        }
+        candlesticks[ti] << pos << " " << level(values, 0) << " " << level(values, 0.25) << " " << level(values, 0.75)
+                         << " " << level(values, 1) << " " << normalization << "\n";
+        medians[ti] << pos << " " << level(values, 0.5) << " " << normalization << "\n";
+        nextdelta = trialdelta;
       }
-      candlesticks[ti] << pos << " " << level(values, 0) << " "
-                       << level(values, 0.25) << " " << level(values, 0.75)
-                       << " " << level(values, 1) << " " << normalization
-                       << "\n";
-      medians[ti] << pos << " " << level(values, 0.5) << " " << normalization
-                  << "\n";
-      nextdelta = trialdelta;
+    }
+
+    if (pos > beginpos) {
+      double middle = (firstpos + pos) / 2;
+      xtics << (xtics ? ", " : "") << "\"" << xname << "\" " << middle;
+      nextdelta = treetypedelta;
     }
   }
 
-  if (pos > beginpos) {
-    double middle = (firstpos + pos) / 2;
-    xtics << (xtics ? ", " : "") << "\"" << xname << "\" " << middle;
-    nextdelta = treetypedelta;
+  void gnuplot_info::print(FILE *f, const char *const *types_begin) {
+    std::vector<int> linetypes(medians.size(), 0);
+    int next_linetype = 1;
+    for (int i = 0; i < int(medians.size()); ++i)
+      if (medians[i]) linetypes[i] = next_linetype++;
+    struct utsname name;
+    fprintf(f, "set title \"%s (%d cores)\"\n", (uname(&name) == 0 ? name.nodename : "unknown"), udpthreads);
+    fprintf(f, "set terminal png\n");
+    fprintf(f, "set xrange [%g:%g]\n", 1 - treetypedelta, pos + treetypedelta);
+    fprintf(f, "set xtics rotate by 45 right (%s) font \"Verdana,9\"\n", xtics.c_str());
+    fprintf(f, "set key top left Left reverse\n");
+    if (normalizetype == normtype_none) fprintf(f, "set ylabel \"count\"\n");
+    else if (normalizetype == normtype_pertest)
+      fprintf(f, "set ylabel \"count, normalized per test\"\n");
+    else
+      fprintf(f, "set ylabel \"normalized count (1=%f)\"\n", normalization);
+    const char *sep = "plot ";
+    for (int i = 0; i < int(medians.size()); ++i)
+      if (medians[i]) {
+        fprintf(f,
+                "%s '-' using 1:($3/$6):($2/$6):($5/$6):($4/$6) with "
+                "candlesticks lt %d title '%s', \\\n",
+                sep, linetypes[i], types_begin[i]);
+        fprintf(f,
+                " '-' using 1:($2/$3):($2/$3):($2/$3):($2/$3) with candlesticks "
+                "lt %d notitle",
+                linetypes[i]);
+        sep = ", \\\n";
+      }
+    fprintf(f, "\n");
+    for (int i = 0; i < int(medians.size()); ++i)
+      if (medians[i]) {
+        fwrite(candlesticks[i].begin(), 1, candlesticks[i].length(), f);
+        fprintf(f, "e\n");
+        fwrite(medians[i].begin(), 1, medians[i].length(), f);
+        fprintf(f, "e\n");
+      }
   }
-}
 
-void gnuplot_info::print(FILE *f, const char *const *types_begin) {
-  std::vector<int> linetypes(medians.size(), 0);
-  int next_linetype = 1;
-  for (int i = 0; i < int(medians.size()); ++i)
-    if (medians[i])
-      linetypes[i] = next_linetype++;
-  struct utsname name;
-  fprintf(f, "set title \"%s (%d cores)\"\n",
-          (uname(&name) == 0 ? name.nodename : "unknown"), udpthreads);
-  fprintf(f, "set terminal png\n");
-  fprintf(f, "set xrange [%g:%g]\n", 1 - treetypedelta, pos + treetypedelta);
-  fprintf(f, "set xtics rotate by 45 right (%s) font \"Verdana,9\"\n",
-          xtics.c_str());
-  fprintf(f, "set key top left Left reverse\n");
-  if (normalizetype == normtype_none)
-    fprintf(f, "set ylabel \"count\"\n");
-  else if (normalizetype == normtype_pertest)
-    fprintf(f, "set ylabel \"count, normalized per test\"\n");
-  else
-    fprintf(f, "set ylabel \"normalized count (1=%f)\"\n", normalization);
-  const char *sep = "plot ";
-  for (int i = 0; i < int(medians.size()); ++i)
-    if (medians[i]) {
-      fprintf(f,
-              "%s '-' using 1:($3/$6):($2/$6):($5/$6):($4/$6) with "
-              "candlesticks lt %d title '%s', \\\n",
-              sep, linetypes[i], types_begin[i]);
-      fprintf(f,
-              " '-' using 1:($2/$3):($2/$3):($2/$3):($2/$3) with candlesticks "
-              "lt %d notitle",
-              linetypes[i]);
-      sep = ", \\\n";
-    }
-  fprintf(f, "\n");
-  for (int i = 0; i < int(medians.size()); ++i)
-    if (medians[i]) {
-      fwrite(candlesticks[i].begin(), 1, candlesticks[i].length(), f);
-      fprintf(f, "e\n");
-      fwrite(medians[i].begin(), 1, medians[i].length(), f);
-      fprintf(f, "e\n");
-    }
-}
+}// namespace
 
-} // namespace
-
-static void print_gnuplot(FILE *f, const char *const *types_begin,
-                          const char *const *types_end,
+static void print_gnuplot(FILE *f, const char *const *types_begin, const char *const *types_end,
                           std::vector<String> &comparisons, int normalizetype) {
-  for (std::vector<String>::iterator cit = comparisons.begin();
-       cit != comparisons.end(); ++cit) {
-    if (!*cit)
-      *cit = "[^x]*";
-    else if (cit->length() >= 2 && (*cit)[0] == 'x' &&
-             isdigit((unsigned char)(*cit)[1]))
+  for (std::vector<String>::iterator cit = comparisons.begin(); cit != comparisons.end(); ++cit) {
+    if (!*cit) *cit = "[^x]*";
+    else if (cit->length() >= 2 && (*cit)[0] == 'x' && isdigit((unsigned char) (*cit)[1]))
       *cit += String(cit->find_left('/') < 0 ? "/*" : "*");
     else
       *cit = String("x*") + *cit + String("*");
   }
 
   std::vector<String> all_versions, all_experiments;
-  for (Json::object_iterator it = experiment_stats.obegin();
-       it != experiment_stats.oend(); ++it)
-    for (std::vector<String>::const_iterator cit = comparisons.begin();
-         cit != comparisons.end(); ++cit)
+  for (Json::object_iterator it = experiment_stats.obegin(); it != experiment_stats.oend(); ++it)
+    for (std::vector<String>::const_iterator cit = comparisons.begin(); cit != comparisons.end(); ++cit)
       if (it.key().glob_match(*cit)) {
         all_experiments.push_back(experiment_run_test_table(it.key()));
         all_versions.push_back(experiment_test_table(it.key()));
         break;
       }
   std::sort(all_experiments.begin(), all_experiments.end());
-  all_experiments.erase(
-      std::unique(all_experiments.begin(), all_experiments.end()),
-      all_experiments.end());
+  all_experiments.erase(std::unique(all_experiments.begin(), all_experiments.end()), all_experiments.end());
   std::sort(all_versions.begin(), all_versions.end());
-  all_versions.erase(std::unique(all_versions.begin(), all_versions.end()),
-                     all_versions.end());
+  all_versions.erase(std::unique(all_versions.begin(), all_versions.end()), all_versions.end());
 
-  int ntypes = (int)(types_end - types_begin);
+  int ntypes = (int) (types_end - types_begin);
   gnuplot_info gpinfo(normalizetype);
 
   for (int ti = 0; ti < ntypes; ++ti) {
     double typepos = gpinfo.pos;
-    for (std::vector<String>::iterator vit = all_versions.begin();
-         vit != all_versions.end(); ++vit) {
-      for (std::vector<String>::iterator xit = all_experiments.begin();
-           xit != all_experiments.end(); ++xit)
-        if (experiment_test_table(*xit) == *vit)
-          gpinfo.one(*xit, ti, types_begin[ti]);
+    for (std::vector<String>::iterator vit = all_versions.begin(); vit != all_versions.end(); ++vit) {
+      for (std::vector<String>::iterator xit = all_experiments.begin(); xit != all_experiments.end(); ++xit)
+        if (experiment_test_table(*xit) == *vit) gpinfo.one(*xit, ti, types_begin[ti]);
     }
-    if (gpinfo.pos > typepos)
-      gpinfo.nextdelta = gpinfo.typedelta;
+    if (gpinfo.pos > typepos) gpinfo.nextdelta = gpinfo.typedelta;
     gpinfo.last_test = "";
   }
 
-  if (gpinfo.xtics)
-    gpinfo.print(f, types_begin);
+  if (gpinfo.xtics) gpinfo.print(f, types_begin);
 }
 
 static String read_file(FILE *f, const char *name) {
   lcdf::StringAccum sa;
   while (1) {
     size_t x = fread(sa.reserve(4096), 1, 4096, f);
-    if (x != 0)
-      sa.adjust_length(x);
+    if (x != 0) sa.adjust_length(x);
     else if (ferror(f)) {
       fprintf(stderr, "%s: %s\n", name, strerror(errno));
       return String::make_stable("???", 3);
@@ -1350,24 +1234,18 @@ static String read_file(FILE *f, const char *name) {
 static void update_labnotebook(String notebook) {
   FILE *f = (notebook == "-" ? stdin : fopen(notebook.c_str(), "r"));
   String previous_text = (f ? read_file(f, notebook.c_str()) : String());
-  if (previous_text.out_of_memory())
-    return;
-  if (f && f != stdin)
-    fclose(f);
+  if (previous_text.out_of_memory()) return;
+  if (f && f != stdin) fclose(f);
 
   Json nb = Json::parse(previous_text);
   if (previous_text && (!nb.is_object() || !nb["experiments"])) {
-    fprintf(stderr, "%s: unexpected contents, not writing new data\n",
-            notebook.c_str());
+    fprintf(stderr, "%s: unexpected contents, not writing new data\n", notebook.c_str());
     return;
   }
 
-  if (!nb)
-    nb = Json::make_object();
-  if (!nb.get("experiments"))
-    nb.set("experiments", Json::make_object());
-  if (!nb.get("data"))
-    nb.set("data", Json::make_object());
+  if (!nb) nb = Json::make_object();
+  if (!nb.get("experiments")) nb.set("experiments", Json::make_object());
+  if (!nb.get("data")) nb.set("data", Json::make_object());
 
   Json old_data = nb["data"];
   if (!experiment_stats) {
@@ -1377,30 +1255,26 @@ static void update_labnotebook(String notebook) {
 
   Json xjson;
 
-  FILE *git_info_p =
-      popen("git rev-parse HEAD | tr -d '\n'; git --no-pager diff --exit-code "
-            "--shortstat HEAD >/dev/null 2>&1 || echo M",
-            "r");
+  FILE *git_info_p = popen(
+      "git rev-parse HEAD | tr -d '\n'; git --no-pager diff --exit-code "
+      "--shortstat HEAD >/dev/null 2>&1 || echo M",
+      "r");
   String git_info = read_file(git_info_p, "<git output>");
   pclose(git_info_p);
-  if (git_info)
-    xjson.set("git-revision", git_info.trim());
+  if (git_info) xjson.set("git-revision", git_info.trim());
 
   time_t now = time(0);
   xjson.set("time", String(ctime(&now)).trim());
-  if (gid)
-    xjson.set("gid", String(gid));
+  if (gid) xjson.set("gid", String(gid));
 
   struct utsname name;
-  if (uname(&name) == 0)
-    xjson.set("machine", name.nodename);
+  if (uname(&name) == 0) xjson.set("machine", name.nodename);
 
   xjson.set("cores", udpthreads);
 
   Json &runs = xjson.get_insert("runs");
   String xname = "x" + String(nb["experiments"].size());
-  for (Json::const_iterator it = experiment_stats.begin();
-       it != experiment_stats.end(); ++it) {
+  for (Json::const_iterator it = experiment_stats.begin(); it != experiment_stats.end(); ++it) {
     String xkey = xname + "/" + it.key();
     runs.push_back(xkey);
     nb["data"][xkey] = it.value();
@@ -1409,8 +1283,7 @@ static void update_labnotebook(String notebook) {
 
   nb["experiments"][xname] = xjson;
 
-  String new_text =
-      nb.unparse(Json::indent_depth(4).tab_width(2).newline_terminator(true));
+  String new_text = nb.unparse(Json::indent_depth(4).tab_width(2).newline_terminator(true));
   f = (notebook == "-" ? stdout : fopen((notebook + "~").c_str(), "w"));
   if (!f) {
     fprintf(stderr, "%s~: %s\n", notebook.c_str(), strerror(errno));

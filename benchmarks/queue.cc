@@ -1,18 +1,17 @@
+#include <stdlib.h>
+#include <unistd.h>
+
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <stdlib.h>
-#include <unistd.h>
-
 #include "../macros.h"
 #include "../spinbarrier.h"
 #include "../thread.h"
 #include "../util.h"
 #include "../varkey.h"
-
 #include "bench.h"
 
 using namespace std;
@@ -23,7 +22,7 @@ static size_t nkeys;
 static inline string queue_key(uint64_t id0, uint64_t id1) {
   big_endian_trfm<uint64_t> t;
   string buf(2 * sizeof(uint64_t), 0);
-  uint64_t *p = (uint64_t *)&buf[0];
+  uint64_t *p = (uint64_t *) &buf[0];
   *p++ = t(id0);
   *p++ = t(id1);
   return buf;
@@ -34,12 +33,12 @@ static const string queue_values("ABCDEFGH");
 class queue_worker : public bench_worker {
 public:
   queue_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
-               const map<string, abstract_ordered_index *> &open_tables,
-               spin_barrier *barrier_a, spin_barrier *barrier_b, uint64_t id,
-               bool consumer)
-      : bench_worker(worker_id, false, seed, db, open_tables, barrier_a,
-                     barrier_b),
-        tbl(open_tables.at("table")), id(id), consumer(consumer),
+               const map<string, abstract_ordered_index *> &open_tables, spin_barrier *barrier_a,
+               spin_barrier *barrier_b, uint64_t id, bool consumer)
+      : bench_worker(worker_id, false, seed, db, open_tables, barrier_a, barrier_b),
+        tbl(open_tables.at("table")),
+        id(id),
+        consumer(consumer),
         ctr(consumer ? 0 : nkeys) {}
 
   txn_result txn_produce() {
@@ -51,15 +50,11 @@ public:
         ctr++;
         return txn_result(true, queue_values.size());
       }
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      db->abort_txn(txn);
-    }
+    } catch (abstract_db::abstract_abort_exception &ex) { db->abort_txn(txn); }
     return txn_result(false, 0);
   }
 
-  static txn_result TxnProduce(bench_worker *w) {
-    return static_cast<queue_worker *>(w)->txn_produce();
-  }
+  static txn_result TxnProduce(bench_worker *w) { return static_cast<queue_worker *>(w)->txn_produce(); }
 
   txn_result txn_consume() {
     void *txn = db->new_txn(txn_flags, arena, txn_buf());
@@ -75,17 +70,12 @@ public:
         tbl->remove(txn, k);
         ret = -queue_values.size();
       }
-      if (likely(db->commit_txn(txn)))
-        return txn_result(true, ret);
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      db->abort_txn(txn);
-    }
+      if (likely(db->commit_txn(txn))) return txn_result(true, ret);
+    } catch (abstract_db::abstract_abort_exception &ex) { db->abort_txn(txn); }
     return txn_result(false, 0);
   }
 
-  static txn_result TxnConsume(bench_worker *w) {
-    return static_cast<queue_worker *>(w)->txn_consume();
-  }
+  static txn_result TxnConsume(bench_worker *w) { return static_cast<queue_worker *>(w)->txn_consume(); }
 
   txn_result txn_consume_scanhint() {
     void *txn = db->new_txn(txn_flags, arena, txn_buf());
@@ -103,13 +93,10 @@ public:
         ret = -queue_values.size();
       }
       if (likely(db->commit_txn(txn))) {
-        if (likely(found))
-          ctr++;
+        if (likely(found)) ctr++;
         return txn_result(true, ret);
       }
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      db->abort_txn(txn);
-    }
+    } catch (abstract_db::abstract_abort_exception &ex) { db->abort_txn(txn); }
     return txn_result(false, 0);
   }
 
@@ -129,24 +116,18 @@ public:
         ret = -queue_values.size();
       }
       if (likely(db->commit_txn(txn))) {
-        if (likely(found))
-          ctr++;
+        if (likely(found)) ctr++;
         return txn_result(true, ret);
       }
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      db->abort_txn(txn);
-    }
+    } catch (abstract_db::abstract_abort_exception &ex) { db->abort_txn(txn); }
     return txn_result(false, 0);
   }
 
-  static txn_result TxnConsumeNoScan(bench_worker *w) {
-    return static_cast<queue_worker *>(w)->txn_consume_noscan();
-  }
+  static txn_result TxnConsumeNoScan(bench_worker *w) { return static_cast<queue_worker *>(w)->txn_consume_noscan(); }
 
   virtual workload_desc_vec get_workload() const {
     workload_desc_vec w;
-    if (consumer)
-      w.push_back(workload_desc("Consume", 1.0, TxnConsume));
+    if (consumer) w.push_back(workload_desc("Consume", 1.0, TxnConsume));
     // w.push_back(workload_desc("ConsumeScanHint", 1.0, TxnConsumeScanHint));
     // w.push_back(workload_desc("ConsumeNoScan", 1.0, TxnConsumeNoScan));
     else
@@ -163,8 +144,7 @@ private:
 
 class queue_table_loader : public bench_loader {
 public:
-  queue_table_loader(unsigned long seed, abstract_db *db,
-                     const map<string, abstract_ordered_index *> &open_tables)
+  queue_table_loader(unsigned long seed, abstract_db *db, const map<string, abstract_ordered_index *> &open_tables)
       : bench_loader(seed, db, open_tables) {}
 
 protected:
@@ -172,8 +152,7 @@ protected:
     abstract_ordered_index *tbl = open_tables.at("table");
     try {
       // load
-      const size_t batchsize =
-          (db->txn_max_batch_size() == -1) ? 10000 : db->txn_max_batch_size();
+      const size_t batchsize = (db->txn_max_batch_size() == -1) ? 10000 : db->txn_max_batch_size();
       ALWAYS_ASSERT(batchsize > 0);
       const size_t nbatches = nkeys / batchsize;
       for (size_t id = 0; id < nthreads / 2; id++) {
@@ -184,8 +163,7 @@ protected:
             const string &v = queue_values;
             tbl->insert(txn, k, v);
           }
-          if (verbose)
-            cerr << "batch 1/1 done" << endl;
+          if (verbose) cerr << "batch 1/1 done" << endl;
           ALWAYS_ASSERT(db->commit_txn(txn));
         } else {
           for (size_t i = 0; i < nbatches; i++) {
@@ -196,8 +174,7 @@ protected:
               const string &v = queue_values;
               tbl->insert(txn, k, v);
             }
-            if (verbose)
-              cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
+            if (verbose) cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
             ALWAYS_ASSERT(db->commit_txn(txn));
           }
         }
@@ -206,15 +183,13 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    if (verbose)
-      cerr << "[INFO] finished loading table" << endl;
+    if (verbose) cerr << "[INFO] finished loading table" << endl;
   }
 };
 
 class queue_bench_runner : public bench_runner {
 public:
-  queue_bench_runner(abstract_db *db, bool write_only)
-      : bench_runner(db), write_only(write_only) {
+  queue_bench_runner(abstract_db *db, bool write_only) : bench_runner(db), write_only(write_only) {
     open_tables["table"] = db->open_index("table", queue_values.size());
   }
 
@@ -230,17 +205,13 @@ protected:
     vector<bench_worker *> ret;
     if (write_only) {
       for (size_t i = 0; i < nthreads; i++)
-        ret.push_back(new queue_worker(i, r.next(), db, open_tables, &barrier_a,
-                                       &barrier_b, i, false));
+        ret.push_back(new queue_worker(i, r.next(), db, open_tables, &barrier_a, &barrier_b, i, false));
     } else {
       ALWAYS_ASSERT(nthreads >= 2);
-      if (verbose && (nthreads % 2))
-        cerr << "queue_bench_runner: odd number of workers given" << endl;
+      if (verbose && (nthreads % 2)) cerr << "queue_bench_runner: odd number of workers given" << endl;
       for (size_t i = 0; i < nthreads / 2; i++) {
-        ret.push_back(new queue_worker(i, r.next(), db, open_tables, &barrier_a,
-                                       &barrier_b, i, true));
-        ret.push_back(new queue_worker(i + 1, r.next(), db, open_tables,
-                                       &barrier_a, &barrier_b, i, false));
+        ret.push_back(new queue_worker(i, r.next(), db, open_tables, &barrier_a, &barrier_b, i, true));
+        ret.push_back(new queue_worker(i + 1, r.next(), db, open_tables, &barrier_a, &barrier_b, i, false));
       }
     }
     return ret;

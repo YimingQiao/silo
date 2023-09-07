@@ -26,8 +26,8 @@
 // debugging tool
 // #define TUPLE_LOCK_OWNERSHIP_CHECKING
 
-template <template <typename> class Protocol, typename Traits>
-class transaction; // forward decl
+template<template<typename> class Protocol, typename Traits>
+class transaction;// forward decl
 
 // XXX: hack
 extern std::string (*g_proto_version_str)(uint64_t v);
@@ -52,7 +52,7 @@ public:
   typedef std::string string_type;
 
   static const tid_t MIN_TID = 0;
-  static const tid_t MAX_TID = (tid_t)-1;
+  static const tid_t MAX_TID = (tid_t) -1;
 
   // lock ownership helpers- works by recording all tuple
   // locks obtained in each transaction, and then when the txn
@@ -60,9 +60,7 @@ public:
   // sure the current thread is no longer the owner of any locks
   // acquired during the txn
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-  static inline void TupleLockRegionBegin() {
-    ownership_checker<dbtuple, dbtuple>::NodeLockRegionBegin();
-  }
+  static inline void TupleLockRegionBegin() { ownership_checker<dbtuple, dbtuple>::NodeLockRegionBegin(); }
 
   // is used to signal the end of a tuple lock region
   static inline void AssertAllTupleLocksReleased() {
@@ -91,8 +89,7 @@ private:
   static const version_t HDR_LATEST_MASK = 0x1 << HDR_LATEST_SHIFT;
 
   static const version_t HDR_VERSION_SHIFT = 5;
-  static const version_t HDR_VERSION_MASK = ((version_t)-1)
-                                            << HDR_VERSION_SHIFT;
+  static const version_t HDR_VERSION_MASK = ((version_t) -1) << HDR_VERSION_SHIFT;
 
 public:
 #ifdef TUPLE_MAGIC
@@ -127,14 +124,14 @@ public:
   tid_t version;
 
   // small sizes on purpose
-  node_size_type size;       // actual size of record
-                             // (only meaningful is the deleting bit is not set)
-  node_size_type alloc_size; // max size record allowed. is the space
-                             // available for the record buf
+  node_size_type size;      // actual size of record
+                            // (only meaningful is the deleting bit is not set)
+  node_size_type alloc_size;// max size record allowed. is the space
+                            // available for the record buf
 
-  dbtuple *next; // be very careful about traversing this pointer,
-                 // GC is capable of reaping it at certain (well defined)
-                 // points, and will not bother to set it to null
+  dbtuple *next;// be very careful about traversing this pointer,
+                // GC is capable of reaping it at certain (well defined)
+                // points, and will not bother to set it to null
 
 #ifdef TUPLE_CHECK_KEY
   // for debugging
@@ -171,26 +168,28 @@ private:
 #ifdef TUPLE_MAGIC
         magic(TUPLE_MAGIC),
 #endif
-        hdr(HDR_LATEST_MASK |
-            (acquire_lock ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : 0) |
+        hdr(HDR_LATEST_MASK | (acquire_lock ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : 0) |
             (!size ? HDR_DELETING_MASK : 0))
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
         ,
         lock_owner()
 #endif
         ,
-        version(MAX_TID), size(CheckBounds(size)),
-        alloc_size(CheckBounds(alloc_size)), next(nullptr)
+        version(MAX_TID),
+        size(CheckBounds(size)),
+        alloc_size(CheckBounds(alloc_size)),
+        next(nullptr)
 #ifdef TUPLE_CHECK_KEY
         ,
-        key(), tree(nullptr)
+        key(),
+        tree(nullptr)
 #endif
 #ifdef CHECK_INVARIANTS
         ,
         opaque(0)
 #endif
   {
-    INVARIANT(((char *)this) + sizeof(*this) == (char *)&value_start[0]);
+    INVARIANT(((char *) this) + sizeof(*this) == (char *) &value_start[0]);
     INVARIANT(is_latest());
     INVARIANT(size || is_deleting());
     ++g_evt_dbtuple_creates;
@@ -202,13 +201,12 @@ private:
       INVARIANT(is_lock_owner());
     }
 #endif
-    COMPILER_MEMORY_FENCE; // for acquire_lock
+    COMPILER_MEMORY_FENCE;// for acquire_lock
   }
 
   // creates a record at version derived from base
   // (inheriting its value).
-  dbtuple(tid_t version, struct dbtuple *base, size_type alloc_size,
-          bool set_latest)
+  dbtuple(tid_t version, struct dbtuple *base, size_type alloc_size, bool set_latest)
       :
 #ifdef TUPLE_MAGIC
         magic(TUPLE_MAGIC),
@@ -219,11 +217,14 @@ private:
         lock_owner()
 #endif
         ,
-        version(version), size(base->size), alloc_size(CheckBounds(alloc_size)),
+        version(version),
+        size(base->size),
+        alloc_size(CheckBounds(alloc_size)),
         next(base->next)
 #ifdef TUPLE_CHECK_KEY
         ,
-        key(), tree(nullptr)
+        key(),
+        tree(nullptr)
 #endif
 #ifdef CHECK_INVARIANTS
         ,
@@ -232,8 +233,7 @@ private:
   {
     INVARIANT(size <= alloc_size);
     INVARIANT(set_latest == is_latest());
-    if (base->is_deleting())
-      mark_deleting();
+    if (base->is_deleting()) mark_deleting();
     NDB_MEMCPY(&value_start[0], base->get_value_start(), size);
     ++g_evt_dbtuple_creates;
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
@@ -241,25 +241,26 @@ private:
 
   // creates a spill record, copying in the *old* value if necessary, but
   // setting the size to the *new* value
-  dbtuple(tid_t version, const_record_type r, size_type old_size,
-          size_type new_size, size_type alloc_size, struct dbtuple *next,
-          bool set_latest, bool needs_old_value)
+  dbtuple(tid_t version, const_record_type r, size_type old_size, size_type new_size, size_type alloc_size,
+          struct dbtuple *next, bool set_latest, bool needs_old_value)
       :
 #ifdef TUPLE_MAGIC
         magic(TUPLE_MAGIC),
 #endif
-        hdr((set_latest ? HDR_LATEST_MASK : 0) |
-            (!new_size ? HDR_DELETING_MASK : 0))
+        hdr((set_latest ? HDR_LATEST_MASK : 0) | (!new_size ? HDR_DELETING_MASK : 0))
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
         ,
         lock_owner()
 #endif
         ,
-        version(version), size(CheckBounds(new_size)),
-        alloc_size(CheckBounds(alloc_size)), next(next)
+        version(version),
+        size(CheckBounds(new_size)),
+        alloc_size(CheckBounds(alloc_size)),
+        next(next)
 #ifdef TUPLE_CHECK_KEY
         ,
-        key(), tree(nullptr)
+        key(),
+        tree(nullptr)
 #endif
 #ifdef CHECK_INVARIANTS
         ,
@@ -270,8 +271,7 @@ private:
     INVARIANT(new_size <= alloc_size);
     INVARIANT(set_latest == is_latest());
     INVARIANT(new_size || is_deleting());
-    if (needs_old_value)
-      NDB_MEMCPY(&value_start[0], r, old_size);
+    if (needs_old_value) NDB_MEMCPY(&value_start[0], r, old_size);
     ++g_evt_dbtuple_creates;
     g_evt_dbtuple_bytes_allocated += alloc_size + sizeof(dbtuple);
   }
@@ -304,9 +304,7 @@ public:
   static inline bool IsLocked(version_t v) { return v & HDR_LOCKED_MASK; }
 
 #ifdef TUPLE_LOCK_OWNERSHIP_CHECKING
-  inline bool is_lock_owner() const {
-    return std::this_thread::get_id() == lock_owner;
-  }
+  inline bool is_lock_owner() const { return std::this_thread::get_id() == lock_owner; }
 #else
   inline bool is_lock_owner() const { return true; }
 #endif
@@ -318,11 +316,8 @@ public:
     unsigned nspins = 0;
 #endif
     version_t v = hdr;
-    const version_t lockmask = write_intent
-                                   ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK)
-                                   : (HDR_LOCKED_MASK);
-    while (IsLocked(v) ||
-           !__sync_bool_compare_and_swap(&hdr, v, v | lockmask)) {
+    const version_t lockmask = write_intent ? (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK) : (HDR_LOCKED_MASK);
+    while (IsLocked(v) || !__sync_bool_compare_and_swap(&hdr, v, v | lockmask)) {
       nop_pause();
       v = hdr;
 #ifdef ENABLE_EVENT_COUNTERS
@@ -403,7 +398,7 @@ public:
     INVARIANT(is_lock_owner());
     // INVARIANT(!IsModifying(v)); // mark_modifying() must be re-entrant
     v |= HDR_MODIFYING_MASK;
-    COMPILER_MEMORY_FENCE; // XXX: is this fence necessary?
+    COMPILER_MEMORY_FENCE;// XXX: is this fence necessary?
     hdr = v;
     COMPILER_MEMORY_FENCE;
   }
@@ -412,9 +407,7 @@ public:
 
   inline bool is_write_intent() const { return IsWriteIntent(hdr); }
 
-  static inline bool IsWriteIntent(version_t v) {
-    return v & HDR_WRITE_INTENT_MASK;
-  }
+  static inline bool IsWriteIntent(version_t v) { return v & HDR_WRITE_INTENT_MASK; }
 
   inline bool is_latest() const { return IsLatest(hdr); }
 
@@ -428,9 +421,7 @@ public:
     hdr &= ~HDR_LATEST_MASK;
   }
 
-  static inline version_t Version(version_t v) {
-    return (v & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT;
-  }
+  static inline version_t Version(version_t v) { return (v & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT; }
 
   inline version_t reader_stable_version(bool allow_write_intent) const {
     version_t v = hdr;
@@ -454,8 +445,7 @@ public:
   /**
    * returns true if succeeded, false otherwise
    */
-  inline bool try_writer_stable_version(version_t &v,
-                                        unsigned int spins) const {
+  inline bool try_writer_stable_version(version_t &v, unsigned int spins) const {
     v = hdr;
     while (IsWriteIntent(v) && spins--) {
       INVARIANT(IsLocked(v));
@@ -475,8 +465,7 @@ public:
     COMPILER_MEMORY_FENCE;
     // are the versions the same, modulo the
     // {locked, write_intent, latest} bits?
-    const version_t MODULO_BITS =
-        (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK | HDR_LATEST_MASK);
+    const version_t MODULO_BITS = (HDR_LOCKED_MASK | HDR_WRITE_INTENT_MASK | HDR_LATEST_MASK);
     return (hdr & ~MODULO_BITS) == (version & ~MODULO_BITS);
   }
 
@@ -504,9 +493,7 @@ public:
     return &value_start[0];
   }
 
-  inline ALWAYS_INLINE const uint8_t *get_value_start() const {
-    return &value_start[0];
-  }
+  inline ALWAYS_INLINE const uint8_t *get_value_start() const { return &value_start[0]; }
 
   // worst name ever...
   inline bool is_not_behind(tid_t t) const { return version <= t; }
@@ -523,11 +510,9 @@ private:
 #endif
 
   // written to be non-recursive
-  template <typename Reader, typename StringAllocator>
-  static ReadStatus record_at_chain(const dbtuple *starting, tid_t t,
-                                    tid_t &start_t, Reader &reader,
-                                    StringAllocator &sa,
-                                    bool allow_write_intent) {
+  template<typename Reader, typename StringAllocator>
+  static ReadStatus record_at_chain(const dbtuple *starting, tid_t t, tid_t &start_t, Reader &reader,
+                                    StringAllocator &sa, bool allow_write_intent) {
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nretries = 0;
     scoped_recorder rec(nretries);
@@ -541,16 +526,13 @@ private:
     if (found) {
       start_t = current->version;
       const size_t read_sz = IsDeleting(v) ? 0 : current->size;
-      if (unlikely(read_sz && !reader(current->get_value_start(), read_sz, sa)))
-        goto retry;
-      if (unlikely(!current->reader_check_version(v)))
-        goto retry;
+      if (unlikely(read_sz && !reader(current->get_value_start(), read_sz, sa))) goto retry;
+      if (unlikely(!current->reader_check_version(v))) goto retry;
       return read_sz ? READ_RECORD : READ_EMPTY;
     } else {
       p = current->get_next();
     }
-    if (unlikely(!current->reader_check_version(v)))
-      goto retry;
+    if (unlikely(!current->reader_check_version(v))) goto retry;
     if (p) {
       current = p;
       goto loop;
@@ -567,9 +549,8 @@ private:
 
   // we force one level of inlining, but don't force record_at_chain()
   // to be inlined
-  template <typename Reader, typename StringAllocator>
-  inline ALWAYS_INLINE ReadStatus record_at(tid_t t, tid_t &start_t,
-                                            Reader &reader, StringAllocator &sa,
+  template<typename Reader, typename StringAllocator>
+  inline ALWAYS_INLINE ReadStatus record_at(tid_t t, tid_t &start_t, Reader &reader, StringAllocator &sa,
                                             bool allow_write_intent) const {
 #ifdef ENABLE_EVENT_COUNTERS
     unsigned long nretries = 0;
@@ -593,18 +574,14 @@ private:
       //   return READ_FAILED;
       start_t = version;
       const size_t read_sz = IsDeleting(v) ? 0 : size;
-      if (unlikely(read_sz && !reader(get_value_start(), read_sz, sa)))
-        goto retry;
-      if (unlikely(!reader_check_version(v)))
-        goto retry;
+      if (unlikely(read_sz && !reader(get_value_start(), read_sz, sa))) goto retry;
+      if (unlikely(!reader_check_version(v))) goto retry;
       return read_sz ? READ_RECORD : READ_EMPTY;
     } else {
       p = get_next();
     }
-    if (unlikely(!reader_check_version(v)))
-      goto retry;
-    if (p)
-      return record_at_chain(p, t, start_t, reader, sa, allow_write_intent);
+    if (unlikely(!reader_check_version(v))) goto retry;
+    if (p) return record_at_chain(p, t, start_t, reader, sa, allow_write_intent);
     // NB(stephentu): if we reach the end of a chain then we assume that
     // the record exists as a deleted record.
     //
@@ -646,30 +623,24 @@ public:
    * NB(stephentu): calling stable_read() while holding the lock
    * is an error- this will cause deadlock
    */
-  template <typename Reader, typename StringAllocator>
-  inline ALWAYS_INLINE ReadStatus stable_read(tid_t t, tid_t &start_t,
-                                              Reader &reader,
-                                              StringAllocator &sa,
+  template<typename Reader, typename StringAllocator>
+  inline ALWAYS_INLINE ReadStatus stable_read(tid_t t, tid_t &start_t, Reader &reader, StringAllocator &sa,
                                               bool allow_write_intent) const {
     return record_at(t, start_t, reader, sa, allow_write_intent);
   }
 
-  inline bool is_latest_version(tid_t t) const {
-    return is_latest() && is_not_behind(t);
-  }
+  inline bool is_latest_version(tid_t t) const { return is_latest() && is_not_behind(t); }
 
   bool stable_is_latest_version(tid_t t) const {
     version_t v = 0;
-    if (!try_writer_stable_version(v, 16))
-      return false;
+    if (!try_writer_stable_version(v, 16)) return false;
     // now v is a stable version
     INVARIANT(!IsWriteIntent(v));
     INVARIANT(!IsModifying(v));
     const bool ret = IsLatest(v) && is_not_behind(t);
     // only check_version() if the answer would be true- otherwise,
     // no point in doing a version check
-    if (ret && writer_check_version(v))
-      return true;
+    if (ret && writer_check_version(v)) return true;
     else
       // no point in retrying, since we know it will fail (since we had a
       // version change)
@@ -680,13 +651,11 @@ public:
 
   inline bool stable_latest_value_is_nil() const {
     version_t v = 0;
-    if (!try_writer_stable_version(v, 16))
-      return false;
+    if (!try_writer_stable_version(v, 16)) return false;
     INVARIANT(!IsWriteIntent(v));
     INVARIANT(!IsModifying(v));
     const bool ret = IsLatest(v) && size == 0;
-    if (ret && writer_check_version(v))
-      return true;
+    if (ret && writer_check_version(v)) return true;
     else
       return false;
   }
@@ -694,7 +663,9 @@ public:
   struct write_record_ret {
     write_record_ret() : head_(), rest_(), forced_spill_() {}
     write_record_ret(dbtuple *head, dbtuple *rest, bool forced_spill)
-        : head_(head), rest_(rest), forced_spill_(forced_spill) {
+        : head_(head),
+          rest_(rest),
+          forced_spill_(forced_spill) {
       INVARIANT(head);
       INVARIANT(head != rest);
       INVARIANT(!forced_spill || rest);
@@ -707,14 +678,13 @@ public:
   // XXX: kind of hacky, but we do this to avoid virtual
   // functions / passing multiple function pointers around
   enum TupleWriterMode {
-    TUPLE_WRITER_NEEDS_OLD_VALUE, // all three args ignored
+    TUPLE_WRITER_NEEDS_OLD_VALUE,// all three args ignored
     TUPLE_WRITER_COMPUTE_NEEDED,
-    TUPLE_WRITER_COMPUTE_DELTA_NEEDED, // last two args ignored
+    TUPLE_WRITER_COMPUTE_DELTA_NEEDED,// last two args ignored
     TUPLE_WRITER_DO_WRITE,
     TUPLE_WRITER_DO_DELTA_WRITE,
   };
-  typedef size_t (*tuple_writer_t)(TupleWriterMode, const void *, uint8_t *,
-                                   size_t);
+  typedef size_t (*tuple_writer_t)(TupleWriterMode, const void *, uint8_t *, size_t);
 
   /**
    * Always writes the record in the latest (newest) version slot,
@@ -726,9 +696,8 @@ public:
    *
    * Note: if this != ret.first, then we need a tree replacement
    */
-  template <typename Transaction>
-  write_record_ret write_record_at(const Transaction *txn, tid_t t,
-                                   const void *v, tuple_writer_t writer) {
+  template<typename Transaction>
+  write_record_ret write_record_at(const Transaction *txn, tid_t t, const void *v, tuple_writer_t writer) {
 #ifndef DISABLE_OVERWRITE_IN_PLACE
     CheckMagic();
     INVARIANT(is_locked());
@@ -736,14 +705,12 @@ public:
     INVARIANT(is_latest());
     INVARIANT(is_write_intent());
 
-    const size_t new_sz =
-        v ? writer(TUPLE_WRITER_COMPUTE_NEEDED, v, get_value_start(), size) : 0;
+    const size_t new_sz = v ? writer(TUPLE_WRITER_COMPUTE_NEEDED, v, get_value_start(), size) : 0;
     INVARIANT(!v || new_sz);
     INVARIANT(is_deleting() || size);
     const size_t old_sz = is_deleting() ? 0 : size;
 
-    if (!new_sz)
-      ++g_evt_dbtuple_logical_deletes;
+    if (!new_sz) ++g_evt_dbtuple_logical_deletes;
 
     // try to overwrite this record
     if (likely(txn->can_overwrite_record_tid(version, t) && old_sz)) {
@@ -752,12 +719,10 @@ public:
       if (likely(new_sz <= alloc_size)) {
         // directly update in place
         mark_modifying();
-        if (v)
-          writer(TUPLE_WRITER_DO_WRITE, v, get_value_start(), old_sz);
+        if (v) writer(TUPLE_WRITER_DO_WRITE, v, get_value_start(), old_sz);
         version = t;
         size = new_sz;
-        if (!new_sz)
-          mark_deleting();
+        if (!new_sz) mark_deleting();
         return write_record_ret(this, nullptr, false);
       }
 
@@ -773,12 +738,10 @@ public:
       // XXX(stephentu): alloc_spill() should acquire the lock on
       // the returned tuple in the ctor, as an optimization
 
-      const bool needs_old_value =
-          writer(TUPLE_WRITER_NEEDS_OLD_VALUE, nullptr, nullptr, 0);
+      const bool needs_old_value = writer(TUPLE_WRITER_NEEDS_OLD_VALUE, nullptr, nullptr, 0);
       INVARIANT(new_sz);
       INVARIANT(v);
-      dbtuple *const rep = alloc_spill(t, get_value_start(), old_sz, new_sz,
-                                       this, true, needs_old_value);
+      dbtuple *const rep = alloc_spill(t, get_value_start(), old_sz, new_sz, this, true, needs_old_value);
       writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), old_sz);
       INVARIANT(rep->is_latest());
       INVARIANT(rep->size == new_sz);
@@ -805,24 +768,19 @@ public:
       INVARIANT(!spill->is_latest());
       mark_modifying();
       set_next(spill);
-      if (v)
-        writer(TUPLE_WRITER_DO_WRITE, v, get_value_start(), size);
+      if (v) writer(TUPLE_WRITER_DO_WRITE, v, get_value_start(), size);
       version = t;
       size = new_sz;
-      if (!new_sz)
-        mark_deleting();
+      if (!new_sz) mark_deleting();
       return write_record_ret(this, spill, true);
     }
 
-    const bool needs_old_value =
-        writer(TUPLE_WRITER_NEEDS_OLD_VALUE, nullptr, nullptr, 0);
-    dbtuple *const rep = alloc_spill(t, get_value_start(), old_sz, new_sz, this,
-                                     true, needs_old_value);
-    if (v)
-      writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
+    const bool needs_old_value = writer(TUPLE_WRITER_NEEDS_OLD_VALUE, nullptr, nullptr, 0);
+    dbtuple *const rep = alloc_spill(t, get_value_start(), old_sz, new_sz, this, true, needs_old_value);
+    if (v) writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
     INVARIANT(rep->is_latest());
     INVARIANT(rep->size == new_sz);
-    INVARIANT(new_sz || rep->is_deleting()); // set by alloc_spill()
+    INVARIANT(new_sz || rep->is_deleting());// set by alloc_spill()
     clear_latest();
     ++g_evt_dbtuple_inplace_buf_insufficient_on_spill;
     return write_record_ret(rep, this, true);
@@ -833,24 +791,19 @@ public:
     INVARIANT(is_latest());
     INVARIANT(is_write_intent());
 
-    const size_t new_sz =
-        v ? writer(TUPLE_WRITER_COMPUTE_NEEDED, v, get_value_start(), size) : 0;
+    const size_t new_sz = v ? writer(TUPLE_WRITER_COMPUTE_NEEDED, v, get_value_start(), size) : 0;
     INVARIANT(!v || new_sz);
     INVARIANT(is_deleting() || size);
     const size_t old_sz = is_deleting() ? 0 : size;
 
-    if (!new_sz)
-      ++g_evt_dbtuple_logical_deletes;
+    if (!new_sz) ++g_evt_dbtuple_logical_deletes;
 
-    const bool needs_old_value =
-        writer(TUPLE_WRITER_NEEDS_OLD_VALUE, nullptr, nullptr, 0);
-    dbtuple *const rep = alloc_spill(t, get_value_start(), old_sz, new_sz, this,
-                                     true, needs_old_value);
-    if (v)
-      writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
+    const bool needs_old_value = writer(TUPLE_WRITER_NEEDS_OLD_VALUE, nullptr, nullptr, 0);
+    dbtuple *const rep = alloc_spill(t, get_value_start(), old_sz, new_sz, this, true, needs_old_value);
+    if (v) writer(TUPLE_WRITER_DO_WRITE, v, rep->get_value_start(), size);
     INVARIANT(rep->is_latest());
     INVARIANT(rep->size == new_sz);
-    INVARIANT(new_sz || rep->is_deleting()); // set by alloc_spill()
+    INVARIANT(new_sz || rep->is_deleting());// set by alloc_spill()
     clear_latest();
     ++g_evt_dbtuple_inplace_buf_insufficient_on_spill;
     return write_record_ret(rep, this, true);
@@ -863,51 +816,36 @@ public:
 
   static inline dbtuple *alloc_first(size_type sz, bool acquire_lock) {
     INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
-    const size_t max_alloc_sz =
-        std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
+    const size_t max_alloc_sz = std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
-        std::min(util::round_up<size_t, allocator::LgAllocAlignment>(
-                     sizeof(dbtuple) + sz),
-                 max_alloc_sz);
+        std::min(util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + sz), max_alloc_sz);
     char *p = reinterpret_cast<char *>(rcu::s_instance.alloc(alloc_sz));
     INVARIANT(p);
     INVARIANT((alloc_sz - sizeof(dbtuple)) >= sz);
     return new (p) dbtuple(sz, alloc_sz - sizeof(dbtuple), acquire_lock);
   }
 
-  static inline dbtuple *alloc(tid_t version, struct dbtuple *base,
-                               bool set_latest) {
-    const size_t max_alloc_sz =
-        std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
+  static inline dbtuple *alloc(tid_t version, struct dbtuple *base, bool set_latest) {
+    const size_t max_alloc_sz = std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
-        std::min(util::round_up<size_t, allocator::LgAllocAlignment>(
-                     sizeof(dbtuple) + base->size),
-                 max_alloc_sz);
+        std::min(util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + base->size), max_alloc_sz);
     char *p = reinterpret_cast<char *>(rcu::s_instance.alloc(alloc_sz));
     INVARIANT(p);
-    return new (p)
-        dbtuple(version, base, alloc_sz - sizeof(dbtuple), set_latest);
+    return new (p) dbtuple(version, base, alloc_sz - sizeof(dbtuple), set_latest);
   }
 
-  static inline dbtuple *alloc_spill(tid_t version, const_record_type value,
-                                     size_type oldsz, size_type newsz,
-                                     struct dbtuple *next, bool set_latest,
-                                     bool copy_old_value) {
+  static inline dbtuple *alloc_spill(tid_t version, const_record_type value, size_type oldsz, size_type newsz,
+                                     struct dbtuple *next, bool set_latest, bool copy_old_value) {
     INVARIANT(oldsz <= std::numeric_limits<node_size_type>::max());
     INVARIANT(newsz <= std::numeric_limits<node_size_type>::max());
 
     const size_t needed_sz = copy_old_value ? std::max(newsz, oldsz) : newsz;
-    const size_t max_alloc_sz =
-        std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
+    const size_t max_alloc_sz = std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
-        std::min(util::round_up<size_t, allocator::LgAllocAlignment>(
-                     sizeof(dbtuple) + needed_sz),
-                 max_alloc_sz);
+        std::min(util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(dbtuple) + needed_sz), max_alloc_sz);
     char *p = reinterpret_cast<char *>(rcu::s_instance.alloc(alloc_sz));
     INVARIANT(p);
-    return new (p)
-        dbtuple(version, value, oldsz, newsz, alloc_sz - sizeof(dbtuple), next,
-                set_latest, copy_old_value);
+    return new (p) dbtuple(version, value, oldsz, newsz, alloc_sz - sizeof(dbtuple), next, set_latest, copy_old_value);
   }
 
 private:
@@ -919,7 +857,7 @@ private:
 
 public:
   static void deleter(void *p) {
-    dbtuple *const n = (dbtuple *)p;
+    dbtuple *const n = (dbtuple *) p;
     INVARIANT(!n->is_latest());
     INVARIANT(!n->is_locked());
     INVARIANT(!n->is_modifying());
@@ -927,16 +865,14 @@ public:
   }
 
   static inline void release(dbtuple *n) {
-    if (unlikely(!n))
-      return;
+    if (unlikely(!n)) return;
     INVARIANT(n->is_locked());
     INVARIANT(!n->is_latest());
     rcu::s_instance.free_with_fn(n, deleter);
   }
 
   static inline void release_no_rcu(dbtuple *n) {
-    if (unlikely(!n))
-      return;
+    if (unlikely(!n)) return;
     INVARIANT(!n->is_latest());
     destruct_and_free(n);
   }
@@ -944,8 +880,7 @@ public:
   static std::string VersionInfoStr(version_t v);
 
 }
-#if !defined(TUPLE_CHECK_KEY) && !defined(CHECK_INVARIANTS) &&                 \
-    !defined(TUPLE_LOCK_OWNERSHIP_CHECKING)
+#if !defined(TUPLE_CHECK_KEY) && !defined(CHECK_INVARIANTS) && !defined(TUPLE_LOCK_OWNERSHIP_CHECKING)
 PACKED
 #endif
     ;

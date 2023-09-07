@@ -7,7 +7,7 @@
 enum class stats_command : uint8_t { GET_COUNTER_VALUE = 0x1 };
 
 struct get_counter_value_t {
-  uint64_t timestamp_us_; // usec
+  uint64_t timestamp_us_;// usec
   counter_data d_;
 };
 
@@ -24,12 +24,12 @@ public:
   inline void assign(const std::string &s) { assign(s.data(), s.size()); }
   int sendpkt(int fd) const {
     // XXX: we don't care about endianness
-    return fileutils::writeall(fd, (const char *)&size_, sizeof(size_) + size_);
+    return fileutils::writeall(fd, (const char *) &size_, sizeof(size_) + size_);
   }
   int recvpkt(int fd) {
     // XXX: we don't care about endianness
     int r;
-    if ((r = fileutils::readall(fd, (char *)&size_, sizeof(size_)))) {
+    if ((r = fileutils::readall(fd, (char *) &size_, sizeof(size_)))) {
       clear();
       return r;
     }

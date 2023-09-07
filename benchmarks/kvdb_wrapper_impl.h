@@ -16,24 +16,21 @@
 #include "kvdb_wrapper.h"
 
 namespace private_ {
-static event_avg_counter
-    evt_avg_kvdb_stable_version_spins("avg_kvdb_stable_version_spins");
-static event_avg_counter
-    evt_avg_kvdb_lock_acquire_spins("avg_kvdb_lock_acquire_spins");
-static event_avg_counter evt_avg_kvdb_read_retries("avg_kvdb_read_retries");
+  static event_avg_counter evt_avg_kvdb_stable_version_spins("avg_kvdb_stable_version_spins");
+  static event_avg_counter evt_avg_kvdb_lock_acquire_spins("avg_kvdb_lock_acquire_spins");
+  static event_avg_counter evt_avg_kvdb_read_retries("avg_kvdb_read_retries");
 
-STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_get_probe0, kvdb_get_probe0_cg);
-STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_get_probe1, kvdb_get_probe1_cg);
-STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_put_probe0, kvdb_put_probe0_cg);
-STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_insert_probe0,
-                    kvdb_insert_probe0_cg);
-STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_scan_probe0, kvdb_scan_probe0_cg);
-STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_remove_probe0,
-                    kvdb_remove_probe0_cg);
-} // namespace private_
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_get_probe0, kvdb_get_probe0_cg);
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_get_probe1, kvdb_get_probe1_cg);
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_put_probe0, kvdb_put_probe0_cg);
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_insert_probe0, kvdb_insert_probe0_cg);
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_scan_probe0, kvdb_scan_probe0_cg);
+  STATIC_COUNTER_DECL(scopedperf::tsc_ctr, kvdb_remove_probe0, kvdb_remove_probe0_cg);
+}// namespace private_
 
 // defines single-threaded version
-template <bool UseConcurrencyControl> struct record_version {
+template<bool UseConcurrencyControl>
+struct record_version {
   uint16_t sz;
 
   inline ALWAYS_INLINE bool is_locked() const { return false; }
@@ -53,24 +50,22 @@ template <bool UseConcurrencyControl> struct record_version {
 
   inline ALWAYS_INLINE uint32_t stable_version() const { return 0; }
 
-  inline ALWAYS_INLINE bool check_version(uint32_t version) const {
-    return true;
-  }
+  inline ALWAYS_INLINE bool check_version(uint32_t version) const { return true; }
 };
 
 // concurrency control version
-template <> struct record_version<true> {
+template<>
+struct record_version<true> {
   // [ locked | size  | version ]
   // [  0..1  | 1..17 | 17..32  ]
 
   static const uint32_t HDR_LOCKED_MASK = 0x1;
 
   static const uint32_t HDR_SIZE_SHIFT = 1;
-  static const uint32_t HDR_SIZE_MASK = std::numeric_limits<uint16_t>::max()
-                                        << HDR_SIZE_SHIFT;
+  static const uint32_t HDR_SIZE_MASK = std::numeric_limits<uint16_t>::max() << HDR_SIZE_SHIFT;
 
   static const uint32_t HDR_VERSION_SHIFT = 17;
-  static const uint32_t HDR_VERSION_MASK = ((uint32_t)-1) << HDR_VERSION_SHIFT;
+  static const uint32_t HDR_VERSION_MASK = ((uint32_t) -1) << HDR_VERSION_SHIFT;
 
   record_version<true>() : hdr(0) {}
 
@@ -85,8 +80,7 @@ template <> struct record_version<true> {
     unsigned long nspins = 0;
 #endif
     uint32_t v = hdr;
-    while (IsLocked(v) ||
-           !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
+    while (IsLocked(v) || !__sync_bool_compare_and_swap(&hdr, v, v | HDR_LOCKED_MASK)) {
       nop_pause();
       v = hdr;
 #ifdef ENABLE_EVENT_COUNTERS
@@ -111,9 +105,7 @@ template <> struct record_version<true> {
     hdr = v;
   }
 
-  static inline size_t Size(uint32_t v) {
-    return (v & HDR_SIZE_MASK) >> HDR_SIZE_SHIFT;
-  }
+  static inline size_t Size(uint32_t v) { return (v & HDR_SIZE_MASK) >> HDR_SIZE_SHIFT; }
 
   inline size_t size() const { return Size(hdr); }
 
@@ -126,9 +118,7 @@ template <> struct record_version<true> {
     INVARIANT(size() == s);
   }
 
-  static inline uint32_t Version(uint32_t v) {
-    return (v & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT;
-  }
+  static inline uint32_t Version(uint32_t v) { return (v & HDR_VERSION_MASK) >> HDR_VERSION_SHIFT; }
 
   inline uint32_t stable_version() const {
     uint32_t v = hdr;
@@ -155,14 +145,15 @@ template <> struct record_version<true> {
   }
 };
 
-template <bool UseConcurrencyControl>
+template<bool UseConcurrencyControl>
 struct basic_kvdb_record : public record_version<UseConcurrencyControl> {
   typedef record_version<UseConcurrencyControl> super_type;
   uint16_t alloc_size;
   char data[0];
 
   basic_kvdb_record(uint16_t alloc_size, const std::string &s)
-      : record_version<UseConcurrencyControl>(), alloc_size(alloc_size) {
+      : record_version<UseConcurrencyControl>(),
+        alloc_size(alloc_size) {
 #ifdef CHECK_INVARIANTS
     this->lock();
     this->set_size(s.size());
@@ -206,8 +197,7 @@ struct basic_kvdb_record : public record_version<UseConcurrencyControl> {
 
   inline bool do_write(const std::string &s) {
     INVARIANT(!UseConcurrencyControl || this->is_locked());
-    if (unlikely(s.size() > alloc_size))
-      return false;
+    if (unlikely(s.size() > alloc_size)) return false;
     this->set_size(s.size());
     NDB_MEMCPY(&data[0], s.data(), s.size());
     return true;
@@ -215,12 +205,9 @@ struct basic_kvdb_record : public record_version<UseConcurrencyControl> {
 
   static basic_kvdb_record *alloc(const std::string &s) {
     const size_t sz = s.size();
-    const size_t max_alloc_sz =
-        std::numeric_limits<uint16_t>::max() + sizeof(basic_kvdb_record);
+    const size_t max_alloc_sz = std::numeric_limits<uint16_t>::max() + sizeof(basic_kvdb_record);
     const size_t alloc_sz =
-        std::min(util::round_up<size_t, allocator::LgAllocAlignment>(
-                     sizeof(basic_kvdb_record) + sz),
-                 max_alloc_sz);
+        std::min(util::round_up<size_t, allocator::LgAllocAlignment>(sizeof(basic_kvdb_record) + sz), max_alloc_sz);
     char *const p = reinterpret_cast<char *>(rcu::s_instance.alloc(alloc_sz));
     INVARIANT(p);
     return new (p) basic_kvdb_record(alloc_sz - sizeof(basic_kvdb_record), s);
@@ -236,31 +223,26 @@ private:
 
 public:
   static void release(basic_kvdb_record *r) {
-    if (unlikely(!r))
-      return;
+    if (unlikely(!r)) return;
     rcu::s_instance.free_with_fn(r, deleter);
   }
 
   static void release_no_rcu(basic_kvdb_record *r) {
-    if (unlikely(!r))
-      return;
+    if (unlikely(!r)) return;
     deleter(r);
   }
 
 } PACKED;
 
-template <bool UseConcurrencyControl>
-bool kvdb_ordered_index<UseConcurrencyControl>::get(void *txn,
-                                                    const std::string &key,
-                                                    std::string &value,
+template<bool UseConcurrencyControl>
+bool kvdb_ordered_index<UseConcurrencyControl>::get(void *txn, const std::string &key, std::string &value,
                                                     size_t max_bytes_read) {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::get:", &private_::kvdb_get_probe0_cg);
   typename my_btree::value_type v = 0;
   if (btr.search(varkey(key), v)) {
-    ANON_REGION("kvdb_ordered_index::get:do_read:",
-                &private_::kvdb_get_probe1_cg);
-    const kvdb_record *const r = (const kvdb_record *)v;
+    ANON_REGION("kvdb_ordered_index::get:do_read:", &private_::kvdb_get_probe1_cg);
+    const kvdb_record *const r = (const kvdb_record *) v;
     r->prefetch();
     r->do_read(value, max_bytes_read);
     return true;
@@ -268,63 +250,59 @@ bool kvdb_ordered_index<UseConcurrencyControl>::get(void *txn,
   return false;
 }
 
-template <bool UseConcurrencyControl>
-const char *kvdb_ordered_index<UseConcurrencyControl>::put(
-    void *txn, const std::string &key, const std::string &value) {
+template<bool UseConcurrencyControl>
+const char *kvdb_ordered_index<UseConcurrencyControl>::put(void *txn, const std::string &key,
+                                                           const std::string &value) {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::put:", &private_::kvdb_put_probe0_cg);
   typename my_btree::value_type v = 0, v_old = 0;
   if (btr.search(varkey(key), v)) {
     // easy
-    kvdb_record *const r = (kvdb_record *)v;
+    kvdb_record *const r = (kvdb_record *) v;
     r->prefetch();
     lock_guard<kvdb_record> guard(*r);
-    if (r->do_write(value))
-      return 0;
+    if (r->do_write(value)) return 0;
     // replace
     kvdb_record *const rnew = kvdb_record::alloc(value);
-    btr.insert(varkey(key), (typename my_btree::value_type)rnew, &v_old, 0);
-    INVARIANT((typename my_btree::value_type)r == v_old);
+    btr.insert(varkey(key), (typename my_btree::value_type) rnew, &v_old, 0);
+    INVARIANT((typename my_btree::value_type) r == v_old);
     // rcu-free the old record
     kvdb_record::release(r);
     return 0;
   }
   kvdb_record *const rnew = kvdb_record::alloc(value);
-  if (!btr.insert(varkey(key), (typename my_btree::value_type)rnew, &v_old,
-                  0)) {
-    kvdb_record *const r = (kvdb_record *)v_old;
+  if (!btr.insert(varkey(key), (typename my_btree::value_type) rnew, &v_old, 0)) {
+    kvdb_record *const r = (kvdb_record *) v_old;
     kvdb_record::release(r);
   }
   return 0;
 }
 
-template <bool UseConcurrencyControl>
-const char *kvdb_ordered_index<UseConcurrencyControl>::insert(
-    void *txn, const std::string &key, const std::string &value) {
+template<bool UseConcurrencyControl>
+const char *kvdb_ordered_index<UseConcurrencyControl>::insert(void *txn, const std::string &key,
+                                                              const std::string &value) {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::insert:", &private_::kvdb_insert_probe0_cg);
   kvdb_record *const rnew = kvdb_record::alloc(value);
   typename my_btree::value_type v_old = 0;
-  if (!btr.insert(varkey(key), (typename my_btree::value_type)rnew, &v_old,
-                  0)) {
-    kvdb_record *const r = (kvdb_record *)v_old;
+  if (!btr.insert(varkey(key), (typename my_btree::value_type) rnew, &v_old, 0)) {
+    kvdb_record *const r = (kvdb_record *) v_old;
     kvdb_record::release(r);
   }
   return 0;
 }
 
-template <typename Btree, bool UseConcurrencyControl>
+template<typename Btree, bool UseConcurrencyControl>
 class kvdb_wrapper_search_range_callback : public Btree::search_range_callback {
 public:
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
 
-  kvdb_wrapper_search_range_callback(
-      abstract_ordered_index::scan_callback &upcall, str_arena *arena)
-      : upcall(&upcall), arena(arena) {}
+  kvdb_wrapper_search_range_callback(abstract_ordered_index::scan_callback &upcall, str_arena *arena)
+      : upcall(&upcall),
+        arena(arena) {}
 
-  virtual bool invoke(const typename Btree::string_type &k,
-                      typename Btree::value_type v) {
-    const kvdb_record *const r = (const kvdb_record *)v;
+  virtual bool invoke(const typename Btree::string_type &k, typename Btree::value_type v) {
+    const kvdb_record *const r = (const kvdb_record *) v;
     std::string *const s_px = likely(arena) ? arena->next() : nullptr;
     INVARIANT(s_px && s_px->empty());
     r->prefetch();
@@ -337,48 +315,43 @@ private:
   str_arena *arena;
 };
 
-template <bool UseConcurrencyControl>
-void kvdb_ordered_index<UseConcurrencyControl>::scan(
-    void *txn, const std::string &start_key, const std::string *end_key,
-    scan_callback &callback, str_arena *arena) {
+template<bool UseConcurrencyControl>
+void kvdb_ordered_index<UseConcurrencyControl>::scan(void *txn, const std::string &start_key,
+                                                     const std::string *end_key, scan_callback &callback,
+                                                     str_arena *arena) {
   ANON_REGION("kvdb_ordered_index::scan:", &private_::kvdb_scan_probe0_cg);
-  kvdb_wrapper_search_range_callback<my_btree, UseConcurrencyControl> c(
-      callback, arena);
+  kvdb_wrapper_search_range_callback<my_btree, UseConcurrencyControl> c(callback, arena);
   key_type end(end_key ? key_type(*end_key) : key_type());
-  btr.search_range_call(key_type(start_key), end_key ? &end : 0, c,
-                        arena->next());
+  btr.search_range_call(key_type(start_key), end_key ? &end : 0, c, arena->next());
 }
 
-template <bool UseConcurrencyControl>
-void kvdb_ordered_index<UseConcurrencyControl>::rscan(
-    void *txn, const std::string &start_key, const std::string *end_key,
-    scan_callback &callback, str_arena *arena) {
+template<bool UseConcurrencyControl>
+void kvdb_ordered_index<UseConcurrencyControl>::rscan(void *txn, const std::string &start_key,
+                                                      const std::string *end_key, scan_callback &callback,
+                                                      str_arena *arena) {
   ANON_REGION("kvdb_ordered_index::rscan:", &private_::kvdb_scan_probe0_cg);
-  kvdb_wrapper_search_range_callback<my_btree, UseConcurrencyControl> c(
-      callback, arena);
+  kvdb_wrapper_search_range_callback<my_btree, UseConcurrencyControl> c(callback, arena);
   key_type end(end_key ? key_type(*end_key) : key_type());
-  btr.rsearch_range_call(key_type(start_key), end_key ? &end : 0, c,
-                         arena->next());
+  btr.rsearch_range_call(key_type(start_key), end_key ? &end : 0, c, arena->next());
 }
 
-template <bool UseConcurrencyControl>
-void kvdb_ordered_index<UseConcurrencyControl>::remove(void *txn,
-                                                       const std::string &key) {
+template<bool UseConcurrencyControl>
+void kvdb_ordered_index<UseConcurrencyControl>::remove(void *txn, const std::string &key) {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   ANON_REGION("kvdb_ordered_index::remove:", &private_::kvdb_remove_probe0_cg);
   typename my_btree::value_type v = 0;
   if (btr.remove(varkey(key), &v)) {
-    kvdb_record *const r = (kvdb_record *)v;
+    kvdb_record *const r = (kvdb_record *) v;
     kvdb_record::release(r);
   }
 }
 
-template <bool UseConcurrencyControl>
+template<bool UseConcurrencyControl>
 size_t kvdb_ordered_index<UseConcurrencyControl>::size() const {
   return btr.size();
 }
 
-template <typename Btree, bool UseConcurrencyControl>
+template<typename Btree, bool UseConcurrencyControl>
 struct purge_tree_walker : public Btree::tree_walk_callback {
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
 
@@ -386,37 +359,31 @@ struct purge_tree_walker : public Btree::tree_walk_callback {
 
   purge_tree_walker() : purge_stats_nodes(0), purge_stats_nosuffix_nodes(0) {}
 
-  std::map<size_t, size_t> purge_stats_record_size_counts; // just the record
-  std::map<size_t, size_t> purge_stats_alloc_size_counts;  // includes overhead
+  std::map<size_t, size_t> purge_stats_record_size_counts;// just the record
+  std::map<size_t, size_t> purge_stats_alloc_size_counts; // includes overhead
   std::vector<uint16_t> purge_stats_nkeys_node;
   size_t purge_stats_nodes;
   size_t purge_stats_nosuffix_nodes;
 
   void dump_stats() {
     size_t v = 0;
-    for (std::vector<uint16_t>::iterator it = purge_stats_nkeys_node.begin();
-         it != purge_stats_nkeys_node.end(); ++it)
+    for (std::vector<uint16_t>::iterator it = purge_stats_nkeys_node.begin(); it != purge_stats_nkeys_node.end(); ++it)
       v += *it;
-    const double avg_nkeys_node =
-        double(v) / double(purge_stats_nkeys_node.size());
+    const double avg_nkeys_node = double(v) / double(purge_stats_nkeys_node.size());
     const double avg_fill_factor = avg_nkeys_node / double(Btree::NKeysPerNode);
     std::cerr << "btree node stats" << std::endl;
     std::cerr << "    avg_nkeys_node: " << avg_nkeys_node << std::endl;
     std::cerr << "    avg_fill_factor: " << avg_fill_factor << std::endl;
     std::cerr << "    num_nodes: " << purge_stats_nodes << std::endl;
-    std::cerr << "    num_nosuffix_nodes: " << purge_stats_nosuffix_nodes
-              << std::endl;
+    std::cerr << "    num_nosuffix_nodes: " << purge_stats_nosuffix_nodes << std::endl;
     std::cerr << "record size stats (nbytes => count)" << std::endl;
-    for (std::map<size_t, size_t>::iterator it =
-             purge_stats_record_size_counts.begin();
+    for (std::map<size_t, size_t>::iterator it = purge_stats_record_size_counts.begin();
          it != purge_stats_record_size_counts.end(); ++it)
       std::cerr << "    " << it->first << " => " << it->second << std::endl;
     std::cerr << "alloc size stats  (nbytes => count)" << std::endl;
-    for (std::map<size_t, size_t>::iterator it =
-             purge_stats_alloc_size_counts.begin();
+    for (std::map<size_t, size_t>::iterator it = purge_stats_alloc_size_counts.begin();
          it != purge_stats_alloc_size_counts.end(); ++it)
-      std::cerr << "    " << (it->first + sizeof(kvdb_record)) << " => "
-                << it->second << std::endl;
+      std::cerr << "    " << (it->first + sizeof(kvdb_record)) << " => " << it->second << std::endl;
   }
 
 #endif
@@ -428,7 +395,7 @@ struct purge_tree_walker : public Btree::tree_walk_callback {
 
   virtual void on_node_success() {
     for (size_t i = 0; i < spec_values.size(); i++) {
-      kvdb_record *const r = (kvdb_record *)spec_values[i].first;
+      kvdb_record *const r = (kvdb_record *) spec_values[i].first;
       purge_stats_record_size_counts[r->size()]++;
       purge_stats_alloc_size_counts[r->alloc_size]++;
       kvdb_record::release_no_rcu(r);
@@ -437,8 +404,7 @@ struct purge_tree_walker : public Btree::tree_walk_callback {
     purge_stats_nkeys_node.push_back(spec_values.size());
     purge_stats_nodes++;
     for (size_t i = 0; i < spec_values.size(); i++)
-      if (spec_values[i].second)
-        goto done;
+      if (spec_values[i].second) goto done;
     purge_stats_nosuffix_nodes++;
   done:
 #endif
@@ -451,9 +417,8 @@ private:
   std::vector<std::pair<typename Btree::value_type, bool>> spec_values;
 };
 
-template <bool UseConcurrencyControl>
-std::map<std::string, uint64_t>
-kvdb_ordered_index<UseConcurrencyControl>::clear() {
+template<bool UseConcurrencyControl>
+std::map<std::string, uint64_t> kvdb_ordered_index<UseConcurrencyControl>::clear() {
 
   purge_tree_walker<my_btree, UseConcurrencyControl> w;
   scoped_rcu_region guard;
@@ -466,9 +431,9 @@ kvdb_ordered_index<UseConcurrencyControl>::clear() {
   return std::map<std::string, uint64_t>();
 }
 
-template <bool UseConcurrencyControl>
-abstract_ordered_index *kvdb_wrapper<UseConcurrencyControl>::open_index(
-    const std::string &name, size_t value_size_hint, bool mostly_append) {
+template<bool UseConcurrencyControl>
+abstract_ordered_index *kvdb_wrapper<UseConcurrencyControl>::open_index(const std::string &name, size_t value_size_hint,
+                                                                        bool mostly_append) {
   return new kvdb_ordered_index<UseConcurrencyControl>(name);
 }
 

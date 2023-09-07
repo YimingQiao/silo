@@ -1,19 +1,18 @@
+#include <stdlib.h>
+#include <unistd.h>
+
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <stdlib.h>
-#include <unistd.h>
-
 #include "../macros.h"
+#include "../record/encoder.h"
 #include "../spinbarrier.h"
 #include "../thread.h"
 #include "../util.h"
 #include "../varkey.h"
-
-#include "../record/encoder.h"
 #include "bench.h"
 
 using namespace std;
@@ -21,7 +20,7 @@ using namespace util;
 
 static size_t nusers;
 static size_t nproducts;
-static const float pricefactor = 10000.0; // bids range from [0, 10000.0)
+static const float pricefactor = 10000.0;// bids range from [0, 10000.0)
 
 #define BIDUSER_REC_KEY_FIELDS(x, y) x(uint32_t, uid)
 #define BIDUSER_REC_VALUE_FIELDS(x, y) x(uint32_t, bid)
@@ -38,11 +37,10 @@ DO_STRUCT(bidmax_rec, BIDMAX_REC_KEY_FIELDS, BIDMAX_REC_VALUE_FIELDS)
 class bid_worker : public bench_worker {
 public:
   bid_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
-             const map<string, abstract_ordered_index *> &open_tables,
-             spin_barrier *barrier_a, spin_barrier *barrier_b)
-      : bench_worker(worker_id, false, seed, db, open_tables, barrier_a,
-                     barrier_b),
-        bidusertbl(open_tables.at("biduser")), bidtbl(open_tables.at("bid")),
+             const map<string, abstract_ordered_index *> &open_tables, spin_barrier *barrier_a, spin_barrier *barrier_b)
+      : bench_worker(worker_id, false, seed, db, open_tables, barrier_a, barrier_b),
+        bidusertbl(open_tables.at("biduser")),
+        bidtbl(open_tables.at("bid")),
         bidmaxtbl(open_tables.at("bidmax")) {}
 
   txn_result txn_bid() {
@@ -52,19 +50,16 @@ public:
       biduser_rec::key biduser_key(r.next() % nusers);
       ALWAYS_ASSERT(bidusertbl->get(txn, Encode(obj_k0, biduser_key), obj_v0));
       biduser_rec::value biduser_value_temp;
-      const biduser_rec::value *biduser_value =
-          Decode(obj_v0, biduser_value_temp);
+      const biduser_rec::value *biduser_value = Decode(obj_v0, biduser_value_temp);
 
       // update the user's bid
       const uint32_t bid = biduser_value->bid;
       biduser_value_temp.bid++;
-      bidusertbl->put(txn, Encode(str(), biduser_key),
-                      Encode(str(), biduser_value_temp));
+      bidusertbl->put(txn, Encode(str(), biduser_key), Encode(str(), biduser_value_temp));
 
       // insert the new bid
       const bid_rec::key bid_key(biduser_key.uid, bid);
-      const bid_rec::value bid_value(r.next() % nproducts,
-                                     r.next_uniform() * pricefactor);
+      const bid_rec::value bid_value(r.next() % nproducts, r.next_uniform() * pricefactor);
       bidtbl->insert(txn, Encode(str(), bid_key), Encode(str(), bid_value));
 
       // update the max value if necessary
@@ -75,21 +70,15 @@ public:
 
       if (bid_value.amount > bidmax_value->amount) {
         bidmax_value_temp.amount = bid_value.amount;
-        bidmaxtbl->put(txn, Encode(str(), bidmax_key),
-                       Encode(str(), bidmax_value_temp));
+        bidmaxtbl->put(txn, Encode(str(), bidmax_key), Encode(str(), bidmax_value_temp));
       }
 
-      if (likely(db->commit_txn(txn)))
-        return txn_result(true, 0);
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      db->abort_txn(txn);
-    }
+      if (likely(db->commit_txn(txn))) return txn_result(true, 0);
+    } catch (abstract_db::abstract_abort_exception &ex) { db->abort_txn(txn); }
     return txn_result(false, 0);
   }
 
-  static txn_result TxnBid(bench_worker *w) {
-    return static_cast<bid_worker *>(w)->txn_bid();
-  }
+  static txn_result TxnBid(bench_worker *w) { return static_cast<bid_worker *>(w)->txn_bid(); }
 
   virtual workload_desc_vec get_workload() const {
     workload_desc_vec w;
@@ -111,8 +100,7 @@ private:
 
 class bid_loader : public bench_loader {
 public:
-  bid_loader(unsigned long seed, abstract_db *db,
-             const map<string, abstract_ordered_index *> &open_tables)
+  bid_loader(unsigned long seed, abstract_db *db, const map<string, abstract_ordered_index *> &open_tables)
       : bench_loader(seed, db, open_tables) {}
 
 protected:
@@ -121,8 +109,7 @@ protected:
     abstract_ordered_index *bidmaxtbl = open_tables.at("bidmax");
     try {
       // load
-      const size_t batchsize =
-          (db->txn_max_batch_size() == -1) ? 10000 : db->txn_max_batch_size();
+      const size_t batchsize = (db->txn_max_batch_size() == -1) ? 10000 : db->txn_max_batch_size();
       ALWAYS_ASSERT(batchsize > 0);
 
       {
@@ -135,8 +122,7 @@ protected:
             string buf0;
             bidusertbl->insert(txn, Encode(key), Encode(buf0, value));
           }
-          if (verbose)
-            cerr << "batch 1/1 done" << endl;
+          if (verbose) cerr << "batch 1/1 done" << endl;
           ALWAYS_ASSERT(db->commit_txn(txn));
         } else {
           for (size_t i = 0; i < nbatches; i++) {
@@ -148,13 +134,11 @@ protected:
               string buf0;
               bidusertbl->insert(txn, Encode(key), Encode(buf0, value));
             }
-            if (verbose)
-              cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
+            if (verbose) cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
             ALWAYS_ASSERT(db->commit_txn(txn));
           }
         }
-        if (verbose)
-          cerr << "[INFO] finished loading BIDUSER table" << endl;
+        if (verbose) cerr << "[INFO] finished loading BIDUSER table" << endl;
       }
 
       {
@@ -167,13 +151,11 @@ protected:
             string buf0;
             bidmaxtbl->insert(txn, Encode(key), Encode(buf0, value));
           }
-          if (verbose)
-            cerr << "batch 1/1 done" << endl;
+          if (verbose) cerr << "batch 1/1 done" << endl;
           ALWAYS_ASSERT(db->commit_txn(txn));
         } else {
           for (size_t i = 0; i < nbatches; i++) {
-            size_t keyend =
-                (i == nbatches - 1) ? nproducts : (i + 1) * batchsize;
+            size_t keyend = (i == nbatches - 1) ? nproducts : (i + 1) * batchsize;
             void *txn = db->new_txn(txn_flags, arena, txn_buf());
             for (size_t j = i * batchsize; j < keyend; j++) {
               const bidmax_rec::key key(j);
@@ -181,13 +163,11 @@ protected:
               string buf0;
               bidmaxtbl->insert(txn, Encode(key), Encode(buf0, value));
             }
-            if (verbose)
-              cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
+            if (verbose) cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
             ALWAYS_ASSERT(db->commit_txn(txn));
           }
         }
-        if (verbose)
-          cerr << "[INFO] finished loading BIDMAX table" << endl;
+        if (verbose) cerr << "[INFO] finished loading BIDMAX table" << endl;
       }
 
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -216,8 +196,7 @@ protected:
     fast_random r(36578943);
     vector<bench_worker *> ret;
     for (size_t i = 0; i < nthreads; i++)
-      ret.push_back(
-          new bid_worker(i, r.next(), db, open_tables, &barrier_a, &barrier_b));
+      ret.push_back(new bid_worker(i, r.next(), db, open_tables, &barrier_a, &barrier_b));
     return ret;
   }
 };

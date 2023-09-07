@@ -16,14 +16,6 @@
 #define FORCE_ENABLE_ASSERTIONS 1
 #undef NDEBUG
 
-#include "compiler.hh"
-#include "json.hh"
-#include "kpermuter.hh"
-#include "kvrandom.hh"
-#include "string_slice.hh"
-#include "value_bag.hh"
-#include "value_string.hh"
-#include <algorithm>
 #include <assert.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -32,6 +24,16 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <algorithm>
+
+#include "compiler.hh"
+#include "json.hh"
+#include "kpermuter.hh"
+#include "kvrandom.hh"
+#include "string_slice.hh"
+#include "value_bag.hh"
+#include "value_string.hh"
+
 using namespace lcdf;
 
 uint8_t xb[100];
@@ -39,13 +41,9 @@ uint16_t xw[100];
 uint32_t xl[100];
 
 struct fake_threadinfo {
-  static void *allocate(size_t sz, memtag = memtag_none) {
-    return new char[sz];
-  }
+  static void *allocate(size_t sz, memtag = memtag_none) { return new char[sz]; }
 
-  static void deallocate(void *p, size_t, memtag = memtag_none) {
-    delete[] reinterpret_cast<char *>(p);
-  }
+  static void deallocate(void *p, size_t, memtag = memtag_none) { delete[] reinterpret_cast<char *>(p); }
 };
 
 // also check bitfield layout
@@ -76,11 +74,9 @@ void test_atomics() {
   assert(x == 0 && xl[0] == 100);
   x = cmpxchg(&xl[0], 100, 200);
   assert(x == 100 && xl[0] == 200);
-  if (bool_cmpxchg(&xl[0], 200, 300))
-    xl[1] = 400;
+  if (bool_cmpxchg(&xl[0], 200, 300)) xl[1] = 400;
   assert(xl[0] == 300 && xl[1] == 400);
-  if (bool_cmpxchg(&xl[0], 400, 100))
-    xl[1] = 500;
+  if (bool_cmpxchg(&xl[0], 400, 100)) xl[1] = 500;
   assert(xl[0] == 300 && xl[1] == 400);
 }
 
@@ -104,16 +100,17 @@ void test_psdes_nr() {
   assert(u.u == 0x59BA89EB);
 }
 
-template <typename T> void time_random() {
+template<typename T>
+void time_random() {
   T r;
   uint32_t x = 0;
-  for (int i = 0; i < 1000000000; ++i)
-    x ^= r.next();
+  for (int i = 0; i < 1000000000; ++i) x ^= r.next();
   assert(x != 0);
 }
 
-template <typename T> void time_keyslice() {
-  char *b = (char *)malloc(4096);
+template<typename T>
+void time_keyslice() {
+  char *b = (char *) malloc(4096);
   FILE *f = fopen("/dev/urandom", "rb");
   ssize_t rr = fread(b, 1, 4096, f);
   assert(rr == 4096);
@@ -121,8 +118,7 @@ template <typename T> void time_keyslice() {
   T x = 0;
   kvrandom_lcg_nr r;
   x ^= string_slice<T>::make(b, 1);
-  for (int i = 0; i < 1000000000; ++i)
-    x ^= string_slice<T>::make(b + r.next() % 2048, r.next() % 16);
+  for (int i = 0; i < 1000000000; ++i) x ^= string_slice<T>::make(b + r.next() % 2048, r.next() % 16);
   assert(x);
 }
 
@@ -140,32 +136,28 @@ void test_kpermuter() {
   k.remove(1);
   assert(k.size() == 1 && k[0] == 1 && k[1] == 2 && k[2] == 0 && k[3] == 14);
   i = k.insert_from_back(0);
-  assert(k.size() == 2 && i == 3 && k[0] == 3 && k[1] == 1 && k[2] == 2 &&
-         k[3] == 0 && k[4] == 14);
+  assert(k.size() == 2 && i == 3 && k[0] == 3 && k[1] == 1 && k[2] == 2 && k[3] == 0 && k[4] == 14);
   k.insert_selected(0, 3);
-  assert(k.size() == 3 && k[0] == 0 && k[1] == 3 && k[2] == 1 && k[3] == 2 &&
-         k[4] == 14);
+  assert(k.size() == 3 && k[0] == 0 && k[1] == 3 && k[2] == 1 && k[3] == 2 && k[4] == 14);
   k.insert_selected(2, 11);
-  assert(k.size() == 4 && k[0] == 0 && k[1] == 3 && k[2] == 7 && k[3] == 1 &&
-         k[4] == 2 && k[5] == 14 && k[11] == 8 && k[12] == 6);
+  assert(k.size() == 4 && k[0] == 0 && k[1] == 3 && k[2] == 7 && k[3] == 1 && k[4] == 2 && k[5] == 14 && k[11] == 8 &&
+         k[12] == 6);
   k.insert_selected(2, 14);
-  assert(k.size() == 5 && k[0] == 0 && k[1] == 3 && k[2] == 4 && k[3] == 7 &&
-         k[4] == 1 && k[5] == 2 && k[6] == 14 && k[12] == 8 && k[13] == 6);
+  assert(k.size() == 5 && k[0] == 0 && k[1] == 3 && k[2] == 4 && k[3] == 7 && k[4] == 1 && k[5] == 2 && k[6] == 14 &&
+         k[12] == 8 && k[13] == 6);
   k.exchange(0, 1);
-  assert(k.size() == 5 && k[0] == 3 && k[1] == 0 && k[2] == 4 && k[3] == 7 &&
-         k[4] == 1 && k[5] == 2 && k[6] == 14 && k[12] == 8 && k[13] == 6);
+  assert(k.size() == 5 && k[0] == 3 && k[1] == 0 && k[2] == 4 && k[3] == 7 && k[4] == 1 && k[5] == 2 && k[6] == 14 &&
+         k[12] == 8 && k[13] == 6);
   k.remove_to_back(2);
-  assert(k.size() == 4 && k[0] == 3 && k[1] == 0 && k[2] == 7 && k[3] == 1 &&
-         k[4] == 2 && k[5] == 14 && k[11] == 8 && k[12] == 6 && k[14] == 4);
+  assert(k.size() == 4 && k[0] == 3 && k[1] == 0 && k[2] == 7 && k[3] == 1 && k[4] == 2 && k[5] == 14 && k[11] == 8 &&
+         k[12] == 6 && k[14] == 4);
   assert(k.back() == 4);
   i = k.insert_from_back(2);
-  assert(k.size() == 5 && k[0] == 3 && k[1] == 0 && k[2] == 4 && k[3] == 7 &&
-         k[4] == 1 && k[5] == 2 && k[6] == 14 && k[12] == 8 && k[13] == 6 &&
-         i == 4);
+  assert(k.size() == 5 && k[0] == 3 && k[1] == 0 && k[2] == 4 && k[3] == 7 && k[4] == 1 && k[5] == 2 && k[6] == 14 &&
+         k[12] == 8 && k[13] == 6 && i == 4);
   k.exchange(0, 0);
-  assert(k.size() == 5 && k[0] == 3 && k[1] == 0 && k[2] == 4 && k[3] == 7 &&
-         k[4] == 1 && k[5] == 2 && k[6] == 14 && k[12] == 8 && k[13] == 6 &&
-         i == 4);
+  assert(k.size() == 5 && k[0] == 3 && k[1] == 0 && k[2] == 4 && k[3] == 7 && k[4] == 1 && k[5] == 2 && k[6] == 14 &&
+         k[12] == 8 && k[13] == 6 && i == 4);
 
   assert(find_lowest_zero_nibble(0x0120U) == 0);
   assert(find_lowest_zero_nibble(0x0123U) == 3);
@@ -185,14 +177,11 @@ void test_kpermuter() {
 void test_string_slice() {
   typedef string_slice<uint32_t> ss_type;
   assert(ss_type::make("a", 1) == ss_type::make("aaa", 1));
-  assert(ss_type::make_sloppy("0123abcdef" + 4, 1) ==
-         ss_type::make_sloppy("bcdea01293" + 4, 1));
+  assert(ss_type::make_sloppy("0123abcdef" + 4, 1) == ss_type::make_sloppy("bcdea01293" + 4, 1));
   assert(ss_type::make_comparable("a", 1) < ss_type::make_comparable("b", 1));
   assert(ss_type::equals_sloppy("0123abcdef" + 4, "abcdea02345" + 5, 1));
-  assert(ss_type::make_comparable("abcd", 4) <
-         ss_type::make_comparable("abce", 4));
-  assert(ss_type::make_comparable("abce", 4) >
-         ss_type::make_comparable("abcd", 4));
+  assert(ss_type::make_comparable("abcd", 4) < ss_type::make_comparable("abce", 4));
+  assert(ss_type::make_comparable("abce", 4) > ss_type::make_comparable("abcd", 4));
   assert(ss_type::equals_sloppy("0123abcdef" + 4, "abcdeabcd5" + 5, 4));
   assert(!ss_type::equals_sloppy("0123abcdef" + 4, "abcdeabcd5" + 5, 5));
   assert(String("12345").find_right("") == 5);
@@ -205,8 +194,7 @@ void test_string_bag() {
   fake_threadinfo ti;
   typedef value_bag<uint16_t> bag_t;
   bag_t eb;
-  if (eb.size() > sizeof(bag_t))
-    fprintf(stderr, "sizes are off: %zu vs. %zu\n", eb.size(), sizeof(bag_t));
+  if (eb.size() > sizeof(bag_t)) fprintf(stderr, "sizes are off: %zu vs. %zu\n", eb.size(), sizeof(bag_t));
   assert(eb.size() <= sizeof(bag_t));
   bag_t *b = eb.update(0, Str("A", 1), 1, ti);
   assert(b->row_string() == Str("\001\000\006\000\007\000A", 7));
@@ -319,7 +307,8 @@ void test_json() {
   j.assign_parse("[[[]],{\"a\":{}}]");
   assert(j.unparse() == "[[[]],{\"a\":{}}]");
 
-  j = Json::parse("{\"x22\":{\n\
+  j = Json::parse(
+      "{\"x22\":{\n\
       \"git-revision\":\"ebbd3d4767847300f552b181a10bda57a926f554M\",\n\
       \"time\":\"Tue Feb  7 20:20:33 2012\",\n\
       \"machine\":\"rtshanks-laptop\",\n\
@@ -429,13 +418,11 @@ void test_value_updates() {
 
   Json bagupdate = Json::array(0, "ABC", 1, "def", 2, "EGHIJ", 3, "klm");
 
-  Json strupdate = Json::array(
-      vstr_t::make_index(0, 3), "ABC", vstr_t::make_index(3, 3), "def",
-      vstr_t::make_index(6, 5), "EGHIJ", vstr_t::make_index(11, 3), "klm");
+  Json strupdate = Json::array(vstr_t::make_index(0, 3), "ABC", vstr_t::make_index(3, 3), "def",
+                               vstr_t::make_index(6, 5), "EGHIJ", vstr_t::make_index(11, 3), "klm");
 
   {
-    bag_t *eb2 =
-        eb->update(bagupdate.array_data(), bagupdate.end_array_data(), 1, ti);
+    bag_t *eb2 = eb->update(bagupdate.array_data(), bagupdate.end_array_data(), 1, ti);
     eb->deallocate(ti);
     eb = eb2;
     assert(eb->col(0) == Str("ABC"));
@@ -445,8 +432,7 @@ void test_value_updates() {
   }
 
   {
-    vstr_t *strb2 =
-        strb->update(strupdate.array_data(), strupdate.end_array_data(), 1, ti);
+    vstr_t *strb2 = strb->update(strupdate.array_data(), strupdate.end_array_data(), 1, ti);
     strb->deallocate(ti);
     strb = strb2;
     assert(strb->col(vstr_t::make_index(0, 3)) == Str("ABC"));

@@ -1,4 +1,5 @@
 #include "thread.h"
+
 #include "macros.h"
 
 using namespace std;
@@ -7,8 +8,7 @@ ndb_thread::~ndb_thread() {}
 
 void ndb_thread::start() {
   thd_ = std::move(thread(&ndb_thread::run, this));
-  if (daemon_)
-    thd_.detach();
+  if (daemon_) thd_.detach();
 }
 
 void ndb_thread::join() {

@@ -52,9 +52,8 @@
 #define COMBINED_NAME(n1, n2) COMBINED_NAME_RAW(n1, n2)
 #define ENCODE_SEQUENCE_NAME COMBINED_NAME(FUNCTION_NAME, _encodeSequence)
 #ifdef LIMITED_OUTPUT
-#define ENCODE_SEQUENCE(i, o, a, m, r, d)                                      \
-  if (ENCODE_SEQUENCE_NAME(i, o, a, m, r, d))                                  \
-    return 0;
+#define ENCODE_SEQUENCE(i, o, a, m, r, d) \
+  if (ENCODE_SEQUENCE_NAME(i, o, a, m, r, d)) return 0;
 #else
 #define ENCODE_SEQUENCE(i, o, a, m, r, d) ENCODE_SEQUENCE_NAME(i, o, a, m, r)
 #endif
@@ -63,9 +62,8 @@
 // Function code
 //****************************
 
-forceinline static int ENCODE_SEQUENCE_NAME(const BYTE **ip, BYTE **op,
-                                            const BYTE **anchor,
-                                            int matchLength, const BYTE *ref
+forceinline static int ENCODE_SEQUENCE_NAME(const BYTE **ip, BYTE **op, const BYTE **anchor, int matchLength,
+                                            const BYTE *ref
 #ifdef LIMITED_OUTPUT
                                             ,
                                             BYTE *oend
@@ -75,34 +73,31 @@ forceinline static int ENCODE_SEQUENCE_NAME(const BYTE **ip, BYTE **op,
   BYTE *token;
 
   // Encode Literal length
-  length = (int)(*ip - *anchor);
+  length = (int) (*ip - *anchor);
   token = (*op)++;
 #ifdef LIMITED_OUTPUT
-  if ((*op + length + (2 + 1 + LASTLITERALS) + (length >> 8)) > oend)
-    return 1; // Check output limit
+  if ((*op + length + (2 + 1 + LASTLITERALS) + (length >> 8)) > oend) return 1;// Check output limit
 #endif
-  if (length >= (int)RUN_MASK) {
+  if (length >= (int) RUN_MASK) {
     *token = (RUN_MASK << ML_BITS);
     len = length - RUN_MASK;
-    for (; len > 254; len -= 255)
-      *(*op)++ = 255;
-    *(*op)++ = (BYTE)len;
+    for (; len > 254; len -= 255) *(*op)++ = 255;
+    *(*op)++ = (BYTE) len;
   } else
-    *token = (BYTE)(length << ML_BITS);
+    *token = (BYTE) (length << ML_BITS);
 
   // Copy Literals
   LZ4_BLINDCOPY(*anchor, *op, length);
 
   // Encode Offset
-  LZ4_WRITE_LITTLEENDIAN_16(*op, (U16)(*ip - ref));
+  LZ4_WRITE_LITTLEENDIAN_16(*op, (U16) (*ip - ref));
 
   // Encode MatchLength
-  length = (int)(matchLength - MINMATCH);
+  length = (int) (matchLength - MINMATCH);
 #ifdef LIMITED_OUTPUT
-  if (*op + (1 + LASTLITERALS) + (length >> 8) > oend)
-    return 1; // Check output limit
+  if (*op + (1 + LASTLITERALS) + (length >> 8) > oend) return 1;// Check output limit
 #endif
-  if (length >= (int)ML_MASK) {
+  if (length >= (int) ML_MASK) {
     *token += ML_MASK;
     length -= ML_MASK;
     for (; length > 509; length -= 510) {
@@ -113,9 +108,9 @@ forceinline static int ENCODE_SEQUENCE_NAME(const BYTE **ip, BYTE **op,
       length -= 255;
       *(*op)++ = 255;
     }
-    *(*op)++ = (BYTE)length;
+    *(*op)++ = (BYTE) length;
   } else
-    *token += (BYTE)(length);
+    *token += (BYTE) (length);
 
   // Prepare next loop
   *ip += matchLength;
@@ -124,21 +119,20 @@ forceinline static int ENCODE_SEQUENCE_NAME(const BYTE **ip, BYTE **op,
   return 0;
 }
 
-int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source,
-                                            char *dest, int inputSize
+int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source, char *dest, int inputSize
 #ifdef LIMITED_OUTPUT
                                             ,
                                             int maxOutputSize
 #endif
 ) {
-  LZ4HC_Data_Structure *ctx = (LZ4HC_Data_Structure *)ctxvoid;
-  const BYTE *ip = (const BYTE *)source;
+  LZ4HC_Data_Structure *ctx = (LZ4HC_Data_Structure *) ctxvoid;
+  const BYTE *ip = (const BYTE *) source;
   const BYTE *anchor = ip;
   const BYTE *const iend = ip + inputSize;
   const BYTE *const mflimit = iend - MFLIMIT;
   const BYTE *const matchlimit = (iend - LASTLITERALS);
 
-  BYTE *op = (BYTE *)dest;
+  BYTE *op = (BYTE *) dest;
 #ifdef LIMITED_OUTPUT
   BYTE *const oend = op + maxOutputSize;
 #endif
@@ -153,8 +147,7 @@ int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source,
   const BYTE *ref0;
 
   // Ensure blocks follow each other
-  if (ip != ctx->end)
-    return 0;
+  if (ip != ctx->end) return 0;
   ctx->end += inputSize;
 
   ip++;
@@ -173,20 +166,18 @@ int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source,
     ml0 = ml;
 
   _Search2:
-    if (ip + ml < mflimit)
-      ml2 = LZ4HC_InsertAndGetWiderMatch(ctx, ip + ml - 2, ip + 1, matchlimit,
-                                         ml, &ref2, &start2);
+    if (ip + ml < mflimit) ml2 = LZ4HC_InsertAndGetWiderMatch(ctx, ip + ml - 2, ip + 1, matchlimit, ml, &ref2, &start2);
     else
       ml2 = ml;
 
-    if (ml2 == ml) // No better match
+    if (ml2 == ml)// No better match
     {
       ENCODE_SEQUENCE(&ip, &op, &anchor, ml, ref, oend);
       continue;
     }
 
     if (start0 < ip) {
-      if (start2 < ip + ml0) // empirical
+      if (start2 < ip + ml0)// empirical
       {
         ip = start0;
         ref = ref0;
@@ -195,7 +186,7 @@ int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source,
     }
 
     // Here, start0==ip
-    if ((start2 - ip) < 3) // First Match too small : removed
+    if ((start2 - ip) < 3)// First Match too small : removed
     {
       ml = ml2;
       ip = start2;
@@ -210,11 +201,9 @@ int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source,
     if ((start2 - ip) < OPTIMAL_ML) {
       int correction;
       int new_ml = ml;
-      if (new_ml > OPTIMAL_ML)
-        new_ml = OPTIMAL_ML;
-      if (ip + new_ml > start2 + ml2 - MINMATCH)
-        new_ml = (int)(start2 - ip) + ml2 - MINMATCH;
-      correction = new_ml - (int)(start2 - ip);
+      if (new_ml > OPTIMAL_ML) new_ml = OPTIMAL_ML;
+      if (ip + new_ml > start2 + ml2 - MINMATCH) new_ml = (int) (start2 - ip) + ml2 - MINMATCH;
+      correction = new_ml - (int) (start2 - ip);
       if (correction > 0) {
         start2 += correction;
         ref2 += correction;
@@ -224,16 +213,14 @@ int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source,
     // Now, we have start2 = ip+new_ml, with new_ml = min(ml, OPTIMAL_ML=18)
 
     if (start2 + ml2 < mflimit)
-      ml3 = LZ4HC_InsertAndGetWiderMatch(ctx, start2 + ml2 - 3, start2,
-                                         matchlimit, ml2, &ref3, &start3);
+      ml3 = LZ4HC_InsertAndGetWiderMatch(ctx, start2 + ml2 - 3, start2, matchlimit, ml2, &ref3, &start3);
     else
       ml3 = ml2;
 
-    if (ml3 == ml2) // No better match : 2 sequences to encode
+    if (ml3 == ml2)// No better match : 2 sequences to encode
     {
       // ip & ref are known; Now for ml
-      if (start2 < ip + ml)
-        ml = (int)(start2 - ip);
+      if (start2 < ip + ml) ml = (int) (start2 - ip);
       // Now, encode 2 sequences
       ENCODE_SEQUENCE(&ip, &op, &anchor, ml, ref, oend);
       ip = start2;
@@ -241,13 +228,13 @@ int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source,
       continue;
     }
 
-    if (start3 < ip + ml + 3) // Not enough space for match 2 : remove it
+    if (start3 < ip + ml + 3)// Not enough space for match 2 : remove it
     {
-      if (start3 >= (ip + ml)) // can write Seq1 immediately ==> Seq2 is
-                               // removed, so Seq3 becomes Seq1
+      if (start3 >= (ip + ml))// can write Seq1 immediately ==> Seq2 is
+                              // removed, so Seq3 becomes Seq1
       {
         if (start2 < ip + ml) {
-          int correction = (int)(ip + ml - start2);
+          int correction = (int) (ip + ml - start2);
           start2 += correction;
           ref2 += correction;
           ml2 -= correction;
@@ -278,20 +265,18 @@ int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source,
     // OK, now we have 3 ascending matches; let's write at least the first one
     // ip & ref are known; Now for ml
     if (start2 < ip + ml) {
-      if ((start2 - ip) < (int)ML_MASK) {
+      if ((start2 - ip) < (int) ML_MASK) {
         int correction;
-        if (ml > OPTIMAL_ML)
-          ml = OPTIMAL_ML;
-        if (ip + ml > start2 + ml2 - MINMATCH)
-          ml = (int)(start2 - ip) + ml2 - MINMATCH;
-        correction = ml - (int)(start2 - ip);
+        if (ml > OPTIMAL_ML) ml = OPTIMAL_ML;
+        if (ip + ml > start2 + ml2 - MINMATCH) ml = (int) (start2 - ip) + ml2 - MINMATCH;
+        correction = ml - (int) (start2 - ip);
         if (correction > 0) {
           start2 += correction;
           ref2 += correction;
           ml2 -= correction;
         }
       } else {
-        ml = (int)(start2 - ip);
+        ml = (int) (start2 - ip);
       }
     }
     ENCODE_SEQUENCE(&ip, &op, &anchor, ml, ref, oend);
@@ -309,26 +294,24 @@ int COMBINED_NAME(FUNCTION_NAME, _continue)(void *ctxvoid, const char *source,
 
   // Encode Last Literals
   {
-    int lastRun = (int)(iend - anchor);
+    int lastRun = (int) (iend - anchor);
 #ifdef LIMITED_OUTPUT
-    if (((char *)op - dest) + lastRun + 1 + ((lastRun + 255 - RUN_MASK) / 255) >
-        (U32)maxOutputSize)
-      return 0; // Check output limit
+    if (((char *) op - dest) + lastRun + 1 + ((lastRun + 255 - RUN_MASK) / 255) > (U32) maxOutputSize)
+      return 0;// Check output limit
 #endif
-    if (lastRun >= (int)RUN_MASK) {
+    if (lastRun >= (int) RUN_MASK) {
       *op++ = (RUN_MASK << ML_BITS);
       lastRun -= RUN_MASK;
-      for (; lastRun > 254; lastRun -= 255)
-        *op++ = 255;
-      *op++ = (BYTE)lastRun;
+      for (; lastRun > 254; lastRun -= 255) *op++ = 255;
+      *op++ = (BYTE) lastRun;
     } else
-      *op++ = (BYTE)(lastRun << ML_BITS);
+      *op++ = (BYTE) (lastRun << ML_BITS);
     memcpy(op, anchor, iend - anchor);
     op += iend - anchor;
   }
 
   // End
-  return (int)(((char *)op) - dest);
+  return (int) (((char *) op) - dest);
 }
 
 int FUNCTION_NAME(const char *source, char *dest, int inputSize
@@ -339,14 +322,11 @@ int FUNCTION_NAME(const char *source, char *dest, int inputSize
 ) {
   void *ctx = LZ4_createHC(source);
   int result;
-  if (ctx == NULL)
-    return 0;
+  if (ctx == NULL) return 0;
 #ifdef LIMITED_OUTPUT
-  result = COMBINED_NAME(FUNCTION_NAME, _continue)(ctx, source, dest, inputSize,
-                                                   maxOutputSize);
+  result = COMBINED_NAME(FUNCTION_NAME, _continue)(ctx, source, dest, inputSize, maxOutputSize);
 #else
-  result =
-      COMBINED_NAME(FUNCTION_NAME, _continue)(ctx, source, dest, inputSize);
+  result = COMBINED_NAME(FUNCTION_NAME, _continue)(ctx, source, dest, inputSize);
 #endif
   LZ4_freeHC(ctx);
 

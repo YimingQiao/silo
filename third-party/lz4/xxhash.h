@@ -121,8 +121,7 @@ XXH_errorcode XXH32_resetState(void *state, unsigned int seed);
 
 #define XXH32_SIZEOFSTATE 48
 typedef struct {
-  long long
-      ll[(XXH32_SIZEOFSTATE + (sizeof(long long) - 1)) / sizeof(long long)];
+  long long ll[(XXH32_SIZEOFSTATE + (sizeof(long long) - 1)) / sizeof(long long)];
 } XXH32_stateSpace_t;
 /*
 These functions allow user application to make its own allocation for state.

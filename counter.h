@@ -3,9 +3,10 @@
 
 // system event counters, for
 
-#include <algorithm> // for std::max
-#include <map>
 #include <stdint.h>
+
+#include <algorithm>// for std::max
+#include <map>
 #include <string>
 #include <vector>
 
@@ -39,39 +40,38 @@ struct counter_data {
 
 namespace private_ {
 
-// these objects are *never* supposed to be destructed
-// (this is a purposeful memory leak)
-struct event_ctx {
+  // these objects are *never* supposed to be destructed
+  // (this is a purposeful memory leak)
+  struct event_ctx {
 
-  static std::map<std::string, event_ctx *> &event_counters();
-  static spinlock &event_counters_lock();
+    static std::map<std::string, event_ctx *> &event_counters();
+    static spinlock &event_counters_lock();
 
-  // tag to avoid making event_ctx virtual
-  event_ctx(const std::string &name, bool avg_tag)
-      : name_(name), avg_tag_(avg_tag) {}
+    // tag to avoid making event_ctx virtual
+    event_ctx(const std::string &name, bool avg_tag) : name_(name), avg_tag_(avg_tag) {}
 
-  ~event_ctx() { ALWAYS_ASSERT(false); }
+    ~event_ctx() { ALWAYS_ASSERT(false); }
 
-  event_ctx(const event_ctx &) = delete;
-  event_ctx &operator=(const event_ctx &) = delete;
-  event_ctx(event_ctx &&) = delete;
+    event_ctx(const event_ctx &) = delete;
+    event_ctx &operator=(const event_ctx &) = delete;
+    event_ctx(event_ctx &&) = delete;
 
-  void stat(counter_data &d);
+    void stat(counter_data &d);
 
-  const std::string name_;
-  const bool avg_tag_;
+    const std::string name_;
+    const bool avg_tag_;
 
-  // per-thread counts
-  percore<uint64_t, false, false> counts_;
-};
+    // per-thread counts
+    percore<uint64_t, false, false> counts_;
+  };
 
-// more expensive
-struct event_ctx_avg : public event_ctx {
-  event_ctx_avg(const std::string &name) : event_ctx(name, true) {}
-  percore<uint64_t, false, false> sums_;
-  percore<uint64_t, false, false> highs_;
-};
-} // namespace private_
+  // more expensive
+  struct event_ctx_avg : public event_ctx {
+    event_ctx_avg(const std::string &name) : event_ctx(name, true) {}
+    percore<uint64_t, false, false> sums_;
+    percore<uint64_t, false, false> highs_;
+  };
+}// namespace private_
 
 class event_counter {
 public:
@@ -133,8 +133,7 @@ private:
 };
 
 inline std::ostream &operator<<(std::ostream &o, const counter_data &d) {
-  if (d.type_ == counter_data::TYPE_COUNT)
-    o << "count=" << d.count_;
+  if (d.type_ == counter_data::TYPE_COUNT) o << "count=" << d.count_;
   else
     o << "count=" << d.count_ << ", max=" << d.max_ << ", avg=" << d.avg();
   return o;

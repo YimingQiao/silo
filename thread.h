@@ -23,11 +23,12 @@ class ndb_thread {
 public:
   typedef void (*run_t)(void);
 
-  ndb_thread(bool daemon = false, const std::string &name = "thd")
-      : body_(nullptr), daemon_(daemon), name_(name) {}
+  ndb_thread(bool daemon = false, const std::string &name = "thd") : body_(nullptr), daemon_(daemon), name_(name) {}
 
   ndb_thread(run_t body, bool daemon = false, const std::string &name = "thd")
-      : body_(body), daemon_(daemon), name_(name) {}
+      : body_(body),
+        daemon_(daemon),
+        name_(name) {}
 
   ndb_thread(const ndb_thread &) = delete;
 

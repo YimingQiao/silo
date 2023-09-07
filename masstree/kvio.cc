@@ -21,6 +21,7 @@
 // least on the Mac.
 
 #include "kvio.hh"
+
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -32,11 +33,11 @@
 
 // API to allocate a new kvout.
 kvout *new_kvout(int fd, int buflen) {
-  kvout *kv = (kvout *)malloc(sizeof(kvout));
+  kvout *kv = (kvout *) malloc(sizeof(kvout));
   assert(kv);
   memset(kv, 0, sizeof(*kv));
   kv->capacity = buflen;
-  kv->buf = (char *)malloc(kv->capacity);
+  kv->buf = (char *) malloc(kv->capacity);
   assert(kv->buf);
   kv->fd = fd;
   return kv;
@@ -44,11 +45,11 @@ kvout *new_kvout(int fd, int buflen) {
 
 // API to allocate a new kvout for a buffer, no fd.
 kvout *new_bufkvout() {
-  kvout *kv = (kvout *)malloc(sizeof(kvout));
+  kvout *kv = (kvout *) malloc(sizeof(kvout));
   assert(kv);
   memset(kv, 0, sizeof(*kv));
   kv->capacity = 256;
-  kv->buf = (char *)malloc(kv->capacity);
+  kv->buf = (char *) malloc(kv->capacity);
   assert(kv->buf);
   kv->n = 0;
   kv->fd = -1;
@@ -64,8 +65,7 @@ void kvout_reset(kvout *kv) {
 // API to free a kvout.
 // does not close() the fd.
 void free_kvout(kvout *kv) {
-  if (kv->buf)
-    free(kv->buf);
+  if (kv->buf) free(kv->buf);
   kv->buf = 0;
   free(kv);
 }
@@ -90,21 +90,16 @@ void kvflush(kvout *kv) {
 
 // API
 void kvout::grow(unsigned want) {
-  if (fd >= 0)
-    kvflush(this);
-  if (want == 0)
-    want = capacity + 1;
-  while (want > capacity)
-    capacity *= 2;
-  buf = (char *)realloc(buf, capacity);
+  if (fd >= 0) kvflush(this);
+  if (want == 0) want = capacity + 1;
+  while (want > capacity) capacity *= 2;
+  buf = (char *) realloc(buf, capacity);
   assert(buf);
 }
 
 int kvwrite(kvout *kv, const void *buf, unsigned n) {
-  if (kv->n + n > kv->capacity && kv->fd >= 0)
-    kvflush(kv);
-  if (kv->n + n > kv->capacity)
-    kv->grow(kv->n + n);
+  if (kv->n + n > kv->capacity && kv->fd >= 0) kvflush(kv);
+  if (kv->n + n > kv->capacity) kv->grow(kv->n + n);
   memcpy(kv->buf + kv->n, buf, n);
   kv->n += n;
   return n;

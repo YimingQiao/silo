@@ -17,9 +17,7 @@
 #include "abstract_db.h"
 
 struct persistconfig {
-  persistconfig()
-      : nofsync_(0), do_compress_(0), fake_writes_(0), disable_gc_(0),
-        disable_snapshots_(0) {}
+  persistconfig() : nofsync_(0), do_compress_(0), fake_writes_(0), disable_gc_(0), disable_snapshots_(0) {}
 
   int nofsync_;
   int do_compress_;
@@ -30,8 +28,7 @@ struct persistconfig {
   std::vector<std::vector<unsigned>> assignments_;
 };
 
-extern void tpcc_do_test(const std::string &dbtype, const persistconfig &cfg,
-                         int argc, char **argv);
+extern void tpcc_do_test(const std::string &dbtype, const persistconfig &cfg, int argc, char **argv);
 
 enum { RUNMODE_TIME = 0, RUNMODE_OPS = 1 };
 
@@ -63,9 +60,7 @@ public:
 
   scoped_db_thread_ctx &operator=(const scoped_db_thread_ctx &) = delete;
 
-  scoped_db_thread_ctx(abstract_db *db, bool loader) : db(db) {
-    db->thread_init(loader);
-  }
+  scoped_db_thread_ctx(abstract_db *db, bool loader) : db(db) { db->thread_init(loader); }
 
   ~scoped_db_thread_ctx() { db->thread_end(); }
 
@@ -83,8 +78,8 @@ public:
   }
 
   virtual void run() {
-    {                      // XXX(stephentu): this is a hack
-      scoped_rcu_region r; // register this thread in rcu region
+    {                     // XXX(stephentu): this is a hack
+      scoped_rcu_region r;// register this thread in rcu region
     }
     ALWAYS_ASSERT(b);
     b->count_down();
@@ -102,29 +97,31 @@ protected:
   str_arena arena;
 };
 
-template <typename Database> class typed_bench_loader : public bench_loader {
+template<typename Database>
+class typed_bench_loader : public bench_loader {
 public:
-  typed_bench_loader(unsigned long seed, Database *db)
-      : bench_loader(seed, db) {}
+  typed_bench_loader(unsigned long seed, Database *db) : bench_loader(seed, db) {}
 
   inline Database *typed_db() { return static_cast<Database *>(db); }
 
-  inline const Database *typed_db() const {
-    return static_cast<const Database *>(db);
-  }
+  inline const Database *typed_db() const { return static_cast<const Database *>(db); }
 };
 
 class bench_worker : public ndb_thread {
 public:
-  bench_worker(unsigned int worker_id, bool set_core_id, unsigned long seed,
-               abstract_db *db, spin_barrier *barrier_a,
+  bench_worker(unsigned int worker_id, bool set_core_id, unsigned long seed, abstract_db *db, spin_barrier *barrier_a,
                spin_barrier *barrier_b)
-      : worker_id(worker_id), set_core_id(set_core_id), r(seed), db(db),
-        barrier_a(barrier_a), barrier_b(barrier_b),
+      : worker_id(worker_id),
+        set_core_id(set_core_id),
+        r(seed),
+        db(db),
+        barrier_a(barrier_a),
+        barrier_b(barrier_b),
         // the ntxn_* numbers are per worker
-        ntxn_commits(0), ntxn_aborts(0), latency_numer_us(0),
-        backoff_shifts(
-            0), // spin between [0, 2^backoff_shifts) times before retry
+        ntxn_commits(0),
+        ntxn_aborts(0),
+        latency_numer_us(0),
+        backoff_shifts(0),// spin between [0, 2^backoff_shifts) times before retry
         size_delta(0) {}
 
   virtual ~bench_worker() {}
@@ -137,8 +134,7 @@ public:
   struct workload_desc {
     workload_desc() {}
 
-    workload_desc(const std::string &name, double frequency, txn_fn_t fn)
-        : name(name), frequency(frequency), fn(fn) {
+    workload_desc(const std::string &name, double frequency, txn_fn_t fn) : name(name), frequency(frequency), fn(fn) {
       ALWAYS_ASSERT(frequency > 0.0);
       ALWAYS_ASSERT(frequency <= 1.0);
     }
@@ -160,9 +156,7 @@ public:
 
   inline uint64_t get_latency_numer_us() const { return latency_numer_us; }
 
-  inline double get_avg_latency_us() const {
-    return double(latency_numer_us) / double(ntxn_commits);
-  }
+  inline double get_avg_latency_us() const { return double(latency_numer_us) / double(ntxn_commits); }
 
   std::map<std::string, size_t> get_txn_counts() const;
 
@@ -170,9 +164,7 @@ public:
   typedef abstract_db::txn_counter_map txn_counter_map;
 
 #ifdef ENABLE_BENCH_TXN_COUNTERS
-  inline txn_counter_map get_local_txn_counters() const {
-    return local_txn_counters;
-  }
+  inline txn_counter_map get_local_txn_counters() const { return local_txn_counters; }
 #endif
 
   inline ssize_t get_size_delta() const { return size_delta; }
@@ -202,9 +194,9 @@ protected:
   //   *txn_name) {}
   // #endif
 
-  std::vector<size_t> txn_counts; // breakdown of txns
-  ssize_t size_delta; // how many logical bytes (of values) did the worker add
-                      // to the DB
+  std::vector<size_t> txn_counts;// breakdown of txns
+  ssize_t size_delta;            // how many logical bytes (of values) did the worker add
+                                 // to the DB
 
   str_arena arena;
 };
@@ -238,22 +230,20 @@ protected:
   spin_barrier barrier_b;
 };
 
-template <typename Database> class typed_bench_runner : public bench_runner {
+template<typename Database>
+class typed_bench_runner : public bench_runner {
 public:
   typed_bench_runner(Database *db) : bench_runner(db) {}
 
   inline Database *typed_db() { return static_cast<Database *>(db); }
 
-  inline const Database *typed_db() const {
-    return static_cast<const Database *>(db);
-  }
+  inline const Database *typed_db() const { return static_cast<const Database *>(db); }
 };
 
-template <typename Index>
+template<typename Index>
 class latest_key_callback : public Index::bytes_search_range_callback {
 public:
-  latest_key_callback(std::string &k, ssize_t limit = -1)
-      : limit(limit), n(0), k(&k) {
+  latest_key_callback(std::string &k, ssize_t limit = -1) : limit(limit), n(0), k(&k) {
     ALWAYS_ASSERT(limit == -1 || limit > 0);
   }
 
@@ -277,24 +267,26 @@ private:
 };
 
 namespace private_ {
-template <typename T, bool enable> struct container {
-  container() {}
+  template<typename T, bool enable>
+  struct container {
+    container() {}
 
-  container(const T &t) {}
+    container(const T &t) {}
 
-  T &get(); // not defined
-};
+    T &get();// not defined
+  };
 
-template <typename T> struct container<T, true> {
-  container() {}
+  template<typename T>
+  struct container<T, true> {
+    container() {}
 
-  container(const T &t) : t(t) {}
+    container(const T &t) : t(t) {}
 
-  inline T &get() { return t; }
+    inline T &get() { return t; }
 
-  T t;
-};
-} // namespace private_
+    T t;
+  };
+}// namespace private_
 
 // explicitly copies keys, because btree::search_range_call() interally
 // re-uses a single string to pass keys (so using standard string assignment
@@ -302,15 +294,14 @@ template <typename T> struct container<T, true> {
 //
 // this isn't done for values, because each value has a distinct string from
 // the string allocator, so there are no mutations while holding > 1 ref-count
-template <typename Index, size_t N, bool ignore_key>
+template<typename Index, size_t N, bool ignore_key>
 class bytes_static_limit_callback : public Index::bytes_search_range_callback {
 public:
   static_assert(N > 0, "xx");
 
   bytes_static_limit_callback(str_arena *arena) : arena(arena) {}
 
-  virtual bool invoke(const std::string &key,
-                      const std::string &value) OVERRIDE {
+  virtual bool invoke(const std::string &key, const std::string &value) OVERRIDE {
     INVARIANT(size() < N);
     INVARIANT(arena->manages(&key));
     INVARIANT(arena->manages(&value));
@@ -328,27 +319,22 @@ public:
 
   inline size_t size() const { return values.size(); }
 
-  inline const std::string &key(size_t i) const {
-    return *values[i].first.get();
-  }
+  inline const std::string &key(size_t i) const { return *values[i].first.get(); }
 
   inline const std::string &value(size_t i) const { return *values[i].second; }
 
 private:
-  typedef std::pair<private_::container<const std::string *, !ignore_key>,
-                    const std::string *>
-      kv_pair;
+  typedef std::pair<private_::container<const std::string *, !ignore_key>, const std::string *> kv_pair;
   typename util::vec<kv_pair, N>::type values;
   str_arena *arena;
 };
 
-template <typename Index, size_t N, bool ignore_key>
+template<typename Index, size_t N, bool ignore_key>
 class static_limit_callback : public Index::search_range_callback {
 public:
   static_assert(N > 0, "xx");
 
-  virtual bool invoke(const typename Index::key_type &key,
-                      const typename Index::value_type &value) OVERRIDE {
+  virtual bool invoke(const typename Index::key_type &key, const typename Index::value_type &value) OVERRIDE {
     INVARIANT(size() < N);
     values.emplace_back(key, value);
     return size() < N;
@@ -356,18 +342,12 @@ public:
 
   inline size_t size() const { return values.size(); }
 
-  inline typename Index::key_type &key(size_t i) {
-    return values[i].first.get();
-  }
+  inline typename Index::key_type &key(size_t i) { return values[i].first.get(); }
 
-  inline typename Index::value_type &value(size_t i) {
-    return values[i].second;
-  }
+  inline typename Index::value_type &value(size_t i) { return values[i].second; }
 
 private:
-  typedef std::pair<private_::container<typename Index::key_type, !ignore_key>,
-                    typename Index::value_type>
-      kv_pair;
+  typedef std::pair<private_::container<typename Index::key_type, !ignore_key>, typename Index::value_type> kv_pair;
   typename util::vec<kv_pair, N>::type values;
 };
 

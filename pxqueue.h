@@ -10,17 +10,17 @@
 // abstract queue for RCU-like queues
 
 // forward decl
-template <typename T, size_t N> struct basic_px_queue;
+template<typename T, size_t N>
+struct basic_px_queue;
 
-template <typename T, size_t N> struct basic_px_group {
+template<typename T, size_t N>
+struct basic_px_group {
   basic_px_group() : next_(nullptr), rcu_tick_(0) {
-    static event_counter evt_px_group_creates(util::cxx_typename<T>::value() +
-                                              std::string("_px_group_creates"));
+    static event_counter evt_px_group_creates(util::cxx_typename<T>::value() + std::string("_px_group_creates"));
     ++evt_px_group_creates;
   }
   ~basic_px_group() {
-    static event_counter evt_px_group_deletes(util::cxx_typename<T>::value() +
-                                              std::string("_px_group_deletes"));
+    static event_counter evt_px_group_deletes(util::cxx_typename<T>::value() + std::string("_px_group_deletes"));
     ++evt_px_group_deletes;
   }
 
@@ -35,16 +35,15 @@ template <typename T, size_t N> struct basic_px_group {
 private:
   basic_px_group *next_;
   typename util::vec<T, GroupSize>::type pxs_;
-  uint64_t rcu_tick_; // all elements in pxs_ are from this tick,
-                      // this number is only meaningful if pxs_ is
-                      // not empty
+  uint64_t rcu_tick_;// all elements in pxs_ are from this tick,
+                     // this number is only meaningful if pxs_ is
+                     // not empty
 };
 
 // not thread safe- should guard with lock for concurrent manipulation
-template <typename T, size_t N> struct basic_px_queue {
-  basic_px_queue()
-      : head_(nullptr), tail_(nullptr), freelist_head_(nullptr),
-        freelist_tail_(nullptr), ngroups_(0) {}
+template<typename T, size_t N>
+struct basic_px_queue {
+  basic_px_queue() : head_(nullptr), tail_(nullptr), freelist_head_(nullptr), freelist_tail_(nullptr), ngroups_(0) {}
 
   typedef basic_px_group<T, N> px_group;
 
@@ -65,15 +64,16 @@ template <typename T, size_t N> struct basic_px_queue {
     std::swap(ngroups_, other.ngroups_);
   }
 
-  template <typename PtrType, typename ObjType>
+  template<typename PtrType, typename ObjType>
   class iterator_ : public std::iterator<std::forward_iterator_tag, ObjType> {
   public:
     inline iterator_() : px_(nullptr), i_() {}
     inline iterator_(PtrType *px) : px_(px), i_() {}
 
     // allow iterator to assign to const_iterator
-    template <typename P, typename O>
-    inline iterator_(const iterator_<P, O> &o) : px_(o.px_), i_(o.i_) {}
+    template<typename P, typename O>
+    inline iterator_(const iterator_<P, O> &o) : px_(o.px_),
+                                                 i_(o.i_) {}
 
     inline ObjType &operator*() const { return px_->pxs_[i_]; }
 
@@ -81,9 +81,7 @@ template <typename T, size_t N> struct basic_px_queue {
 
     inline uint64_t tick() const { return px_->rcu_tick_; }
 
-    inline bool operator==(const iterator_ &o) const {
-      return px_ == o.px_ && i_ == o.i_;
-    }
+    inline bool operator==(const iterator_ &o) const { return px_ == o.px_ && i_ == o.i_; }
 
     inline bool operator!=(const iterator_ &o) const { return !operator==(o); }
 
@@ -124,14 +122,12 @@ template <typename T, size_t N> struct basic_px_queue {
     INVARIANT(!tail_ || tail_->pxs_.size() <= px_group::GroupSize);
     INVARIANT(!tail_ || tail_->rcu_tick_ <= rcu_tick);
     px_group *g;
-    if (unlikely(!tail_ || tail_->pxs_.size() == px_group::GroupSize ||
-                 tail_->rcu_tick_ != rcu_tick)) {
+    if (unlikely(!tail_ || tail_->pxs_.size() == px_group::GroupSize || tail_->rcu_tick_ != rcu_tick)) {
       ensure_freelist();
       // pop off freelist
       g = freelist_head_;
       freelist_head_ = g->next_;
-      if (g == freelist_tail_)
-        freelist_tail_ = nullptr;
+      if (g == freelist_tail_) freelist_tail_ = nullptr;
       g->next_ = nullptr;
       g->pxs_.clear();
       g->rcu_tick_ = rcu_tick;
@@ -157,8 +153,7 @@ template <typename T, size_t N> struct basic_px_queue {
 
   void ensure_freelist() {
     INVARIANT(bool(freelist_head_) == bool(freelist_tail_));
-    if (likely(freelist_head_))
-      return;
+    if (likely(freelist_head_)) return;
     const size_t nalloc = 16;
     alloc_freelist(nalloc);
   }
@@ -217,8 +212,7 @@ template <typename T, size_t N> struct basic_px_queue {
       ngroups_++;
       source.ngroups_--;
       source.head_ = p = pnext;
-      if (!source.head_)
-        source.tail_ = nullptr;
+      if (!source.head_) source.tail_ = nullptr;
     }
     sanity_check();
     source.sanity_check();
@@ -226,12 +220,10 @@ template <typename T, size_t N> struct basic_px_queue {
 
   // transfer *this* elements freelist to dest
   void transfer_freelist(basic_px_queue &dest, ssize_t n = -1) {
-    if (!freelist_head_)
-      return;
+    if (!freelist_head_) return;
     if (n < 0) {
       freelist_tail_->next_ = dest.freelist_head_;
-      if (!dest.freelist_tail_)
-        dest.freelist_tail_ = freelist_tail_;
+      if (!dest.freelist_tail_) dest.freelist_tail_ = freelist_tail_;
       dest.freelist_head_ = freelist_head_;
       freelist_head_ = freelist_tail_ = nullptr;
     } else {
@@ -241,10 +233,8 @@ template <typename T, size_t N> struct basic_px_queue {
         px_group *tmp = p->next_;
         p->next_ = dest.freelist_head_;
         dest.freelist_head_ = p;
-        if (!dest.freelist_tail_)
-          dest.freelist_tail_ = p;
-        if (p == freelist_tail_)
-          freelist_tail_ = nullptr;
+        if (!dest.freelist_tail_) dest.freelist_tail_ = p;
+        if (p == freelist_tail_) freelist_tail_ = nullptr;
         p = tmp;
         freelist_head_ = p;
       }
@@ -253,11 +243,9 @@ template <typename T, size_t N> struct basic_px_queue {
   }
 
   void clear() {
-    if (!head_)
-      return;
+    if (!head_) return;
     tail_->next_ = freelist_head_;
-    if (!freelist_tail_)
-      freelist_tail_ = tail_;
+    if (!freelist_tail_) freelist_tail_ = tail_;
     freelist_head_ = head_;
     head_ = tail_ = nullptr;
     ngroups_ = 0;
@@ -267,8 +255,7 @@ template <typename T, size_t N> struct basic_px_queue {
   void alloc_freelist(size_t n) {
     for (size_t i = 0; i < n; i++) {
       px_group *p = new px_group;
-      if (!freelist_tail_)
-        freelist_tail_ = p;
+      if (!freelist_tail_) freelist_tail_ = p;
       p->next_ = freelist_head_;
       freelist_head_ = p;
     }
@@ -277,8 +264,7 @@ template <typename T, size_t N> struct basic_px_queue {
   inline size_t get_ngroups() const { return ngroups_; }
 
   inline bool get_latest_epoch(uint64_t &e) const {
-    if (!tail_)
-      return false;
+    if (!tail_) return false;
     e = tail_->rcu_tick_;
     return true;
   }

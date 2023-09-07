@@ -69,21 +69,21 @@ struct Clp_Option {
  * Clp_Option structure would have val_type set to Clp_ValInt. */
 /**@{*/
 #define Clp_NoVal 0 /**< @brief Option takes no value. */
-#define Clp_ValString                                                          \
+#define Clp_ValString \
   1 /**< @brief Option value is an                                             \
                arbitrary string. */
-#define Clp_ValStringNotOption                                                   \
+#define Clp_ValStringNotOption \
   2 /**< @brief Option value is a                                                \
           non-option string.                                                     \
                                                                                \ \
 See Clp_DisallowOptions. */
-#define Clp_ValBool                                                              \
+#define Clp_ValBool \
   3 /**< @brief Option value is a                                                \
                  boolean.                                                        \
                                                                                \ \
 Accepts "true", "false", "yes", "no", "1", and "0", or any                       \
 prefixes thereof.  The match is case-insensitive. */
-#define Clp_ValInt                                                               \
+#define Clp_ValInt \
   4 /**< @brief Option value is a                                                \
                   signed int.                                                    \
                                                                                \ \
@@ -91,7 +91,7 @@ Accepts an optional "+" or "-" sign, followed by one or more                    
 digits.  The digits may be include a "0x" or "0X" prefix, for                    \
 a hexadecimal number, or a "0" prefix, for an octal number;                      \
 otherwise it is decimal. */
-#define Clp_ValUnsigned                                                          \
+#define Clp_ValUnsigned \
   5 /**< @brief Option value is an                                               \
              unsigned int.                                                       \
                                                                                \ \
@@ -99,17 +99,17 @@ Accepts an optional "+" sign, followed by one or more                           
 digits.  The digits may be include a "0x" or "0X" prefix, for                    \
 a hexadecimal number, or a "0" prefix, for an octal number;                      \
 otherwise it is decimal. */
-#define Clp_ValLong                                                            \
+#define Clp_ValLong \
   6 /**< @brief Option value is a                                              \
          signed long. */
-#define Clp_ValUnsignedLong                                                    \
+#define Clp_ValUnsignedLong \
   7 /**< @brief Option value is an                                             \
          unsigned long. */
-#define Clp_ValDouble                                                          \
+#define Clp_ValDouble \
   8 /**< @brief Option value is a                                              \
                double.                                                         \
 Accepts a real number as defined by strtod(). */
-#define Clp_ValFirstUser                                                       \
+#define Clp_ValFirstUser \
   10 /**< @brief Value types >=                                                \
                 Clp_ValFirstUser are available                                 \
                 for user types. */
@@ -118,34 +118,30 @@ Accepts a real number as defined by strtod(). */
 /** @name Option flags
  * These flags are used in the Clp_Option flags field. */
 /**@{*/
-#define Clp_Mandatory                                                          \
-  (1                                                                           \
-   << 0) /**< @brief Option flag: value                                        \
+#define Clp_Mandatory \
+  (1 << 0) /**< @brief Option flag: value                                        \
                is mandatory.                                                   \
                                                                              \ \
 It is an error if the option has no value.  This is the                        \
 default if an option has arg_type != 0 and the Clp_Optional                    \
 flag is not provided. */
-#define Clp_Optional                                                           \
+#define Clp_Optional \
   (1 << 1) /**< @brief Option flag: value                                      \
                   is optional. */
-#define Clp_Negate                                                             \
-  (1                                                                           \
-   << 2) /**< @brief Option flag: option                                       \
+#define Clp_Negate \
+  (1 << 2) /**< @brief Option flag: option                                       \
                   may be negated.                                              \
                                                                              \ \
 --no-[long_name] will be accepted in argument lists. */
-#define Clp_OnlyNegated                                                        \
-  (1                                                                           \
-   << 3) /**< @brief Option flag: option                                       \
+#define Clp_OnlyNegated \
+  (1 << 3) /**< @brief Option flag: option                                       \
              <em>must</em> be negated.                                         \
                                                                              \ \
 --no-[long_name] will be accepted in argument lists, but                       \
 --[long_name] will not.  This is the default if long_name                      \
 begins with "no-". */
-#define Clp_PreferredMatch                                                     \
-  (1                                                                           \
-   << 4) /**< @brief Option flag: prefer this                                  \
+#define Clp_PreferredMatch \
+  (1 << 4) /**< @brief Option flag: prefer this                                  \
               option when matching.                                            \
                                                                              \ \
 Prefixes of --[long_name] should map to this option, even if                   \
@@ -156,41 +152,41 @@ other options begin with --[long_name]. */
  * These flags are used in to define character types in Clp_SetOptionChar(). */
 /**@{*/
 /*	Clp_NotOption		0 */
-#define Clp_Short                                                              \
+#define Clp_Short \
   (1 << 0) /**< @brief Option character begins                                 \
                      a set of short options. */
-#define Clp_Long                                                               \
+#define Clp_Long \
   (1 << 1) /**< @brief Option character begins                                 \
                       a long option. */
-#define Clp_ShortNegated                                                       \
+#define Clp_ShortNegated \
   (1 << 2) /**< @brief Option character begins                                 \
                   a set of negated short options. */
-#define Clp_LongNegated                                                        \
+#define Clp_LongNegated \
   (1 << 3) /**< @brief Option character begins                                 \
                a negated long option. */
-#define Clp_LongImplicit                                                       \
+#define Clp_LongImplicit \
   (1 << 4) /**< @brief Option character can begin                              \
                   a long option, and is part of that                           \
                   long option. */
 /**@}*/
 
-#define Clp_NotOption                                                          \
+#define Clp_NotOption \
   0 /**< @brief Clp_Next value: argument                                       \
                was not an option. */
-#define Clp_Done                                                               \
+#define Clp_Done \
   -1 /**< @brief Clp_Next value: there are                                     \
                     no more arguments. */
-#define Clp_BadOption                                                          \
+#define Clp_BadOption \
   -2 /**< @brief Clp_Next value: argument                                      \
                was an erroneous option. */
-#define Clp_Error                                                              \
+#define Clp_Error \
   -3 /**< @brief Clp_Next value: internal                                      \
                    CLP error. */
 
-#define Clp_ValSize                                                            \
+#define Clp_ValSize \
   40 /**< @brief Minimum size of the                                           \
                  Clp_Parser val.cs field. */
-#define Clp_ValIntSize                                                         \
+#define Clp_ValIntSize \
   10 /**< @brief Minimum size of the                                           \
               Clp_Parser val.is field. */
 
@@ -201,8 +197,7 @@ other options begin with --[long_name]. */
  * @param user_data user data passed to Clp_AddType()
  * @return 1 if parsing succeeded, 0 otherwise
  */
-typedef int (*Clp_ValParseFunc)(Clp_Parser *clp, const char *vstr, int complain,
-                                void *user_data);
+typedef int (*Clp_ValParseFunc)(Clp_Parser *clp, const char *vstr, int complain, void *user_data);
 
 /** @brief A function for reporting option errors.
  * @param clp the parser
@@ -258,8 +253,7 @@ struct Clp_Parser {
 /** @endcond never */
 
 /** @brief Create a new Clp_Parser. */
-Clp_Parser *Clp_NewParser(int argc, const char *const *argv, int nopt,
-                          const Clp_Option *opt);
+Clp_Parser *Clp_NewParser(int argc, const char *const *argv, int nopt, const Clp_Option *opt);
 
 /** @brief Destroy a Clp_Parser object. */
 void Clp_DeleteParser(Clp_Parser *clp);
@@ -291,35 +285,30 @@ void Clp_SetArguments(Clp_Parser *clp, int argc, const char *const *argv);
 /** @brief Set whether @a clp is searching for options. */
 int Clp_SetOptionProcessing(Clp_Parser *clp, int on);
 
-#define Clp_DisallowOptions                                                    \
-  (1                                                                           \
-   << 0) /**< @brief Value type flag: value                                    \
+#define Clp_DisallowOptions \
+  (1 << 0) /**< @brief Value type flag: value                                    \
              can't be an option string.                                        \
                                                                              \ \
 See Clp_AddType(). */
 
 /** @brief Define a new value type for @a clp. */
-int Clp_AddType(Clp_Parser *clp, int val_type, int flags,
-                Clp_ValParseFunc parser, void *user_data);
+int Clp_AddType(Clp_Parser *clp, int val_type, int flags, Clp_ValParseFunc parser, void *user_data);
 
-#define Clp_AllowNumbers                                                       \
-  (1                                                                           \
-   << 0) /**< @brief String list flag: allow                                   \
+#define Clp_AllowNumbers \
+  (1 << 0) /**< @brief String list flag: allow                                   \
                 explicit numbers.                                              \
                                                                              \ \
 See Clp_AddStringListType() and Clp_AddStringListTypeVec(). */
-#define Clp_StringListLong                                                     \
+#define Clp_StringListLong \
   (1 << 1) /**< @brief String list flag: values                                \
                 have long type. */
 
 /** @brief Define a new string list value type for @a clp. */
-int Clp_AddStringListTypeVec(Clp_Parser *clp, int val_type, int flags,
-                             int nstrs, const char *const *strs,
+int Clp_AddStringListTypeVec(Clp_Parser *clp, int val_type, int flags, int nstrs, const char *const *strs,
                              const int *vals);
 
 /** @brief Define a new string list value type for @a clp. */
-int Clp_AddStringListType(Clp_Parser *clp, int val_type, int flags,
-                          ...) CLP_SENTINEL;
+int Clp_AddStringListType(Clp_Parser *clp, int val_type, int flags, ...) CLP_SENTINEL;
 
 /** @brief Parse and return the next argument from @a clp. */
 int Clp_Next(Clp_Parser *clp);
@@ -343,8 +332,7 @@ void Clp_RestoreParser(Clp_Parser *clp, const Clp_ParserState *state);
 int Clp_OptionError(Clp_Parser *clp, const char *format, ...);
 
 /** @brief Format a message. */
-int Clp_vsnprintf(Clp_Parser *clp, char *str, size_t size, const char *format,
-                  va_list val);
+int Clp_vsnprintf(Clp_Parser *clp, char *str, size_t size, const char *format, va_list val);
 
 /** @brief Print a message. */
 int Clp_fprintf(Clp_Parser *clp, FILE *f, const char *format, ...);

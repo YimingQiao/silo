@@ -49,6 +49,9 @@
 #include <malloc.h>
 #endif
 
+#include <algorithm>
+#include <deque>
+
 #include "checkpoint.hh"
 #include "clp.h"
 #include "file.hh"
@@ -65,8 +68,6 @@
 #include "msgpack.hh"
 #include "nodeversion.hh"
 #include "query_masstree.hh"
-#include <algorithm>
-#include <deque>
 
 using lcdf::StringAccum;
 
@@ -88,8 +89,7 @@ static std::vector<int> cores;
 static bool logging = true;
 static bool pinthreads = false;
 static bool recovery_only = false;
-volatile uint64_t globalepoch =
-    1; // global epoch, updated by main thread regularly
+volatile uint64_t globalepoch = 1;// global epoch, updated by main thread regularly
 static int port = 2117;
 static uint64_t test_limit = ~uint64_t(0);
 static int doprint = 0;
@@ -102,12 +102,11 @@ static std::vector<const char *> logdirs;
 static std::vector<const char *> ckpdirs;
 
 static logset *logs;
-volatile bool recovering =
-    false; // so don't add log entries, and free old value immediately
+volatile bool recovering = false;// so don't add log entries, and free old value immediately
 
 static double checkpoint_interval = 1000000;
-static kvepoch_t ckp_gen = 0; // recover from checkpoint
-static ckstate *cks = NULL;   // checkpoint status of all checkpointing threads
+static kvepoch_t ckp_gen = 0;// recover from checkpoint
+static ckstate *cks = NULL;  // checkpoint status of all checkpointing threads
 static pthread_cond_t rec_cond;
 pthread_mutex_t rec_mu;
 static int rec_nactive;
@@ -145,20 +144,18 @@ static void epochinc(int);
 /* running local tests */
 void test_timeout(int) {
   size_t n;
-  for (n = 0; n < arraysize(timeout) && timeout[n]; ++n)
-    /* do nothing */;
+  for (n = 0; n < arraysize(timeout) && timeout[n]; ++n) /* do nothing */
+    ;
   if (n < arraysize(timeout)) {
     timeout[n] = true;
-    if (n + 1 < arraysize(timeout) && duration[n + 1])
-      xalarm(duration[n + 1]);
+    if (n + 1 < arraysize(timeout) && duration[n + 1]) xalarm(duration[n + 1]);
   }
 }
 
 struct kvtest_client {
   kvtest_client() : checks_(0), kvo_() {}
 
-  kvtest_client(const char *testname)
-      : testname_(testname), checks_(0), kvo_() {}
+  kvtest_client(const char *testname) : testname_(testname), checks_(0), kvo_() {}
 
   int id() const { return ti_->index(); }
 
@@ -167,10 +164,9 @@ struct kvtest_client {
   void set_thread(threadinfo *ti) { ti_ = ti; }
 
   void register_timeouts(int n) {
-    always_assert(n <= (int)arraysize(::timeout));
+    always_assert(n <= (int) arraysize(::timeout));
     for (int i = 1; i < n; ++i)
-      if (duration[i] == 0)
-        duration[i] = 0; // duration[i - 1];
+      if (duration[i] == 0) duration[i] = 0;// duration[i - 1];
   }
 
   bool timeout(int which) const { return ::timeout[which]; }
@@ -222,9 +218,7 @@ struct kvtest_client {
 
   void put(const Str &key, const Str &value);
 
-  void put(const char *key, const char *val) {
-    put(Str(key, strlen(key)), Str(val, strlen(val)));
-  }
+  void put(const char *key, const char *val) { put(Str(key, strlen(key)), Str(val, strlen(val))); }
 
   void put(long ikey, long ivalue) {
     quick_istr key(ikey), value(ivalue);
@@ -264,9 +258,7 @@ struct kvtest_client {
 
   const Json &report(const Json &x) { return report_.merge(x); }
 
-  void finish() {
-    fprintf(stderr, "%d: %s\n", ti_->index(), report_.unparse().c_str());
-  }
+  void finish() { fprintf(stderr, "%d: %s\n", ti_->index(), report_.unparse().c_str()); }
 
   threadinfo *ti_;
   query<row_type> q_[10];
@@ -282,42 +274,36 @@ volatile int kvtest_client::failing;
 
 void kvtest_client::get(long ikey, Str *value) {
   quick_istr key(ikey);
-  if (!q_[0].run_get1(tree->table(), key.string(), 0, *value, *ti_))
-    *value = Str();
+  if (!q_[0].run_get1(tree->table(), key.string(), 0, *value, *ti_)) *value = Str();
 }
 
 void kvtest_client::get(const Str &key) {
   Str val;
-  (void)q_[0].run_get1(tree->table(), key, 0, val, *ti_);
+  (void) q_[0].run_get1(tree->table(), key, 0, val, *ti_);
 }
 
 void kvtest_client::get_check(const Str &key, const Str &expected) {
   Str val;
   if (!q_[0].run_get1(tree->table(), key, 0, val, *ti_)) {
-    fail("get(%.*s) failed (expected %.*s)\n", key.len, key.s, expected.len,
-         expected.s);
+    fail("get(%.*s) failed (expected %.*s)\n", key.len, key.s, expected.len, expected.s);
     return;
   }
   if (val.len != expected.len || memcmp(val.s, expected.s, val.len) != 0)
-    fail("get(%.*s) returned unexpected value %.*s (expected %.*s)\n", key.len,
-         key.s, std::min(val.len, 40), val.s, std::min(expected.len, 40),
-         expected.s);
+    fail("get(%.*s) returned unexpected value %.*s (expected %.*s)\n", key.len, key.s, std::min(val.len, 40), val.s,
+         std::min(expected.len, 40), expected.s);
   else
     ++checks_;
 }
 
-void kvtest_client::get_col_check(const Str &key, int col,
-                                  const Str &expected) {
+void kvtest_client::get_col_check(const Str &key, int col, const Str &expected) {
   Str val;
   if (!q_[0].run_get1(tree->table(), key, col, val, *ti_)) {
-    fail("get.%d(%.*s) failed (expected %.*s)\n", col, key.len, key.s,
-         expected.len, expected.s);
+    fail("get.%d(%.*s) failed (expected %.*s)\n", col, key.len, key.s, expected.len, expected.s);
     return;
   }
   if (val.len != expected.len || memcmp(val.s, expected.s, val.len) != 0)
-    fail("get.%d(%.*s) returned unexpected value %.*s (expected %.*s)\n", col,
-         key.len, key.s, std::min(val.len, 40), val.s,
-         std::min(expected.len, 40), expected.s);
+    fail("get.%d(%.*s) returned unexpected value %.*s (expected %.*s)\n", col, key.len, key.s, std::min(val.len, 40),
+         val.s, std::min(expected.len, 40), expected.s);
   else
     ++checks_;
 }
@@ -329,26 +315,24 @@ bool kvtest_client::get_sync(long ikey) {
 }
 
 void kvtest_client::put(const Str &key, const Str &value) {
-  while (failing)
-    /* do nothing */;
+  while (failing) /* do nothing */
+    ;
   q_[0].run_replace(tree->table(), key, value, *ti_);
-  if (ti_->logger()) // NB may block
+  if (ti_->logger())// NB may block
     ti_->logger()->record(logcmd_replace, q_[0].query_times(), key, value);
 }
 
 void kvtest_client::put_col(const Str &key, int col, const Str &value) {
-  while (failing)
-    /* do nothing */;
+  while (failing) /* do nothing */
+    ;
 #if !MASSTREE_ROW_TYPE_STR
-  if (!kvo_)
-    kvo_ = new_kvout(-1, 2048);
+  if (!kvo_) kvo_ = new_kvout(-1, 2048);
   Json req[2] = {Json(col), Json(String::make_stable(value))};
-  (void)q_[0].run_put(tree->table(), key, &req[0], &req[2], *ti_);
-  if (ti_->logger()) // NB may block
-    ti_->logger()->record(logcmd_put, q_[0].query_times(), key, &req[0],
-                          &req[2]);
+  (void) q_[0].run_put(tree->table(), key, &req[0], &req[2], *ti_);
+  if (ti_->logger())// NB may block
+    ti_->logger()->record(logcmd_put, q_[0].query_times(), key, &req[0], &req[2]);
 #else
-  (void)key, (void)col, (void)value;
+  (void) key, (void) col, (void) value;
   assert(0);
 #endif
 }
@@ -356,19 +340,16 @@ void kvtest_client::put_col(const Str &key, int col, const Str &value) {
 bool kvtest_client::remove_sync(long ikey) {
   quick_istr key(ikey);
   bool removed = q_[0].run_remove(tree->table(), key.string(), *ti_);
-  if (removed && ti_->logger()) // NB may block
-    ti_->logger()->record(logcmd_remove, q_[0].query_times(), key.string(),
-                          Str());
+  if (removed && ti_->logger())// NB may block
+    ti_->logger()->record(logcmd_remove, q_[0].query_times(), key.string(), Str());
   return removed;
 }
 
 String kvtest_client::make_message(StringAccum &sa) const {
   const char *begin = sa.begin();
-  while (begin != sa.end() && isspace((unsigned char)*begin))
-    ++begin;
+  while (begin != sa.end() && isspace((unsigned char) *begin)) ++begin;
   String s = String(begin, sa.end());
-  if (!s.empty() && s.back() != '\n')
-    s += '\n';
+  if (!s.empty() && s.back() != '\n') s += '\n';
   return s;
 }
 
@@ -377,8 +358,7 @@ void kvtest_client::notice(const char *fmt, ...) {
   va_start(val, fmt);
   String m = make_message(StringAccum().vsnprintf(500, fmt, val));
   va_end(val);
-  if (m)
-    fprintf(stderr, "%d: %s", ti_->index(), m.c_str());
+  if (m) fprintf(stderr, "%d: %s", ti_->index(), m.c_str());
 }
 
 void kvtest_client::fail(const char *fmt, ...) {
@@ -391,8 +371,7 @@ void kvtest_client::fail(const char *fmt, ...) {
   va_start(val, fmt);
   String m = make_message(StringAccum().vsnprintf(500, fmt, val));
   va_end(val);
-  if (!m)
-    m = "unknown failure";
+  if (!m) m = "unknown failure";
 
   fail_message_lock.lock();
   if (fail_message != m) {
@@ -412,11 +391,10 @@ void kvtest_client::fail(const char *fmt, ...) {
 }
 
 static void *testgo(threadinfo *ti) {
-  kvtest_client *kc = (kvtest_client *)ti->thread_data();
+  kvtest_client *kc = (kvtest_client *) ti->thread_data();
   prepare_thread(kc->ti_);
 
-  if (strcmp(kc->testname_, "rw1") == 0)
-    kvtest_rw1(*kc);
+  if (strcmp(kc->testname_, "rw1") == 0) kvtest_rw1(*kc);
   else if (strcmp(kc->testname_, "rw2") == 0)
     kvtest_rw2(*kc);
   else if (strcmp(kc->testname_, "rw3") == 0)
@@ -433,8 +411,7 @@ static void *testgo(threadinfo *ti) {
     kvtest_palmb(*kc);
   else if (strcmp(kc->testname_, "rw16") == 0)
     kvtest_rw16(*kc);
-  else if (strcmp(kc->testname_, "rw5") == 0 ||
-           strcmp(kc->testname_, "rw1fixed") == 0)
+  else if (strcmp(kc->testname_, "rw5") == 0 || strcmp(kc->testname_, "rw1fixed") == 0)
     kvtest_rw1fixed(*kc);
   else if (strcmp(kc->testname_, "ycsbk") == 0)
     kvtest_ycsbk(*kc);
@@ -447,43 +424,35 @@ static void *testgo(threadinfo *ti) {
   else if (strcmp(kc->testname_, "r1") == 0)
     kvtest_r1_seed(*kc, kvtest_first_seed + kc->id());
   else if (strcmp(kc->testname_, "wcol1") == 0)
-    kvtest_wcol1at(*kc, kc->id() % 24, kvtest_first_seed + kc->id() % 48,
-                   5000000);
+    kvtest_wcol1at(*kc, kc->id() % 24, kvtest_first_seed + kc->id() % 48, 5000000);
   else if (strcmp(kc->testname_, "rcol1") == 0)
-    kvtest_rcol1at(*kc, kc->id() % 24, kvtest_first_seed + kc->id() % 48,
-                   5000000);
+    kvtest_rcol1at(*kc, kc->id() % 24, kvtest_first_seed + kc->id() % 48, 5000000);
   else
     kc->fail("unknown test '%s'", kc->testname_);
   return 0;
 }
 
-static const char *const kvstats_name[] = {
-    "ops",   "ops_per_sec",  "puts",         "gets",
-    "scans", "puts_per_sec", "gets_per_sec", "scans_per_sec"};
+static const char *const kvstats_name[] = {"ops",   "ops_per_sec",  "puts",         "gets",
+                                           "scans", "puts_per_sec", "gets_per_sec", "scans_per_sec"};
 
 void runtest(const char *testname, int nthreads) {
   std::vector<kvtest_client> clients(nthreads, kvtest_client(testname));
   ::testthreads = nthreads;
-  for (int i = 0; i < nthreads; ++i)
-    clients[i].set_thread(threadinfo::make(threadinfo::TI_PROCESS, i));
-  bzero((void *)timeout, sizeof(timeout));
+  for (int i = 0; i < nthreads; ++i) clients[i].set_thread(threadinfo::make(threadinfo::TI_PROCESS, i));
+  bzero((void *) timeout, sizeof(timeout));
   signal(SIGALRM, test_timeout);
-  if (duration[0])
-    xalarm(duration[0]);
+  if (duration[0]) xalarm(duration[0]);
   for (int i = 0; i < nthreads; ++i) {
     int r = clients[i].ti_->run(testgo, &clients[i]);
     always_assert(r == 0);
   }
-  for (int i = 0; i < nthreads; ++i)
-    pthread_join(clients[i].ti_->threadid(), 0);
+  for (int i = 0; i < nthreads; ++i) pthread_join(clients[i].ti_->threadid(), 0);
 
   kvstats kvs[arraysize(kvstats_name)];
   for (int i = 0; i < nthreads; ++i)
-    for (int j = 0; j < (int)arraysize(kvstats_name); ++j)
-      if (double x = clients[i].report_.get_d(kvstats_name[j]))
-        kvs[j].add(x);
-  for (int j = 0; j < (int)arraysize(kvstats_name); ++j)
-    kvs[j].print_report(kvstats_name[j]);
+    for (int j = 0; j < (int) arraysize(kvstats_name); ++j)
+      if (double x = clients[i].report_.get_d(kvstats_name[j])) kvs[j].add(x);
+  for (int j = 0; j < (int) arraysize(kvstats_name); ++j) kvs[j].print_report(kvstats_name[j]);
 }
 
 struct conn {
@@ -491,31 +460,31 @@ struct conn {
   enum { inbufsz = 20 * 1024, inbufrefill = 16 * 1024 };
 
   conn(int s)
-      : fd(s), inbuf_(new char[inbufsz]), inbufpos_(0), inbuflen_(0),
-        kvout(new_kvout(s, 20 * 1024)), inbuftotal_(0) {}
+      : fd(s),
+        inbuf_(new char[inbufsz]),
+        inbufpos_(0),
+        inbuflen_(0),
+        kvout(new_kvout(s, 20 * 1024)),
+        inbuftotal_(0) {}
 
   ~conn() {
     close(fd);
     free_kvout(kvout);
     delete[] inbuf_;
-    for (char *x : oldinbuf_)
-      delete[] x;
+    for (char *x: oldinbuf_) delete[] x;
   }
 
   Json &receive() {
     while (!parser_.done() && check(2))
-      inbufpos_ += parser_.consume(inbuf_ + inbufpos_, inbuflen_ - inbufpos_,
-                                   String::make_stable(inbuf_, inbufsz));
-    if (parser_.success() && parser_.result().is_a())
-      parser_.reset();
+      inbufpos_ += parser_.consume(inbuf_ + inbufpos_, inbuflen_ - inbufpos_, String::make_stable(inbuf_, inbufsz));
+    if (parser_.success() && parser_.result().is_a()) parser_.reset();
     else
       parser_.result() = Json();
     return parser_.result();
   }
 
   int check(int tryhard) {
-    if (inbufpos_ == inbuflen_ && tryhard)
-      hard_check(tryhard);
+    if (inbufpos_ == inbuflen_ && tryhard) hard_check(tryhard);
     return inbuflen_ - inbufpos_;
   }
 
@@ -549,8 +518,7 @@ void conn::hard_check(int tryhard) {
   if (parser_.empty()) {
     inbuftotal_ += inbufpos_;
     inbufpos_ = inbuflen_ = 0;
-    for (auto x : oldinbuf_)
-      delete[] x;
+    for (auto x: oldinbuf_) delete[] x;
     oldinbuf_.clear();
   } else if (inbufpos_ == inbufsz) {
     oldinbuf_.push_back(inbuf_);
@@ -563,14 +531,12 @@ void conn::hard_check(int tryhard) {
     FD_ZERO(&rfds);
     FD_SET(fd, &rfds);
     struct timeval tv = {0, 0};
-    if (select(fd + 1, &rfds, NULL, NULL, &tv) <= 0)
-      return;
+    if (select(fd + 1, &rfds, NULL, NULL, &tv) <= 0) return;
   } else
     kvflush(kvout);
 
   ssize_t r = read(fd, inbuf_ + inbufpos_, inbufsz - inbufpos_);
-  if (r != -1)
-    inbuflen_ += r;
+  if (r != -1) inbuflen_ += r;
 }
 
 struct conninfo {
@@ -597,141 +563,125 @@ enum {
   opt_checkpoint,
   opt_limit
 };
-static const Clp_Option options[] = {
-    {"no-log", 0, opt_nolog, 0, 0},
-    {0, 'n', opt_nolog, 0, 0},
-    {"no-run", 0, opt_norun, 0, 0},
-    {"pin", 'p', opt_pin, 0, Clp_Negate},
-    {"logdir", 0, opt_logdir, Clp_ValString, 0},
-    {"ld", 0, opt_logdir, Clp_ValString, 0},
-    {"checkpoint", 'c', opt_checkpoint, Clp_ValDouble,
-     Clp_Optional | Clp_Negate},
-    {"ckp", 0, opt_checkpoint, Clp_ValDouble, Clp_Optional | Clp_Negate},
-    {"ckpdir", 0, opt_ckpdir, Clp_ValString, 0},
-    {"ckdir", 0, opt_ckpdir, Clp_ValString, 0},
-    {"cd", 0, opt_ckpdir, Clp_ValString, 0},
-    {"port", 0, opt_port, Clp_ValInt, 0},
-    {"duration", 'd', opt_duration, Clp_ValDouble, 0},
-    {"limit", 'l', opt_limit, clp_val_suffixdouble, 0},
-    {"test", 0, opt_test, Clp_ValString, 0},
-    {"test-rw1", 0, opt_test_name, 0, 0},
-    {"test-rw2", 0, opt_test_name, 0, 0},
-    {"test-rw3", 0, opt_test_name, 0, 0},
-    {"test-rw4", 0, opt_test_name, 0, 0},
-    {"test-rw5", 0, opt_test_name, 0, 0},
-    {"test-rw16", 0, opt_test_name, 0, 0},
-    {"test-palm", 0, opt_test_name, 0, 0},
-    {"test-ycsbk", 0, opt_test_name, 0, 0},
-    {"test-rw1fixed", 0, opt_test_name, 0, 0},
-    {"threads", 'j', opt_threads, Clp_ValInt, 0},
-    {"cores", 0, opt_cores, Clp_ValString, 0},
-    {"print", 0, opt_print, 0, Clp_Negate}};
+static const Clp_Option options[] = {{"no-log", 0, opt_nolog, 0, 0},
+                                     {0, 'n', opt_nolog, 0, 0},
+                                     {"no-run", 0, opt_norun, 0, 0},
+                                     {"pin", 'p', opt_pin, 0, Clp_Negate},
+                                     {"logdir", 0, opt_logdir, Clp_ValString, 0},
+                                     {"ld", 0, opt_logdir, Clp_ValString, 0},
+                                     {"checkpoint", 'c', opt_checkpoint, Clp_ValDouble, Clp_Optional | Clp_Negate},
+                                     {"ckp", 0, opt_checkpoint, Clp_ValDouble, Clp_Optional | Clp_Negate},
+                                     {"ckpdir", 0, opt_ckpdir, Clp_ValString, 0},
+                                     {"ckdir", 0, opt_ckpdir, Clp_ValString, 0},
+                                     {"cd", 0, opt_ckpdir, Clp_ValString, 0},
+                                     {"port", 0, opt_port, Clp_ValInt, 0},
+                                     {"duration", 'd', opt_duration, Clp_ValDouble, 0},
+                                     {"limit", 'l', opt_limit, clp_val_suffixdouble, 0},
+                                     {"test", 0, opt_test, Clp_ValString, 0},
+                                     {"test-rw1", 0, opt_test_name, 0, 0},
+                                     {"test-rw2", 0, opt_test_name, 0, 0},
+                                     {"test-rw3", 0, opt_test_name, 0, 0},
+                                     {"test-rw4", 0, opt_test_name, 0, 0},
+                                     {"test-rw5", 0, opt_test_name, 0, 0},
+                                     {"test-rw16", 0, opt_test_name, 0, 0},
+                                     {"test-palm", 0, opt_test_name, 0, 0},
+                                     {"test-ycsbk", 0, opt_test_name, 0, 0},
+                                     {"test-rw1fixed", 0, opt_test_name, 0, 0},
+                                     {"threads", 'j', opt_threads, Clp_ValInt, 0},
+                                     {"cores", 0, opt_cores, Clp_ValString, 0},
+                                     {"print", 0, opt_print, 0, Clp_Negate}};
 
 int main(int argc, char *argv[]) {
   using std::swap;
   int s, ret, yes = 1, i = 1, firstcore = -1, corestride = 1;
   const char *dotest = 0;
-  nlogger = tcpthreads = udpthreads = nckthreads =
-      sysconf(_SC_NPROCESSORS_ONLN);
-  Clp_Parser *clp = Clp_NewParser(argc, argv, (int)arraysize(options), options);
-  Clp_AddType(clp, clp_val_suffixdouble, Clp_DisallowOptions,
-              clp_parse_suffixdouble, 0);
+  nlogger = tcpthreads = udpthreads = nckthreads = sysconf(_SC_NPROCESSORS_ONLN);
+  Clp_Parser *clp = Clp_NewParser(argc, argv, (int) arraysize(options), options);
+  Clp_AddType(clp, clp_val_suffixdouble, Clp_DisallowOptions, clp_parse_suffixdouble, 0);
   int opt;
   while ((opt = Clp_Next(clp)) >= 0) {
     switch (opt) {
-    case opt_nolog:
-      logging = false;
-      break;
-    case opt_pin:
-      pinthreads = !clp->negated;
-      break;
-    case opt_threads:
-      nlogger = tcpthreads = udpthreads = nckthreads = clp->val.i;
-      break;
-    case opt_logdir: {
-      const char *s = strtok((char *)clp->vstr, ",");
-      for (; s; s = strtok(NULL, ","))
-        logdirs.push_back(s);
-      break;
-    }
-    case opt_ckpdir: {
-      const char *s = strtok((char *)clp->vstr, ",");
-      for (; s; s = strtok(NULL, ","))
-        ckpdirs.push_back(s);
-      break;
-    }
-    case opt_checkpoint:
-      if (clp->negated || (clp->have_val && clp->val.d <= 0))
-        checkpoint_interval = -1;
-      else if (clp->have_val)
-        checkpoint_interval = clp->val.d;
-      else
-        checkpoint_interval = 30;
-      break;
-    case opt_port:
-      port = clp->val.i;
-      break;
-    case opt_duration:
-      duration[0] = clp->val.d;
-      break;
-    case opt_limit:
-      test_limit = (uint64_t)clp->val.d;
-      break;
-    case opt_test:
-      dotest = clp->vstr;
-      break;
-    case opt_test_name:
-      dotest = clp->option->long_name + 5;
-      break;
-    case opt_print:
-      doprint = !clp->negated;
-      break;
-    case opt_cores:
-      if (firstcore >= 0 || cores.size() > 0) {
-        Clp_OptionError(clp, "%<%O%> already given");
-        exit(EXIT_FAILURE);
-      } else {
-        const char *plus = strchr(clp->vstr, '+');
-        Json ij = Json::parse(clp->vstr),
-             aj = Json::parse(String("[") + String(clp->vstr) + String("]")),
-             pj1 = Json::parse(plus ? String(clp->vstr, plus) : "x"),
-             pj2 = Json::parse(plus ? String(plus + 1) : "x");
-        for (int i = 0; aj && i < aj.size(); ++i)
-          if (!aj[i].is_int() || aj[i].to_i() < 0)
-            aj = Json();
-        if (ij && ij.is_int() && ij.to_i() >= 0)
-          firstcore = ij.to_i(), corestride = 1;
-        else if (pj1 && pj2 && pj1.is_int() && pj1.to_i() >= 0 && pj2.is_int())
-          firstcore = pj1.to_i(), corestride = pj2.to_i();
-        else if (aj) {
-          for (int i = 0; i < aj.size(); ++i)
-            cores.push_back(aj[i].to_i());
-        } else {
-          Clp_OptionError(clp, "bad %<%O%>, expected %<CORE1%>, "
-                               "%<CORE1+STRIDE%>, or %<CORE1,CORE2,...%>");
-          exit(EXIT_FAILURE);
-        }
+      case opt_nolog:
+        logging = false;
+        break;
+      case opt_pin:
+        pinthreads = !clp->negated;
+        break;
+      case opt_threads:
+        nlogger = tcpthreads = udpthreads = nckthreads = clp->val.i;
+        break;
+      case opt_logdir: {
+        const char *s = strtok((char *) clp->vstr, ",");
+        for (; s; s = strtok(NULL, ",")) logdirs.push_back(s);
+        break;
       }
-      break;
-    case opt_norun:
-      recovery_only = true;
-      break;
-    default:
-      fprintf(
-          stderr,
-          "Usage: kvd [-np] [--ld dir1[,dir2,...]] [--cd dir1[,dir2,...]]\n");
-      exit(EXIT_FAILURE);
+      case opt_ckpdir: {
+        const char *s = strtok((char *) clp->vstr, ",");
+        for (; s; s = strtok(NULL, ",")) ckpdirs.push_back(s);
+        break;
+      }
+      case opt_checkpoint:
+        if (clp->negated || (clp->have_val && clp->val.d <= 0)) checkpoint_interval = -1;
+        else if (clp->have_val)
+          checkpoint_interval = clp->val.d;
+        else
+          checkpoint_interval = 30;
+        break;
+      case opt_port:
+        port = clp->val.i;
+        break;
+      case opt_duration:
+        duration[0] = clp->val.d;
+        break;
+      case opt_limit:
+        test_limit = (uint64_t) clp->val.d;
+        break;
+      case opt_test:
+        dotest = clp->vstr;
+        break;
+      case opt_test_name:
+        dotest = clp->option->long_name + 5;
+        break;
+      case opt_print:
+        doprint = !clp->negated;
+        break;
+      case opt_cores:
+        if (firstcore >= 0 || cores.size() > 0) {
+          Clp_OptionError(clp, "%<%O%> already given");
+          exit(EXIT_FAILURE);
+        } else {
+          const char *plus = strchr(clp->vstr, '+');
+          Json ij = Json::parse(clp->vstr), aj = Json::parse(String("[") + String(clp->vstr) + String("]")),
+               pj1 = Json::parse(plus ? String(clp->vstr, plus) : "x"),
+               pj2 = Json::parse(plus ? String(plus + 1) : "x");
+          for (int i = 0; aj && i < aj.size(); ++i)
+            if (!aj[i].is_int() || aj[i].to_i() < 0) aj = Json();
+          if (ij && ij.is_int() && ij.to_i() >= 0) firstcore = ij.to_i(), corestride = 1;
+          else if (pj1 && pj2 && pj1.is_int() && pj1.to_i() >= 0 && pj2.is_int())
+            firstcore = pj1.to_i(), corestride = pj2.to_i();
+          else if (aj) {
+            for (int i = 0; i < aj.size(); ++i) cores.push_back(aj[i].to_i());
+          } else {
+            Clp_OptionError(clp,
+                            "bad %<%O%>, expected %<CORE1%>, "
+                            "%<CORE1+STRIDE%>, or %<CORE1,CORE2,...%>");
+            exit(EXIT_FAILURE);
+          }
+        }
+        break;
+      case opt_norun:
+        recovery_only = true;
+        break;
+      default:
+        fprintf(stderr, "Usage: kvd [-np] [--ld dir1[,dir2,...]] [--cd dir1[,dir2,...]]\n");
+        exit(EXIT_FAILURE);
     }
   }
   Clp_DeleteParser(clp);
-  if (logdirs.empty())
-    logdirs.push_back(".");
-  if (ckpdirs.empty())
-    ckpdirs.push_back(".");
-  if (firstcore < 0)
-    firstcore = cores.size() ? cores.back() + 1 : 0;
-  for (; (int)cores.size() < udpthreads; firstcore += corestride)
-    cores.push_back(firstcore);
+  if (logdirs.empty()) logdirs.push_back(".");
+  if (ckpdirs.empty()) ckpdirs.push_back(".");
+  if (firstcore < 0) firstcore = cores.size() ? cores.back() + 1 : 0;
+  for (; (int) cores.size() < udpthreads; firstcore += corestride) cores.push_back(firstcore);
 
   // for -pg profiling
   signal(SIGINT, catchint);
@@ -776,8 +726,7 @@ int main(int argc, char *argv[]) {
   initial_timestamp = timestamp();
   tree = new Masstree::default_table;
   tree->initialize(*main_ti);
-  printf("%s, %s, pin-threads %s, ", tree->name(), row_type::name(),
-         pinthreads ? "enabled" : "disabled");
+  printf("%s, %s, pin-threads %s, ", tree->name(), row_type::name(), pinthreads ? "enabled" : "disabled");
   if (logging) {
     printf("logging enabled\n");
     log_init();
@@ -787,13 +736,11 @@ int main(int argc, char *argv[]) {
   }
 
   // UDP threads, each with its own port.
-  if (udpthreads == 0)
-    printf("0 udp threads\n");
+  if (udpthreads == 0) printf("0 udp threads\n");
   else if (udpthreads == 1)
     printf("1 udp thread (port %d)\n", port);
   else
-    printf("%d udp threads (ports %d-%d)\n", udpthreads, port,
-           port + udpthreads - 1);
+    printf("%d udp threads (ports %d-%d)\n", udpthreads, port, port + udpthreads - 1);
   for (i = 0; i < udpthreads; i++) {
     threadinfo *ti = threadinfo::make(threadinfo::TI_PROCESS, i);
     ret = ti->run(udp_threadfunc);
@@ -807,8 +754,7 @@ int main(int argc, char *argv[]) {
     } else
       runtest(dotest, tcpthreads);
     tree->stats(stderr);
-    if (doprint)
-      tree->print(stdout, 0);
+    if (doprint) tree->print(stdout, 0);
     exit(0);
   }
 
@@ -823,7 +769,7 @@ int main(int argc, char *argv[]) {
   sin.sin_family = AF_INET;
   sin.sin_addr.s_addr = INADDR_ANY;
   sin.sin_port = htons(port);
-  ret = bind(s, (struct sockaddr *)&sin, sizeof(sin));
+  ret = bind(s, (struct sockaddr *) &sin, sizeof(sin));
   if (ret < 0) {
     perror("bind");
     exit(EXIT_FAILURE);
@@ -859,7 +805,7 @@ int main(int argc, char *argv[]) {
     socklen_t sinlen = sizeof(sin1);
 
     bzero(&sin1, sizeof(sin1));
-    s1 = accept(s, (struct sockaddr *)&sin1, &sinlen);
+    s1 = accept(s, (struct sockaddr *) &sin1, &sinlen);
     always_assert(s1 >= 0);
     setsockopt(s1, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
 
@@ -874,16 +820,14 @@ int main(int argc, char *argv[]) {
     }
 
     msgpack::streaming_parser sp;
-    if (nr == 0 || sp.consume(buf, nr) != (size_t)nr || !sp.result().is_a() ||
-        sp.result().size() < 2 || !sp.result()[1].is_i() ||
-        sp.result()[1].as_i() != Cmd_Handshake) {
+    if (nr == 0 || sp.consume(buf, nr) != (size_t) nr || !sp.result().is_a() || sp.result().size() < 2 ||
+        !sp.result()[1].is_i() || sp.result()[1].as_i() != Cmd_Handshake) {
       fprintf(stderr, "failed handshake\n");
       goto kill_connection;
     }
 
     int target_core = -1;
-    if (sp.result().size() >= 3 && sp.result()[2].is_o() &&
-        sp.result()[2]["core"].is_i())
+    if (sp.result().size() >= 3 && sp.result()[2].is_o() && sp.result()[2]["core"].is_i())
       target_core = sp.result()[2]["core"].as_i();
     if (target_core < 0 || target_core >= tcpthreads) {
       target_core = next % tcpthreads;
@@ -895,7 +839,7 @@ int main(int argc, char *argv[]) {
     swap(ci->handshake, sp.result());
 
     ssize_t w = write(tcp_thread_pipes[2 * target_core + 1], &ci, sizeof(ci));
-    always_assert((size_t)w == sizeof(ci));
+    always_assert((size_t) w == sizeof(ci));
   }
 }
 
@@ -904,29 +848,29 @@ void catchint(int) {
   char cmd = 0;
   // Does not matter if the write fails (when the pipe is full)
   int r = write(quit_pipe[1], &cmd, sizeof(cmd));
-  (void)r;
+  (void) r;
 }
 
 inline const char *threadtype(int type) {
   switch (type) {
-  case threadinfo::TI_MAIN:
-    return "main";
-  case threadinfo::TI_PROCESS:
-    return "process";
-  case threadinfo::TI_LOG:
-    return "log";
-  case threadinfo::TI_CHECKPOINT:
-    return "checkpoint";
-  default:
-    always_assert(0 && "Unknown threadtype");
-    break;
+    case threadinfo::TI_MAIN:
+      return "main";
+    case threadinfo::TI_PROCESS:
+      return "process";
+    case threadinfo::TI_LOG:
+      return "log";
+    case threadinfo::TI_CHECKPOINT:
+      return "checkpoint";
+    default:
+      always_assert(0 && "Unknown threadtype");
+      break;
   };
 }
 
 void *canceling(void *) {
   char cmd;
   int r = read(quit_pipe[0], &cmd, sizeof(cmd));
-  (void)r;
+  (void) r;
   assert(r == sizeof(cmd) && cmd == 0);
   // Cancel wake up checkpointing threads
   pthread_mutex_lock(&checkpoint_mu);
@@ -938,8 +882,7 @@ void *canceling(void *) {
   // cancel outstanding threads. Checkpointing threads will exit safely
   // when the checkpointing thread 0 sees go_quit, and don't need cancel
   for (threadinfo *ti = threadinfo::allthreads; ti; ti = ti->next())
-    if (ti->purpose() != threadinfo::TI_MAIN &&
-        ti->purpose() != threadinfo::TI_CHECKPOINT &&
+    if (ti->purpose() != threadinfo::TI_MAIN && ti->purpose() != threadinfo::TI_CHECKPOINT &&
         !pthread_equal(me, ti->threadid())) {
       int r = pthread_cancel(ti->threadid());
       always_assert(r == 0);
@@ -947,10 +890,8 @@ void *canceling(void *) {
 
   // join canceled threads
   for (threadinfo *ti = threadinfo::allthreads; ti; ti = ti->next())
-    if (ti->purpose() != threadinfo::TI_MAIN &&
-        !pthread_equal(me, ti->threadid())) {
-      fprintf(stderr, "joining thread %s:%d\n", threadtype(ti->purpose()),
-              ti->index());
+    if (ti->purpose() != threadinfo::TI_MAIN && !pthread_equal(me, ti->threadid())) {
+      fprintf(stderr, "joining thread %s:%d\n", threadtype(ti->purpose()), ti->index());
       int r = pthread_join(ti->threadid(), 0);
       always_assert(r == 0);
     }
@@ -962,11 +903,9 @@ void epochinc(int) { globalepoch += 2; }
 
 // Return 1 if success, -1 if I/O error or protocol unmatch
 int handshake(Json &request, threadinfo &ti) {
-  always_assert(request.is_a() && request.size() >= 2 && request[1].is_i() &&
-                request[1].as_i() == Cmd_Handshake &&
+  always_assert(request.is_a() && request.size() >= 2 && request[1].is_i() && request[1].as_i() == Cmd_Handshake &&
                 (request.size() == 2 || request[2].is_o()));
-  if (request.size() >= 2 && request[2]["maxkeylen"].is_i() &&
-      request[2]["maxkeylen"].as_i() > MASSTREE_MAXKEYLEN) {
+  if (request.size() >= 2 && request[2]["maxkeylen"].is_i() && request[2]["maxkeylen"].as_i() > MASSTREE_MAXKEYLEN) {
     request[2] = false;
     request[3] = "bad maxkeylen";
     request.resize(4);
@@ -991,8 +930,7 @@ int onego(query<row_type> &q, Json &request, Str request_str, threadinfo &ti) {
     request.resize(2);
   } else if (command == Cmd_Get) {
     q.run_get(tree->table(), request, ti);
-  } else if (command == Cmd_Put && request.size() > 3 &&
-             (request.size() % 2) == 1) { // insert or update
+  } else if (command == Cmd_Put && request.size() > 3 && (request.size() % 2) == 1) {// insert or update
     Str key(request[2].as_s());
     const Json *req = request.array_data() + 3;
     const Json *end_req = request.end_array_data();
@@ -1001,21 +939,20 @@ int onego(query<row_type> &q, Json &request, Str request_str, threadinfo &ti) {
       // use the client's parsed version of the request
       msgpack::parser mp(request_str.data());
       mp.skip_array_size().skip_primitives(3);
-      ti.logger()->record(logcmd_put, q.query_times(), key,
-                          Str(mp.position(), request_str.end()));
+      ti.logger()->record(logcmd_put, q.query_times(), key, Str(mp.position(), request_str.end()));
     } else if (ti.logger())
       ti.logger()->record(logcmd_put, q.query_times(), key, req, end_req);
     request.resize(3);
-  } else if (command == Cmd_Replace) { // insert or update
+  } else if (command == Cmd_Replace) {// insert or update
     Str key(request[2].as_s()), value(request[3].as_s());
     request[2] = q.run_replace(tree->table(), key, value, ti);
-    if (ti.logger()) // NB may block
+    if (ti.logger())// NB may block
       ti.logger()->record(logcmd_replace, q.query_times(), key, value);
     request.resize(3);
-  } else if (command == Cmd_Remove) { // remove
+  } else if (command == Cmd_Remove) {// remove
     Str key(request[2].as_s());
     bool removed = q.run_remove(tree->table(), key, ti);
-    if (removed && ti.logger()) // NB may block
+    if (removed && ti.logger())// NB may block
       ti.logger()->record(logcmd_remove, q.query_times(), key, Str());
     request[2] = removed;
     request.resize(3);
@@ -1042,7 +979,7 @@ struct tcpfds {
     }
     struct epoll_event ev;
     ev.events = EPOLLIN;
-    ev.data.ptr = (void *)1;
+    ev.data.ptr = (void *) 1;
     int r = epoll_ctl(epollfd, EPOLL_CTL_ADD, pipefd, &ev);
     always_assert(r == 0);
   }
@@ -1051,7 +988,7 @@ struct tcpfds {
   typedef struct epoll_event eventset[max_events];
   int wait(eventset &es) { return epoll_wait(epollfd, es, max_events, -1); }
 
-  conn *event_conn(eventset &es, int i) const { return (conn *)es[i].data.ptr; }
+  conn *event_conn(eventset &es, int i) const { return (conn *) es[i].data.ptr; }
 
   void add(int fd, conn *c) {
     struct epoll_event ev;
@@ -1079,7 +1016,7 @@ public:
     FD_ZERO(&rfds_);
     FD_SET(pipefd, &rfds_);
     conns_.resize(nfds_, 0);
-    conns_[pipefd] = (conn *)1;
+    conns_[pipefd] = (conn *) 1;
   }
 
   typedef fd_set eventset;
@@ -1090,9 +1027,7 @@ public:
     return r > 0 ? nfds_ : r;
   }
 
-  conn *event_conn(eventset &es, int i) const {
-    return FD_ISSET(i, &es) ? conns_[i] : 0;
-  }
+  conn *event_conn(eventset &es, int i) const { return FD_ISSET(i, &es) ? conns_[i] : 0; }
 
   void add(int fd, conn *c) {
     always_assert(fd < FD_SETSIZE);
@@ -1108,8 +1043,7 @@ public:
     always_assert(fd < FD_SETSIZE);
     FD_CLR(fd, &rfds_);
     if (fd == nfds_ - 1) {
-      while (nfds_ > 0 && !FD_ISSET(nfds_ - 1, &rfds_))
-        --nfds_;
+      while (nfds_ > 0 && !FD_ISSET(nfds_ - 1, &rfds_)) --nfds_;
     }
   }
 };
@@ -1127,8 +1061,7 @@ void prepare_thread(threadinfo *ti) {
 #else
   always_assert(!pinthreads && "pinthreads not supported\n");
 #endif
-  if (logging)
-    ti->set_logger(&logs->log(ti->index() % nlogger));
+  if (logging) ti->set_logger(&logs->log(ti->index() % nlogger));
 }
 
 void *tcp_threadfunc(threadinfo *ti) {
@@ -1143,20 +1076,19 @@ void *tcp_threadfunc(threadinfo *ti) {
   while (1) {
     int nev = sloop.wait(events);
     for (int i = 0; i < nev; i++)
-      if (conn *c = sloop.event_conn(events, i))
-        ready.push_back(c);
+      if (conn *c = sloop.event_conn(events, i)) ready.push_back(c);
 
     while (!ready.empty()) {
       conn *c = ready.front();
       ready.pop_front();
 
-      if (c == (conn *)1) {
+      if (c == (conn *) 1) {
         // new connections
 #define MAX_NEWCONN 100
         conninfo *ci[MAX_NEWCONN];
         ssize_t len = read(myfd, ci, sizeof(ci));
         always_assert(len > 0 && len % sizeof(int) == 0);
-        for (int j = 0; j * sizeof(*ci) < (size_t)len; ++j) {
+        for (int j = 0; j * sizeof(*ci) < (size_t) len; ++j) {
           struct conn *c = new conn(ci[j]->s);
           sloop.add(c->fd, c);
           int ret = handshake(ci[j]->handshake, *ti);
@@ -1173,16 +1105,14 @@ void *tcp_threadfunc(threadinfo *ti) {
         uint64_t xposition = c->xposition();
         Json &request = c->receive();
         int ret;
-        if (unlikely(!request))
-          goto closed;
+        if (unlikely(!request)) goto closed;
         ti->rcu_start();
         ret = onego(q, request, c->recent_string(xposition), *ti);
         ti->rcu_stop();
         msgpack::unparse(*c->kvout, request);
         request.clear();
         if (likely(ret >= 0)) {
-          if (c->check(0))
-            ready.push_back(c);
+          if (c->check(0)) ready.push_back(c);
           else
             kvflush(c->kvout);
           continue;
@@ -1210,7 +1140,7 @@ void *udp_threadfunc(threadinfo *ti) {
 
   int s = socket(AF_INET, SOCK_DGRAM, 0);
   always_assert(s >= 0);
-  ret = bind(s, (struct sockaddr *)&sin, sizeof(sin));
+  ret = bind(s, (struct sockaddr *) &sin, sizeof(sin));
   always_assert(ret == 0 && "bind failed");
   int sobuflen = 512 * 1024;
   setsockopt(s, SOL_SOCKET, SO_RCVBUF, &sobuflen, sizeof(sobuflen));
@@ -1224,8 +1154,7 @@ void *udp_threadfunc(threadinfo *ti) {
   while (1) {
     struct sockaddr_in sin;
     socklen_t sinlen = sizeof(sin);
-    ssize_t cc = recvfrom(s, const_cast<char *>(buf.data()), buf.length(), 0,
-                          (struct sockaddr *)&sin, &sinlen);
+    ssize_t cc = recvfrom(s, const_cast<char *>(buf.data()), buf.length(), 0, (struct sockaddr *) &sin, &sinlen);
     if (cc < 0) {
       perror("udpgo read");
       exit(EXIT_FAILURE);
@@ -1242,9 +1171,8 @@ void *udp_threadfunc(threadinfo *ti) {
         sa.clear();
         msgpack::unparser<StringAccum> cu(sa);
         cu << parser.result();
-        cc = sendto(s, sa.data(), sa.length(), 0, (struct sockaddr *)&sin,
-                    sinlen);
-        always_assert(cc == (ssize_t)sa.length());
+        cc = sendto(s, sa.data(), sa.length(), 0, (struct sockaddr *) &sin, sinlen);
+        always_assert(cc == (ssize_t) sa.length());
       }
       ti->rcu_stop();
     } else
@@ -1273,10 +1201,9 @@ void log_init() {
   int ret, i;
 
   logs = logset::make(nlogger);
-  for (i = 0; i < nlogger; i++)
-    logs->log(i).initialize(log_filename(logdirs[i % logdirs.size()], i));
+  for (i = 0; i < nlogger; i++) logs->log(i).initialize(log_filename(logdirs[i % logdirs.size()], i));
 
-  cks = (ckstate *)malloc(sizeof(ckstate) * nckthreads);
+  cks = (ckstate *) malloc(sizeof(ckstate) * nckthreads);
   for (i = 0; i < nckthreads; i++) {
     threadinfo *ti = threadinfo::make(threadinfo::TI_CHECKPOINT, i);
     cks[i].state = CKState_Uninit;
@@ -1303,8 +1230,7 @@ kvepoch_t read_checkpoint(threadinfo *ti, const char *path) {
   struct stat sb;
   int ret = fstat(fd, &sb);
   always_assert(ret == 0);
-  char *p =
-      (char *)mmap(0, sb.st_size, PROT_READ, MAP_FILE | MAP_PRIVATE, fd, 0);
+  char *p = (char *) mmap(0, sb.st_size, PROT_READ, MAP_FILE | MAP_PRIVATE, fd, 0);
   always_assert(p != MAP_FAILED);
   close(fd);
 
@@ -1318,20 +1244,17 @@ kvepoch_t read_checkpoint(threadinfo *ti, const char *path) {
   printf("reading checkpoint with %" PRIu64 " nodes\n", n);
 
   // read data
-  for (uint64_t i = 0; i != n; ++i)
-    ckstate::insert(tree->table(), par, *ti);
+  for (uint64_t i = 0; i != n; ++i) ckstate::insert(tree->table(), par, *ti);
 
   munmap(p, sb.st_size);
   double t1 = now();
-  printf("%.1f MB, %.2f sec, %.1f MB/sec\n", sb.st_size / 1000000.0, t1 - t0,
-         (sb.st_size / 1000000.0) / (t1 - t0));
+  printf("%.1f MB, %.2f sec, %.1f MB/sec\n", sb.st_size / 1000000.0, t1 - t0, (sb.st_size / 1000000.0) / (t1 - t0));
   return gen;
 }
 
 void waituntilphase(int phase) {
   always_assert(pthread_mutex_lock(&rec_mu) == 0);
-  while (rec_state != phase)
-    always_assert(pthread_cond_wait(&rec_cond, &rec_mu) == 0);
+  while (rec_state != phase) always_assert(pthread_cond_wait(&rec_cond, &rec_mu) == 0);
   always_assert(pthread_mutex_unlock(&rec_mu) == 0);
 }
 
@@ -1345,8 +1268,7 @@ void inactive(void) {
 void recovercheckpoint(threadinfo *ti) {
   waituntilphase(REC_CKP);
   char path[256];
-  sprintf(path, "%s/kvd-ckp-%" PRId64 "-%d",
-          ckpdirs[ti->index() % ckpdirs.size()], ckp_gen.value(), ti->index());
+  sprintf(path, "%s/kvd-ckp-%" PRId64 "-%d", ckpdirs[ti->index() % ckpdirs.size()], ckp_gen.value(), ti->index());
   kvepoch_t gen = read_checkpoint(ti, path);
   always_assert(ckp_gen == gen);
   inactive();
@@ -1356,8 +1278,7 @@ void recphase(int nactive, int state) {
   rec_nactive = nactive;
   rec_state = state;
   always_assert(pthread_cond_broadcast(&rec_cond) == 0);
-  while (rec_nactive)
-    always_assert(pthread_cond_wait(&rec_cond, &rec_mu) == 0);
+  while (rec_nactive) always_assert(pthread_cond_wait(&rec_cond, &rec_mu) == 0);
 }
 
 // read the checkpoint file.
@@ -1382,9 +1303,8 @@ void recover(threadinfo *) {
       ckp_gen = ckpj["generation"].to_u64();
       rec_ckp_min_epoch = ckpj["min_epoch"].to_u64();
       rec_ckp_max_epoch = ckpj["max_epoch"].to_u64();
-      printf("recover from checkpoint %" PRIu64 " [%" PRIu64 ", %" PRIu64 "]\n",
-             ckp_gen.value(), rec_ckp_min_epoch.value(),
-             rec_ckp_max_epoch.value());
+      printf("recover from checkpoint %" PRIu64 " [%" PRIu64 ", %" PRIu64 "]\n", ckp_gen.value(),
+             rec_ckp_min_epoch.value(), rec_ckp_max_epoch.value());
     }
   } else {
     printf("no %s\n", path);
@@ -1407,35 +1327,25 @@ void recover(threadinfo *) {
   // don't commit a checkpoint until all logs are flushed past the
   // checkpoint's max_epoch.)
   kvepoch_t max_epoch = rec_ckp_max_epoch;
-  if (max_epoch)
-    max_epoch = max_epoch.next_nonzero();
-  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger;
-       ++it)
-    if (it->last_epoch && (!max_epoch || max_epoch < it->last_epoch))
-      max_epoch = it->last_epoch;
+  if (max_epoch) max_epoch = max_epoch.next_nonzero();
+  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger; ++it)
+    if (it->last_epoch && (!max_epoch || max_epoch < it->last_epoch)) max_epoch = it->last_epoch;
 
   // Maximum first_epoch seen in the logs. Full log information is not
   // available for epochs before max_first_epoch.
   kvepoch_t max_first_epoch = 0;
-  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger;
-       ++it)
-    if (it->first_epoch &&
-        (!max_first_epoch || max_first_epoch < it->first_epoch))
-      max_first_epoch = it->first_epoch;
+  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger; ++it)
+    if (it->first_epoch && (!max_first_epoch || max_first_epoch < it->first_epoch)) max_first_epoch = it->first_epoch;
 
   // Maximum epoch of all logged wake commands.
   kvepoch_t max_wake_epoch = 0;
-  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger;
-       ++it)
-    if (it->wake_epoch && (!max_wake_epoch || max_wake_epoch < it->wake_epoch))
-      max_wake_epoch = it->wake_epoch;
+  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger; ++it)
+    if (it->wake_epoch && (!max_wake_epoch || max_wake_epoch < it->wake_epoch)) max_wake_epoch = it->wake_epoch;
 
   // Minimum last_epoch seen in QUIESCENT logs.
   kvepoch_t min_quiescent_last_epoch = 0;
-  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger;
-       ++it)
-    if (it->quiescent && (!min_quiescent_last_epoch ||
-                          min_quiescent_last_epoch > it->last_epoch))
+  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger; ++it)
+    if (it->quiescent && (!min_quiescent_last_epoch || min_quiescent_last_epoch > it->last_epoch))
       min_quiescent_last_epoch = it->last_epoch;
 
   // If max_wake_epoch && min_quiescent_last_epoch <= max_wake_epoch, then a
@@ -1453,13 +1363,10 @@ void recover(threadinfo *) {
   // This is the minimum of min_post_quiescent_wake_epoch (if any) and the
   // last_epoch of all non-quiescent logs.
   rec_replay_max_epoch = max_epoch;
-  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger;
-       ++it) {
-    if (!it->quiescent && it->last_epoch &&
-        it->last_epoch < rec_replay_max_epoch)
+  for (logreplay::info_type *it = rec_log_infos; it != rec_log_infos + nlogger; ++it) {
+    if (!it->quiescent && it->last_epoch && it->last_epoch < rec_replay_max_epoch)
       rec_replay_max_epoch = it->last_epoch;
-    if (it->min_post_quiescent_wake_epoch &&
-        it->min_post_quiescent_wake_epoch < rec_replay_max_epoch)
+    if (it->min_post_quiescent_wake_epoch && it->min_post_quiescent_wake_epoch < rec_replay_max_epoch)
       rec_replay_max_epoch = it->min_post_quiescent_wake_epoch;
   }
 
@@ -1473,10 +1380,8 @@ void recover(threadinfo *) {
     always_assert(rec_ckp_min_epoch < rec_replay_max_epoch);
     always_assert(rec_ckp_max_epoch < rec_replay_max_epoch);
     fprintf(stderr,
-            "replay [%" PRIu64 ",%" PRIu64 ") from [%" PRIu64 ",%" PRIu64
-            ") into ckp [%" PRIu64 ",%" PRIu64 "]\n",
-            rec_replay_min_epoch.value(), rec_replay_max_epoch.value(),
-            max_first_epoch.value(), max_epoch.value(),
+            "replay [%" PRIu64 ",%" PRIu64 ") from [%" PRIu64 ",%" PRIu64 ") into ckp [%" PRIu64 ",%" PRIu64 "]\n",
+            rec_replay_min_epoch.value(), rec_replay_max_epoch.value(), max_first_epoch.value(), max_epoch.value(),
             rec_ckp_min_epoch.value(), rec_ckp_max_epoch.value());
   }
 
@@ -1496,8 +1401,7 @@ void recover(threadinfo *) {
     deltas_removed += ti->counter(tc_replay_remove_delta);
   }
   if (deltas_created)
-    fprintf(stderr, "deltas created: %" PRIu64 ", removed: %" PRIu64 "\n",
-            deltas_created, deltas_removed);
+    fprintf(stderr, "deltas created: %" PRIu64 ", removed: %" PRIu64 "\n", deltas_created, deltas_removed);
   always_assert(deltas_created == deltas_removed);
 #endif
 
@@ -1505,8 +1409,7 @@ void recover(threadinfo *) {
 
   always_assert(pthread_mutex_unlock(&rec_mu) == 0);
   recovering = false;
-  if (recovery_only)
-    exit(0);
+  if (recovery_only) exit(0);
 }
 
 void writecheckpoint(const char *path, ckstate *c, double t0) {
@@ -1519,10 +1422,7 @@ void writecheckpoint(const char *path, ckstate *c, double t0) {
   // checkpoint file format, all msgpack:
   //   {"generation": generation, "size": size, ...}
   //   then `size` triples of key (string), timestmap (int), value (whatever)
-  Json j = Json()
-               .set("generation", ckp_gen.value())
-               .set("size", c->count)
-               .set("firstkey", c->startkey);
+  Json j = Json().set("generation", ckp_gen.value()).set("size", c->count).set("firstkey", c->startkey);
   StringAccum sa;
   msgpack::unparse(sa, j);
   checked_write(fd, sa.data(), sa.length());
@@ -1535,8 +1435,8 @@ void writecheckpoint(const char *path, ckstate *c, double t0) {
 
   double t2 = now();
   c->bytes = c->vals->n;
-  printf("file phase (%s): %" PRIu64 " bytes, %.2f sec, %.1f MB/sec\n", path,
-         c->bytes, t2 - t1, (c->bytes / 1000000.0) / (t2 - t1));
+  printf("file phase (%s): %" PRIu64 " bytes, %.2f sec, %.1f MB/sec\n", path, c->bytes, t2 - t1,
+         (c->bytes / 1000000.0) / (t2 - t1));
 }
 
 void conc_filecheckpoint(threadinfo *ti) {
@@ -1545,15 +1445,13 @@ void conc_filecheckpoint(threadinfo *ti) {
   double t0 = now();
   tree->table().scan(c->startkey, true, *c, *ti);
   char path[256];
-  sprintf(path, "%s/kvd-ckp-%" PRId64 "-%d",
-          ckpdirs[ti->index() % ckpdirs.size()], ckp_gen.value(), ti->index());
+  sprintf(path, "%s/kvd-ckp-%" PRId64 "-%d", ckpdirs[ti->index() % ckpdirs.size()], ckp_gen.value(), ti->index());
   writecheckpoint(path, c, t0);
   c->count = 0;
   free(c->vals);
 }
 
-static Json prepare_checkpoint(kvepoch_t min_epoch, int nckthreads,
-                               const Str *pv) {
+static Json prepare_checkpoint(kvepoch_t min_epoch, int nckthreads, const Str *pv) {
   Json j;
   j.set("kvdb_checkpoint", true)
       .set("min_epoch", min_epoch.value())
@@ -1562,8 +1460,7 @@ static Json prepare_checkpoint(kvepoch_t min_epoch, int nckthreads,
       .set("nckthreads", nckthreads);
 
   Json pvj;
-  for (int i = 1; i < nckthreads; ++i)
-    pvj.push_back(Json::make_string(pv[i].s, pv[i].len));
+  for (int i = 1; i < nckthreads; ++i) pvj.push_back(Json::make_string(pv[i].s, pv[i].len));
   j.set("pivots", pvj);
 
   return j;
@@ -1576,14 +1473,13 @@ static void commit_checkpoint(Json ckpj) {
   sprintf(path, "%s/kvd-ckp-gen", ckpdirs[0]);
   int r = atomic_write_file_contents(path, ckpj.unparse());
   always_assert(r == 0);
-  fprintf(stderr, "kvd-ckp-%" PRIu64 " [%s,%s]: committed\n", ckp_gen.value(),
-          ckpj["min_epoch"].to_s().c_str(), ckpj["max_epoch"].to_s().c_str());
+  fprintf(stderr, "kvd-ckp-%" PRIu64 " [%s,%s]: committed\n", ckp_gen.value(), ckpj["min_epoch"].to_s().c_str(),
+          ckpj["max_epoch"].to_s().c_str());
 
   // delete old checkpoint files
   for (int i = 0; i < nckthreads; i++) {
     char path[256];
-    sprintf(path, "%s/kvd-ckp-%" PRId64 "-%d", ckpdirs[i % ckpdirs.size()],
-            ckp_gen.value() - 1, i);
+    sprintf(path, "%s/kvd-ckp-%" PRId64 "-%d", ckpdirs[i % ckpdirs.size()], ckp_gen.value() - 1, i);
     unlink(path);
   }
 }
@@ -1593,8 +1489,7 @@ static kvepoch_t max_flushed_epoch() {
   for (int i = 0; i < nlogger; ++i) {
     loginfo &log = logs->log(i);
     kvepoch_t fe = log.quiescent() ? ge : log.flushed_epoch();
-    if (!mfe || fe < mfe)
-      mfe = fe;
+    if (!mfe || fe < mfe) mfe = fe;
   }
   return mfe;
 }
@@ -1606,10 +1501,8 @@ void *conc_checkpointer(threadinfo *ti) {
   c->count = 0;
   pthread_cond_init(&c->state_cond, NULL);
   c->state = CKState_Ready;
-  while (recovering)
-    sleep(1);
-  if (checkpoint_interval <= 0)
-    return 0;
+  while (recovering) sleep(1);
+  if (checkpoint_interval <= 0) return 0;
   if (ti->index() == 0) {
     for (int i = 1; i < nckthreads; i++)
       while (cks[i].state != CKState_Ready)
@@ -1622,8 +1515,7 @@ void *conc_checkpointer(threadinfo *ti) {
       set_timespec(ts, now() + (uncommitted_ckp ? 0.25 : checkpoint_interval));
 
       pthread_mutex_lock(&checkpoint_mu);
-      if (!go_quit)
-        pthread_cond_timedwait(&checkpoint_cond, &checkpoint_mu, &ts);
+      if (!go_quit) pthread_cond_timedwait(&checkpoint_cond, &checkpoint_mu, &ts);
       if (go_quit) {
         for (int i = 0; i < nckthreads; i++) {
           cks[i].state = CKState_Quit;
@@ -1645,8 +1537,7 @@ void *conc_checkpointer(threadinfo *ti) {
 
       double t0 = now();
       ti->rcu_start();
-      for (int i = 0; i < nckthreads + 1; i++)
-        pv[i].assign(NULL, 0);
+      for (int i = 0; i < nckthreads + 1; i++) pv[i].assign(NULL, 0);
       tree->findpivots(pv, nckthreads + 1);
       ti->rcu_stop();
 
@@ -1669,8 +1560,7 @@ void *conc_checkpointer(threadinfo *ti) {
       uint64_t bytes = cks[0].bytes;
       pthread_mutex_lock(&checkpoint_mu);
       for (int i = 1; i < nckthreads; i++) {
-        while (cks[i].state != CKState_Ready)
-          pthread_cond_wait(&cks[i].state_cond, &checkpoint_mu);
+        while (cks[i].state != CKState_Ready) pthread_cond_wait(&cks[i].state_cond, &checkpoint_mu);
         bytes += cks[i].bytes;
       }
       pthread_mutex_unlock(&checkpoint_mu);
@@ -1678,21 +1568,16 @@ void *conc_checkpointer(threadinfo *ti) {
       uncommitted_ckp = prepare_checkpoint(min_epoch, nckthreads, pv);
 
       for (int i = 0; i < nckthreads + 1; i++)
-        if (pv[i].s)
-          free((void *)pv[i].s);
+        if (pv[i].s) free((void *) pv[i].s);
       double t = now() - t0;
-      fprintf(stderr,
-              "kvd-ckp-%" PRIu64 " [%s,%s]: prepared (%.2f sec, %" PRIu64
-              " MB, %" PRIu64 " MB/sec)\n",
-              ckp_gen.value(), uncommitted_ckp["min_epoch"].to_s().c_str(),
-              uncommitted_ckp["max_epoch"].to_s().c_str(), t, bytes / (1 << 20),
-              (uint64_t)(bytes / t) >> 20);
+      fprintf(stderr, "kvd-ckp-%" PRIu64 " [%s,%s]: prepared (%.2f sec, %" PRIu64 " MB, %" PRIu64 " MB/sec)\n",
+              ckp_gen.value(), uncommitted_ckp["min_epoch"].to_s().c_str(), uncommitted_ckp["max_epoch"].to_s().c_str(),
+              t, bytes / (1 << 20), (uint64_t) (bytes / t) >> 20);
     }
   } else {
     while (1) {
       pthread_mutex_lock(&checkpoint_mu);
-      while (c->state != CKState_Go && c->state != CKState_Quit)
-        pthread_cond_wait(&c->state_cond, &checkpoint_mu);
+      while (c->state != CKState_Go && c->state != CKState_Quit) pthread_cond_wait(&c->state_cond, &checkpoint_mu);
       if (c->state == CKState_Quit) {
         pthread_mutex_unlock(&checkpoint_mu);
         break;

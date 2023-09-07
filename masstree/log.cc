@@ -14,6 +14,13 @@
  * is legally binding.
  */
 #include "log.hh"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
 #include "file.hh"
 #include "kvrow.hh"
 #include "kvthread.hh"
@@ -23,11 +30,6 @@
 #include "misc.hh"
 #include "msgpack.hh"
 #include "query_masstree.hh"
-#include <errno.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 using lcdf::String;
 
@@ -98,12 +100,9 @@ struct logrec_kv {
   uint32_t keylen_;
   char buf_[0];
 
-  static size_t size(uint32_t keylen, uint32_t vallen) {
-    return sizeof(logrec_kv) + keylen + vallen;
-  }
+  static size_t size(uint32_t keylen, uint32_t vallen) { return sizeof(logrec_kv) + keylen + vallen; }
 
-  static size_t store(char *buf, uint32_t command, Str key, Str val,
-                      kvtimestamp_t ts) {
+  static size_t store(char *buf, uint32_t command, Str key, Str val, kvtimestamp_t ts) {
     // XXX check alignment on some architectures
     logrec_kv *lr = reinterpret_cast<logrec_kv *>(buf);
     lr->command_ = command;
@@ -129,12 +128,9 @@ struct logrec_kvdelta {
   uint32_t keylen_;
   char buf_[0];
 
-  static size_t size(uint32_t keylen, uint32_t vallen) {
-    return sizeof(logrec_kvdelta) + keylen + vallen;
-  }
+  static size_t size(uint32_t keylen, uint32_t vallen) { return sizeof(logrec_kvdelta) + keylen + vallen; }
 
-  static size_t store(char *buf, uint32_t command, Str key, Str val,
-                      kvtimestamp_t prev_ts, kvtimestamp_t ts) {
+  static size_t store(char *buf, uint32_t command, Str key, Str val, kvtimestamp_t prev_ts, kvtimestamp_t ts) {
     // XXX check alignment on some architectures
     logrec_kvdelta *lr = reinterpret_cast<logrec_kvdelta *>(buf);
     lr->command_ = command;
@@ -154,26 +150,21 @@ struct logrec_kvdelta {
 };
 
 logset *logset::make(int size) {
-  static_assert(sizeof(loginfo) == 2 * CACHE_LINE_SIZE,
-                "unexpected sizeof(loginfo)");
+  static_assert(sizeof(loginfo) == 2 * CACHE_LINE_SIZE, "unexpected sizeof(loginfo)");
   assert(size > 0 && size <= 64);
-  char *x = new char[sizeof(loginfo) * size + sizeof(loginfo::logset_info) +
-                     CACHE_LINE_SIZE];
+  char *x = new char[sizeof(loginfo) * size + sizeof(loginfo::logset_info) + CACHE_LINE_SIZE];
   char *ls_pos = x + sizeof(loginfo::logset_info);
   uintptr_t left = reinterpret_cast<uintptr_t>(ls_pos) % CACHE_LINE_SIZE;
-  if (left)
-    ls_pos += CACHE_LINE_SIZE - left;
+  if (left) ls_pos += CACHE_LINE_SIZE - left;
   logset *ls = reinterpret_cast<logset *>(ls_pos);
   ls->li_[-1].lsi_.size_ = size;
-  ls->li_[-1].lsi_.allocation_offset_ = (int)(x - ls_pos);
-  for (int i = 0; i != size; ++i)
-    new ((void *)&ls->li_[i]) loginfo(ls, i);
+  ls->li_[-1].lsi_.allocation_offset_ = (int) (x - ls_pos);
+  for (int i = 0; i != size; ++i) new ((void *) &ls->li_[i]) loginfo(ls, i);
   return ls;
 }
 
 void logset::free(logset *ls) {
-  for (int i = 0; i != ls->size(); ++i)
-    ls->li_[i].~loginfo();
+  for (int i = 0; i != ls->size(); ++i) ls->li_[i].~loginfo();
   delete[] (reinterpret_cast<char *>(ls) + ls->li_[-1].lsi_.allocation_offset_);
 }
 
@@ -185,7 +176,7 @@ loginfo::loginfo(logset *ls, int logindex) {
 
   len_ = 20 * 1024 * 1024;
   pos_ = 0;
-  buf_ = (char *)malloc(len_);
+  buf_ = (char *) malloc(len_);
   always_assert(buf_);
   log_epoch_ = 0;
   quiescent_epoch_ = 0;
@@ -196,7 +187,7 @@ loginfo::loginfo(logset *ls, int logindex) {
   f_.logset_ = ls;
   logindex_ = logindex;
 
-  (void)padding1_;
+  (void) padding1_;
 }
 
 loginfo::~loginfo() {
@@ -223,7 +214,7 @@ static void check_epoch() {
   if (timercmp(&tv, &log_epoch_time, >)) {
     log_epoch_time = tv;
     timeradd(&log_epoch_time, &log_epoch_interval, &log_epoch_time);
-    global_log_epoch = global_log_epoch.next_nonzero(); // 0 isn't valid
+    global_log_epoch = global_log_epoch.next_nonzero();// 0 isn't valid
   }
 }
 
@@ -233,10 +224,9 @@ void *loginfo::run() {
     replayer.replay(ti_->index(), ti_);
   }
 
-  int fd =
-      open(String(f_.filename_).c_str(), O_WRONLY | O_APPEND | O_CREAT, 0666);
+  int fd = open(String(f_.filename_).c_str(), O_WRONLY | O_APPEND | O_CREAT, 0666);
   always_assert(fd >= 0);
-  char *x_buf = (char *)malloc(len_);
+  char *x_buf = (char *) malloc(len_);
   always_assert(x_buf);
 
   while (1) {
@@ -250,13 +240,11 @@ void *loginfo::run() {
     // If the writing threads appear quiescent, and aren't about to write
     // to the log (f_.waiting_ != 0), then write a quiescence
     // notification.
-    if (!recovering && pos_ == 0 && !quiescent_epoch_ && ge != log_epoch_ &&
-        ge != we && !f_.waiting_) {
+    if (!recovering && pos_ == 0 && !quiescent_epoch_ && ge != log_epoch_ && ge != we && !f_.waiting_) {
       quiescent_epoch_ = log_epoch_ = ge;
       char *p = buf_;
       p += logrec_epoch::store(p, logcmd_epoch, log_epoch_);
-      if (log_epoch_ == wake_epoch_)
-        p += logrec_base::store(p, logcmd_wake);
+      if (log_epoch_ == wake_epoch_) p += logrec_base::store(p, logcmd_wake);
       p += logrec_base::store(p, logcmd_quiesce);
       pos_ = p - buf_;
     }
@@ -274,10 +262,8 @@ void *loginfo::run() {
       nb = x_pos;
     } else
       release();
-    if (nb < len_ / 4)
-      napms(200);
-    if (ti_->index() == 0)
-      check_epoch();
+    if (nb < len_ / 4) napms(200);
+    if (ti_->index() == 0) check_epoch();
   }
 
   return 0;
@@ -289,11 +275,9 @@ void *loginfo::logger_trampoline(threadinfo *ti) {
 }
 
 // log entry format: see log.hh
-void loginfo::record(int command, const query_times &qtimes, Str key,
-                     Str value) {
+void loginfo::record(int command, const query_times &qtimes, Str key, Str value) {
   assert(!recovering);
-  size_t n = logrec_kvdelta::size(key.len, value.len) + logrec_epoch::size() +
-             logrec_base::size();
+  size_t n = logrec_kvdelta::size(key.len, value.len) + logrec_epoch::size() + logrec_base::size();
   waitlist wait = {&wait};
   int stalls = 0;
   while (1) {
@@ -311,11 +295,9 @@ void loginfo::record(int command, const query_times &qtimes, Str key,
         // quiescent for a while. If the quiescence marker has been
         // flushed, then all epochs less than the query epoch are
         // effectively on disk.
-        if (flushed_epoch_ == quiescent_epoch_)
-          flushed_epoch_ = qtimes.epoch;
+        if (flushed_epoch_ == quiescent_epoch_) flushed_epoch_ = qtimes.epoch;
         quiescent_epoch_ = 0;
-        while (we < qtimes.epoch)
-          we = cmpxchg(&global_wake_epoch, we, qtimes.epoch);
+        while (we < qtimes.epoch) we = cmpxchg(&global_wake_epoch, we, qtimes.epoch);
       }
 
       // Log epochs should be recorded in monotonically increasing
@@ -323,21 +305,18 @@ void loginfo::record(int command, const query_times &qtimes, Str key,
       // the query took a while). So potentially record an EARLIER
       // wake_epoch. This will get fixed shortly by the next log
       // record.
-      if (we != wake_epoch_ && qtimes.epoch < we)
-        we = qtimes.epoch;
+      if (we != wake_epoch_ && qtimes.epoch < we) we = qtimes.epoch;
       if (we != wake_epoch_) {
         wake_epoch_ = we;
         pos_ += logrec_base::store(buf_ + pos_, logcmd_wake);
       }
 
       if (command == logcmd_put && qtimes.prev_ts && !(qtimes.prev_ts & 1))
-        pos_ += logrec_kvdelta::store(buf_ + pos_, logcmd_modify, key, value,
-                                      qtimes.prev_ts, qtimes.ts);
+        pos_ += logrec_kvdelta::store(buf_ + pos_, logcmd_modify, key, value, qtimes.prev_ts, qtimes.ts);
       else
         pos_ += logrec_kv::store(buf_ + pos_, command, key, value, qtimes.ts);
 
-      if (f_.waiting_ == &wait)
-        f_.waiting_ = wait.next;
+      if (f_.waiting_ == &wait) f_.waiting_ = wait.next;
       release();
       return;
     }
@@ -345,14 +324,12 @@ void loginfo::record(int command, const query_times &qtimes, Str key,
     // Otherwise must spin
     if (wait.next == &wait) {
       waitlist **p = &f_.waiting_;
-      while (*p)
-        p = &(*p)->next;
+      while (*p) p = &(*p)->next;
       *p = &wait;
       wait.next = 0;
     }
     release();
-    if (stalls == 0)
-      printf("stall\n");
+    if (stalls == 0) printf("stall\n");
     else if (stalls % 25 == 0)
       printf("stall %d\n", stalls);
     ++stalls;
@@ -361,45 +338,40 @@ void loginfo::record(int command, const query_times &qtimes, Str key,
   }
 }
 
-void loginfo::record(int command, const query_times &qtimes, Str key,
-                     const lcdf::Json *req, const lcdf::Json *end_req) {
+void loginfo::record(int command, const query_times &qtimes, Str key, const lcdf::Json *req,
+                     const lcdf::Json *end_req) {
   lcdf::StringAccum sa(128);
   msgpack::unparser<lcdf::StringAccum> cu(sa);
   cu.write_array_header(end_req - req);
-  for (; req != end_req; ++req)
-    cu << *req;
+  for (; req != end_req; ++req) cu << *req;
   record(command, qtimes, key, Str(sa.data(), sa.length()));
 }
 
 // replay
 
-logreplay::logreplay(const String &filename)
-    : filename_(filename), errno_(0), buf_() {
+logreplay::logreplay(const String &filename) : filename_(filename), errno_(0), buf_() {
   int fd = open(filename_.c_str(), O_RDONLY);
   if (fd == -1) {
   fail:
     errno_ = errno;
     buf_ = 0;
-    if (fd != -1)
-      (void)close(fd);
+    if (fd != -1) (void) close(fd);
     return;
   }
 
   struct stat sb;
   int r = fstat(fd, &sb);
-  if (r == -1)
-    goto fail;
+  if (r == -1) goto fail;
 
   size_ = sb.st_size;
   if (size_ != 0) {
     // XXX what if filename_ is too big to mmap in its entirety?
     // XXX should support mmaping/writing in pieces
-    buf_ = (char *)::mmap(0, size_, PROT_READ, MAP_FILE | MAP_PRIVATE, fd, 0);
-    if (buf_ == MAP_FAILED)
-      goto fail;
+    buf_ = (char *) ::mmap(0, size_, PROT_READ, MAP_FILE | MAP_PRIVATE, fd, 0);
+    if (buf_ == MAP_FAILED) goto fail;
   }
 
-  (void)close(fd);
+  (void) close(fd);
 }
 
 logreplay::~logreplay() { unmap(); }
@@ -423,78 +395,69 @@ struct logrecord {
 
   const char *extract(const char *buf, const char *end);
 
-  template <typename T>
+  template<typename T>
   void run(T &table, std::vector<lcdf::Json> &jrepo, threadinfo &ti);
 
 private:
-  inline void apply(row_type *&value, bool found,
-                    std::vector<lcdf::Json> &jrepo, threadinfo &ti);
+  inline void apply(row_type *&value, bool found, std::vector<lcdf::Json> &jrepo, threadinfo &ti);
 };
 
 const char *logrecord::extract(const char *buf, const char *end) {
   const logrec_base *lr = reinterpret_cast<const logrec_base *>(buf);
-  if (unlikely(size_t(end - buf) < sizeof(*lr) || lr->size_ < sizeof(*lr) ||
-               size_t(end - buf) < lr->size_ || lr->command_ == logcmd_none)) {
+  if (unlikely(size_t(end - buf) < sizeof(*lr) || lr->size_ < sizeof(*lr) || size_t(end - buf) < lr->size_ ||
+               lr->command_ == logcmd_none)) {
   fail:
     command = logcmd_none;
     return end;
   }
 
   command = lr->command_;
-  if (command == logcmd_put || command == logcmd_replace ||
-      command == logcmd_remove) {
+  if (command == logcmd_put || command == logcmd_replace || command == logcmd_remove) {
     const logrec_kv *lk = reinterpret_cast<const logrec_kv *>(buf);
-    if (unlikely(lk->size_ < sizeof(*lk) || lk->keylen_ > MASSTREE_MAXKEYLEN ||
-                 sizeof(*lk) + lk->keylen_ > lk->size_))
+    if (unlikely(lk->size_ < sizeof(*lk) || lk->keylen_ > MASSTREE_MAXKEYLEN || sizeof(*lk) + lk->keylen_ > lk->size_))
       goto fail;
     ts = lk->ts_;
     key.assign(lk->buf_, lk->keylen_);
     val.assign(lk->buf_ + lk->keylen_, lk->size_ - sizeof(*lk) - lk->keylen_);
   } else if (command == logcmd_modify) {
     const logrec_kvdelta *lk = reinterpret_cast<const logrec_kvdelta *>(buf);
-    if (unlikely(lk->keylen_ > MASSTREE_MAXKEYLEN ||
-                 sizeof(*lk) + lk->keylen_ > lk->size_))
-      goto fail;
+    if (unlikely(lk->keylen_ > MASSTREE_MAXKEYLEN || sizeof(*lk) + lk->keylen_ > lk->size_)) goto fail;
     ts = lk->ts_;
     prev_ts = lk->prev_ts_;
     key.assign(lk->buf_, lk->keylen_);
     val.assign(lk->buf_ + lk->keylen_, lk->size_ - sizeof(*lk) - lk->keylen_);
   } else if (command == logcmd_epoch) {
     const logrec_epoch *lre = reinterpret_cast<const logrec_epoch *>(buf);
-    if (unlikely(lre->size_ < logrec_epoch::size()))
-      goto fail;
+    if (unlikely(lre->size_ < logrec_epoch::size())) goto fail;
     epoch = lre->epoch_;
   }
 
   return buf + lr->size_;
 }
 
-template <typename T>
+template<typename T>
 void logrecord::run(T &table, std::vector<lcdf::Json> &jrepo, threadinfo &ti) {
   row_marker m;
   if (command == logcmd_remove) {
     ts |= 1;
     m.marker_type_ = row_marker::mt_remove;
-    val = Str((const char *)&m, sizeof(m));
+    val = Str((const char *) &m, sizeof(m));
   }
 
   typename T::cursor_type lp(table, key);
   bool found = lp.find_insert(ti);
-  if (!found)
-    ti.advance_timestamp(lp.node_timestamp());
+  if (!found) ti.advance_timestamp(lp.node_timestamp());
   apply(lp.value(), found, jrepo, ti);
   lp.finish(1, ti);
 }
 
-static lcdf::Json *parse_changeset(Str changeset,
-                                   std::vector<lcdf::Json> &jrepo) {
+static lcdf::Json *parse_changeset(Str changeset, std::vector<lcdf::Json> &jrepo) {
   msgpack::parser mp(changeset.udata());
   unsigned index = 0;
   Str value;
   size_t pos = 0;
   while (mp.position() != changeset.end()) {
-    if (pos == jrepo.size())
-      jrepo.resize(pos + 2);
+    if (pos == jrepo.size()) jrepo.resize(pos + 2);
     mp >> index >> value;
     jrepo[pos] = index;
     jrepo[pos + 1] = String::make_stable(value);
@@ -503,20 +466,16 @@ static lcdf::Json *parse_changeset(Str changeset,
   return jrepo.data() + pos;
 }
 
-inline void logrecord::apply(row_type *&value, bool found,
-                             std::vector<lcdf::Json> &jrepo, threadinfo &ti) {
+inline void logrecord::apply(row_type *&value, bool found, std::vector<lcdf::Json> &jrepo, threadinfo &ti) {
   row_type **cur_value = &value;
-  if (!found)
-    *cur_value = 0;
+  if (!found) *cur_value = 0;
 
   // find point to insert change (may be after some delta markers)
-  while (*cur_value && row_is_delta_marker(*cur_value) &&
-         (*cur_value)->timestamp() > ts)
+  while (*cur_value && row_is_delta_marker(*cur_value) && (*cur_value)->timestamp() > ts)
     cur_value = &row_get_delta_marker(*cur_value)->prev_;
 
   // check out of date
-  if (*cur_value && (*cur_value)->timestamp() >= ts)
-    return;
+  if (*cur_value && (*cur_value)->timestamp() >= ts) return;
 
   // if not modifying, delete everything earlier
   if (command != logcmd_modify)
@@ -530,18 +489,14 @@ inline void logrecord::apply(row_type *&value, bool found,
     }
 
   // actually apply change
-  if (command == logcmd_replace)
-    *cur_value = row_type::create1(val, ts, ti);
-  else if (command != logcmd_modify ||
-           (*cur_value && (*cur_value)->timestamp() == prev_ts)) {
+  if (command == logcmd_replace) *cur_value = row_type::create1(val, ts, ti);
+  else if (command != logcmd_modify || (*cur_value && (*cur_value)->timestamp() == prev_ts)) {
     lcdf::Json *end_req = parse_changeset(val, jrepo);
-    if (command != logcmd_modify)
-      *cur_value = row_type::create(jrepo.data(), end_req, ts, ti);
+    if (command != logcmd_modify) *cur_value = row_type::create(jrepo.data(), end_req, ts, ti);
     else {
       row_type *old_value = *cur_value;
       *cur_value = old_value->update(jrepo.data(), end_req, ts, ti);
-      if (*cur_value != old_value)
-        old_value->deallocate(ti);
+      if (*cur_value != old_value) old_value->deallocate(ti);
     }
   } else {
     // XXX assume that memory exists before saved request -- it does
@@ -564,17 +519,14 @@ inline void logrecord::apply(row_type *&value, bool found,
       prev = trav;
       trav = &row_get_delta_marker(*trav)->prev_;
     }
-    if (prev && *trav &&
-        row_get_delta_marker(*prev)->prev_ts_ == (*trav)->timestamp()) {
+    if (prev && *trav && row_get_delta_marker(*prev)->prev_ts_ == (*trav)->timestamp()) {
       row_type *old_prev = *prev;
       Str req = old_prev->col(0);
       req.s += sizeof(row_delta_marker<row_type>);
       req.len -= sizeof(row_delta_marker<row_type>);
       const lcdf::Json *end_req = parse_changeset(req, jrepo);
-      *prev =
-          (*trav)->update(jrepo.data(), end_req, old_prev->timestamp() - 1, ti);
-      if (*prev != *trav)
-        (*trav)->deallocate(ti);
+      *prev = (*trav)->update(jrepo.data(), end_req, old_prev->timestamp() - 1, ti);
+      if (*prev != *trav) (*trav)->deallocate(ti);
       old_prev->deallocate(ti);
       ti.mark(tc_replay_remove_delta);
     } else
@@ -584,8 +536,7 @@ inline void logrecord::apply(row_type *&value, bool found,
 
 logreplay::info_type logreplay::info() const {
   info_type x;
-  x.first_epoch = x.last_epoch = x.wake_epoch =
-      x.min_post_quiescent_wake_epoch = 0;
+  x.first_epoch = x.last_epoch = x.wake_epoch = x.min_post_quiescent_wake_epoch = 0;
   x.quiescent = true;
 
   const char *buf = buf_, *end = buf_ + size_;
@@ -605,17 +556,15 @@ logreplay::info_type logreplay::info() const {
         log_corrupt = true;
         break;
       }
-      if (!x.first_epoch)
-        x.first_epoch = lre->epoch_;
+      if (!x.first_epoch) x.first_epoch = lre->epoch_;
       x.last_epoch = lre->epoch_;
-      if (x.wake_epoch && x.wake_epoch > x.last_epoch) // wrap-around
+      if (x.wake_epoch && x.wake_epoch > x.last_epoch)// wrap-around
         x.wake_epoch = 0;
     } else if (lr->command_ == logcmd_wake)
       x.wake_epoch = x.last_epoch;
 #if !NDEBUG
-    else if (lr->command_ != logcmd_put && lr->command_ != logcmd_replace &&
-             lr->command_ != logcmd_modify && lr->command_ != logcmd_remove &&
-             lr->command_ != logcmd_quiesce) {
+    else if (lr->command_ != logcmd_put && lr->command_ != logcmd_replace && lr->command_ != logcmd_modify &&
+             lr->command_ != logcmd_remove && lr->command_ != logcmd_quiesce) {
       log_corrupt = true;
       break;
     }
@@ -624,17 +573,13 @@ logreplay::info_type logreplay::info() const {
     ++nr;
   }
 
-  fprintf(stderr,
-          "replay %s: %" PRIdOFF_T " records, first %" PRIu64 ", last %" PRIu64
-          ", wake %" PRIu64 "%s%s @%zu\n",
-          filename_.c_str(), nr, x.first_epoch.value(), x.last_epoch.value(),
-          x.wake_epoch.value(), x.quiescent ? ", quiescent" : "",
-          log_corrupt ? ", CORRUPT" : "", buf - buf_);
+  fprintf(stderr, "replay %s: %" PRIdOFF_T " records, first %" PRIu64 ", last %" PRIu64 ", wake %" PRIu64 "%s%s @%zu\n",
+          filename_.c_str(), nr, x.first_epoch.value(), x.last_epoch.value(), x.wake_epoch.value(),
+          x.quiescent ? ", quiescent" : "", log_corrupt ? ", CORRUPT" : "", buf - buf_);
   return x;
 }
 
-kvepoch_t
-logreplay::min_post_quiescent_wake_epoch(kvepoch_t quiescent_epoch) const {
+kvepoch_t logreplay::min_post_quiescent_wake_epoch(kvepoch_t quiescent_epoch) const {
   kvepoch_t e = 0;
   const char *buf = buf_, *end = buf_ + size_;
   bool log_corrupt = false;
@@ -656,12 +601,11 @@ logreplay::min_post_quiescent_wake_epoch(kvepoch_t quiescent_epoch) const {
       return e;
     buf += lr->size_;
   }
-  (void)log_corrupt;
+  (void) log_corrupt;
   return 0;
 }
 
-uint64_t logreplay::replayandclean1(kvepoch_t min_epoch, kvepoch_t max_epoch,
-                                    threadinfo *ti) {
+uint64_t logreplay::replayandclean1(kvepoch_t min_epoch, kvepoch_t max_epoch, threadinfo *ti) {
   uint64_t nr = 0;
   const char *pos = buf_, *end = buf_ + size_;
   const char *repbegin = 0, *repend = 0;
@@ -672,13 +616,11 @@ uint64_t logreplay::replayandclean1(kvepoch_t min_epoch, kvepoch_t max_epoch,
   while (pos < end) {
     const char *nextpos = lr.extract(pos, end);
     if (lr.command == logcmd_none) {
-      fprintf(stderr, "replay %s: %" PRIu64 " entries replayed, CORRUPT @%zu\n",
-              filename_.c_str(), nr, pos - buf_);
+      fprintf(stderr, "replay %s: %" PRIu64 " entries replayed, CORRUPT @%zu\n", filename_.c_str(), nr, pos - buf_);
       break;
     }
     if (lr.command == logcmd_epoch) {
-      if ((min_epoch && lr.epoch < min_epoch) || (!min_epoch && !repbegin))
-        repbegin = pos;
+      if ((min_epoch && lr.epoch < min_epoch) || (!min_epoch && !repbegin)) repbegin = pos;
       if (lr.epoch >= max_epoch) {
         always_assert(repbegin);
         repend = nextpos;
@@ -687,8 +629,7 @@ uint64_t logreplay::replayandclean1(kvepoch_t min_epoch, kvepoch_t max_epoch,
     }
     if (!lr.epoch || (min_epoch && lr.epoch < min_epoch)) {
       pos = nextpos;
-      if (repbegin)
-        repend = nextpos;
+      if (repbegin) repend = nextpos;
       continue;
     }
     // replay only part of log after checkpoint
@@ -696,21 +637,18 @@ uint64_t logreplay::replayandclean1(kvepoch_t min_epoch, kvepoch_t max_epoch,
     // correctness of checkpoint scheme.
     assert(repbegin);
     repend = nextpos;
-    if (lr.key.len) { // skip empty entry
-      if (lr.command == logcmd_put || lr.command == logcmd_replace ||
-          lr.command == logcmd_modify || lr.command == logcmd_remove)
+    if (lr.key.len) {// skip empty entry
+      if (lr.command == logcmd_put || lr.command == logcmd_replace || lr.command == logcmd_modify ||
+          lr.command == logcmd_remove)
         lr.run(tree->table(), jrepo, *ti);
       ++nr;
-      if (nr % 100000 == 0)
-        fprintf(stderr, "replay %s: %" PRIu64 " entries replayed\n",
-                filename_.c_str(), nr);
+      if (nr % 100000 == 0) fprintf(stderr, "replay %s: %" PRIu64 " entries replayed\n", filename_.c_str(), nr);
     }
     pos = nextpos;
   }
 
   // rewrite portion of log
-  if (!repbegin)
-    repbegin = repend = buf_;
+  if (!repbegin) repbegin = repend = buf_;
   else if (!repend) {
     fprintf(stderr, "replay %s: surprise repend\n", filename_.c_str());
     repend = pos;
@@ -720,15 +658,12 @@ uint64_t logreplay::replayandclean1(kvepoch_t min_epoch, kvepoch_t max_epoch,
   int r = snprintf(tmplog, sizeof(tmplog), "%s.tmp", filename_.c_str());
   always_assert(r >= 0 && size_t(r) < sizeof(tmplog));
 
-  printf("replay %s: truncate from %" PRIdOFF_T " to %" PRIdSIZE_T
-         " [%" PRIdSIZE_T ",%" PRIdSIZE_T ")\n",
-         filename_.c_str(), size_, repend - repbegin, repbegin - buf_,
-         repend - buf_);
+  printf("replay %s: truncate from %" PRIdOFF_T " to %" PRIdSIZE_T " [%" PRIdSIZE_T ",%" PRIdSIZE_T ")\n",
+         filename_.c_str(), size_, repend - repbegin, repbegin - buf_, repend - buf_);
 
   bool need_copy = repbegin != buf_;
   int fd;
-  if (!need_copy)
-    fd = replay_truncate(repend - repbegin);
+  if (!need_copy) fd = replay_truncate(repend - repbegin);
   else
     fd = replay_copy(tmplog, repbegin, repend);
 
@@ -738,8 +673,7 @@ uint64_t logreplay::replayandclean1(kvepoch_t min_epoch, kvepoch_t max_epoch,
   always_assert(r == 0);
 
   // replace old log with rewritten log
-  if (unmap() != 0)
-    abort();
+  if (unmap() != 0) abort();
 
   if (need_copy) {
     r = rename(tmplog, filename_.c_str());
@@ -765,30 +699,26 @@ int logreplay::replay_truncate(size_t len) {
     fprintf(stderr, "replay %s: %s\n", filename_.c_str(), strerror(errno));
     abort();
   } else if (sb.st_size < off_t(len)) {
-    fprintf(stderr, "replay %s: bad length %" PRIdOFF_T "\n", filename_.c_str(),
-            sb.st_size);
+    fprintf(stderr, "replay %s: bad length %" PRIdOFF_T "\n", filename_.c_str(), sb.st_size);
     abort();
   }
 
   r = ftruncate(fd, len);
   if (r != 0) {
-    fprintf(stderr, "replay %s: truncate: %s\n", filename_.c_str(),
-            strerror(errno));
+    fprintf(stderr, "replay %s: truncate: %s\n", filename_.c_str(), strerror(errno));
     abort();
   }
 
   off_t off = lseek(fd, len, SEEK_SET);
-  if (off == (off_t)-1) {
-    fprintf(stderr, "replay %s: seek: %s\n", filename_.c_str(),
-            strerror(errno));
+  if (off == (off_t) -1) {
+    fprintf(stderr, "replay %s: seek: %s\n", filename_.c_str(), strerror(errno));
     abort();
   }
 
   return fd;
 }
 
-int logreplay::replay_copy(const char *tmpname, const char *first,
-                           const char *last) {
+int logreplay::replay_copy(const char *tmpname, const char *first, const char *last) {
   int fd = creat(tmpname, 0666);
   if (fd < 0) {
     fprintf(stderr, "replay %s: create: %s\n", tmpname, strerror(errno));
@@ -814,8 +744,7 @@ void logreplay::replay(int which, threadinfo *ti) {
 
   waituntilphase(REC_LOG_ANALYZE_WAKE);
   if (buf_) {
-    if (rec_replay_min_quiescent_last_epoch &&
-        rec_replay_min_quiescent_last_epoch <= rec_log_infos[which].wake_epoch)
+    if (rec_replay_min_quiescent_last_epoch && rec_replay_min_quiescent_last_epoch <= rec_log_infos[which].wake_epoch)
       rec_log_infos[which].min_post_quiescent_wake_epoch =
           min_post_quiescent_wake_epoch(rec_replay_min_quiescent_last_epoch);
   }
@@ -824,8 +753,7 @@ void logreplay::replay(int which, threadinfo *ti) {
   waituntilphase(REC_LOG_REPLAY);
   if (buf_) {
     ti->rcu_start();
-    uint64_t nr =
-        replayandclean1(rec_replay_min_epoch, rec_replay_max_epoch, ti);
+    uint64_t nr = replayandclean1(rec_replay_min_epoch, rec_replay_max_epoch, ti);
     ti->rcu_stop();
     printf("recovered %" PRIu64 " records from %s\n", nr, filename_.c_str());
   }

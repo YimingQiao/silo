@@ -1,8 +1,9 @@
 #pragma once
 
-#include "small_vector.h"
 #include <memory>
 #include <string>
+
+#include "small_vector.h"
 
 // XXX: str arena hardcoded now to handle at most 1024 strings
 class str_arena {
@@ -14,8 +15,7 @@ public:
   static_assert(PreAllocBufSize >= MinStrReserveLength, "xx");
 
   str_arena() : n(0) {
-    for (size_t i = 0; i < NStrs; i++)
-      strs[i].reserve(PreAllocBufSize);
+    for (size_t i = 0; i < NStrs; i++) strs[i].reserve(PreAllocBufSize);
   }
 
   // non-copyable/non-movable for the time being
@@ -50,25 +50,18 @@ public:
     --n;
   }
 
-  bool manages(const std::string *px) const {
-    return manages_local(px) || manages_overflow(px);
-  }
+  bool manages(const std::string *px) const { return manages_local(px) || manages_overflow(px); }
 
 private:
   bool manages_local(const std::string *px) const {
-    if (px < &strs[0])
-      return false;
-    if (px >= &strs[NStrs])
-      return false;
-    return 0 == ((reinterpret_cast<const char *>(px) -
-                  reinterpret_cast<const char *>(&strs[0])) %
-                 sizeof(std::string));
+    if (px < &strs[0]) return false;
+    if (px >= &strs[NStrs]) return false;
+    return 0 == ((reinterpret_cast<const char *>(px) - reinterpret_cast<const char *>(&strs[0])) % sizeof(std::string));
   }
 
   bool manages_overflow(const std::string *px) const {
-    for (auto &p : overflow)
-      if (p.get() == px)
-        return true;
+    for (auto &p: overflow)
+      if (p.get() == px) return true;
     return false;
   }
 
@@ -91,8 +84,7 @@ public:
   scoped_str_arena &operator=(const scoped_str_arena &) = delete;
 
   ~scoped_str_arena() {
-    if (arena)
-      arena->reset();
+    if (arena) arena->reset();
   }
 
   inline ALWAYS_INLINE str_arena *get() { return arena; }

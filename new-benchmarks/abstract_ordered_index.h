@@ -1,8 +1,9 @@
 #ifndef _ABSTRACT_ORDERED_INDEX_H_
 #define _ABSTRACT_ORDERED_INDEX_H_
 
-#include <map>
 #include <stdint.h>
+
+#include <map>
 #include <string>
 #include <utility>
 

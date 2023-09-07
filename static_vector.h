@@ -1,15 +1,16 @@
 #ifndef _STATIC_VECTOR_H_
 #define _STATIC_VECTOR_H_
 
-#include "macros.h"
-#include "ndb_type_traits.h"
 #include <algorithm>
 #include <type_traits>
 
-template <typename T, size_t StaticSize = SMALL_SIZE_VEC> class static_vector {
+#include "macros.h"
+#include "ndb_type_traits.h"
 
-  static const bool is_trivially_destructible =
-      private_::is_trivially_destructible<T>::value;
+template<typename T, size_t StaticSize = SMALL_SIZE_VEC>
+class static_vector {
+
+  static const bool is_trivially_destructible = private_::is_trivially_destructible<T>::value;
 
   // std::is_trivially_copyable not supported in g++-4.7
   static const bool is_trivially_copyable = std::is_scalar<T>::value;
@@ -27,8 +28,7 @@ public:
 
   // not efficient, don't use in performance critical parts
   static_vector(std::initializer_list<T> l) : n(0) {
-    for (auto &p : l)
-      push_back(p);
+    for (auto &p: l) push_back(p);
   }
 
   static_vector &operator=(const static_vector &that) {
@@ -46,9 +46,7 @@ public:
     return *ptr();
   }
 
-  inline const_reference front() const {
-    return const_cast<static_vector *>(this)->front();
-  }
+  inline const_reference front() const { return const_cast<static_vector *>(this)->front(); }
 
   inline reference back() {
     INVARIANT(n > 0);
@@ -56,14 +54,11 @@ public:
     return ptr()[n - 1];
   }
 
-  inline const_reference back() const {
-    return const_cast<static_vector *>(this)->back();
-  }
+  inline const_reference back() const { return const_cast<static_vector *>(this)->back(); }
 
   inline void pop_back() {
     INVARIANT(n > 0);
-    if (!is_trivially_destructible)
-      ptr()[n - 1].~T();
+    if (!is_trivially_destructible) ptr()[n - 1].~T();
     n--;
   }
 
@@ -73,21 +68,19 @@ public:
 
   // C++11 goodness- a strange syntax this is
 
-  template <class... Args> inline void emplace_back(Args &&...args) {
+  template<class... Args>
+  inline void emplace_back(Args &&...args) {
     INVARIANT(n < StaticSize);
     new (&(ptr()[n++])) T(std::forward<Args>(args)...);
   }
 
   inline reference operator[](int i) { return ptr()[i]; }
 
-  inline const_reference operator[](int i) const {
-    return const_cast<static_vector *>(this)->operator[](i);
-  }
+  inline const_reference operator[](int i) const { return const_cast<static_vector *>(this)->operator[](i); }
 
   void clear() {
     if (!is_trivially_destructible)
-      for (size_t i = 0; i < n; i++)
-        ptr()[i].~T();
+      for (size_t i = 0; i < n; i++) ptr()[i].~T();
     n = 0;
   }
 
@@ -97,13 +90,11 @@ public:
     INVARIANT(n <= StaticSize);
     if (n > this->n) {
       // expand
-      while (this->n < n)
-        new (&ptr()[this->n++]) T(val);
+      while (this->n < n) new (&ptr()[this->n++]) T(val);
     } else if (n < this->n) {
       // shrink
       while (this->n > n) {
-        if (!is_trivially_destructible)
-          ptr()[this->n - 1].~T();
+        if (!is_trivially_destructible) ptr()[this->n - 1].~T();
         this->n--;
       }
     }
@@ -112,21 +103,20 @@ public:
   // non-standard API
   inline bool is_small_type() const { return true; }
 
-  template <typename Compare = std::less<T>>
+  template<typename Compare = std::less<T>>
   inline void sort(Compare c = Compare()) {
     std::sort(begin(), end(), c);
   }
 
 private:
-  template <typename ObjType>
-  class iterator_
-      : public std::iterator<std::bidirectional_iterator_tag, ObjType> {
+  template<typename ObjType>
+  class iterator_ : public std::iterator<std::bidirectional_iterator_tag, ObjType> {
     friend class static_vector;
 
   public:
     inline iterator_() : p(0) {}
 
-    template <typename O>
+    template<typename O>
     inline iterator_(const iterator_<O> &other) : p(other.p) {}
 
     inline ObjType &operator*() const { return *p; }
@@ -213,36 +203,28 @@ public:
 
   inline reverse_iterator rbegin() { return reverse_iterator(end()); }
 
-  inline const_reverse_iterator rbegin() const {
-    return const_reverse_iterator(end());
-  }
+  inline const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
 
   inline reverse_iterator rend() { return reverse_iterator(begin()); }
 
-  inline const_reverse_iterator rend() const {
-    return const_reverse_iterator(begin());
-  }
+  inline const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
 
 private:
   void assignFrom(const static_vector &that) {
-    if (unlikely(this == &that))
-      return;
+    if (unlikely(this == &that)) return;
     clear();
     INVARIANT(that.n <= StaticSize);
     if (is_trivially_copyable) {
       NDB_MEMCPY(ptr(), that.ptr(), that.n * sizeof(T));
     } else {
-      for (size_t i = 0; i < that.n; i++)
-        new (&(ptr()[i])) T(that.ptr()[i]);
+      for (size_t i = 0; i < that.n; i++) new (&(ptr()[i])) T(that.ptr()[i]);
     }
     n = that.n;
   }
 
   inline ALWAYS_INLINE T *ptr() { return reinterpret_cast<T *>(&elems_buf[0]); }
 
-  inline ALWAYS_INLINE const T *ptr() const {
-    return reinterpret_cast<const T *>(&elems_buf[0]);
-  }
+  inline ALWAYS_INLINE const T *ptr() const { return reinterpret_cast<const T *>(&elems_buf[0]); }
 
   inline ALWAYS_INLINE T *endptr() { return ptr() + n; }
 

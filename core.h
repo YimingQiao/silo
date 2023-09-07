@@ -1,9 +1,11 @@
 #pragma once
 
+#include <sys/types.h>
+
+#include <atomic>
+
 #include "macros.h"
 #include "util.h"
-#include <atomic>
-#include <sys/types.h>
 
 /**
  * XXX: CoreIDs are not recyclable for now, so NMAXCORES is really the number
@@ -48,7 +50,7 @@ public:
     ALWAYS_ASSERT(cid < NMaxCores);
     ALWAYS_ASSERT(cid < g_core_count.load(std::memory_order_acquire));
     ALWAYS_ASSERT(tl_core_id == -1);
-    tl_core_id = cid; // sigh
+    tl_core_id = cid;// sigh
   }
 
   // actual number of CPUs online for the system
@@ -63,7 +65,7 @@ private:
 };
 
 // requires T to have no-arg ctor
-template <typename T, bool CallDtor = false, bool Pedantic = true>
+template<typename T, bool CallDtor = false, bool Pedantic = true>
 class percore {
 public:
   percore() {
@@ -74,8 +76,7 @@ public:
   }
 
   ~percore() {
-    if (!CallDtor)
-      return;
+    if (!CallDtor) return;
     for (size_t i = 0; i < size(); i++) {
       using namespace util;
       elems()[i].~aligned_padded_elem<T, Pedantic>();
@@ -102,32 +103,34 @@ public:
 
 protected:
   inline util::aligned_padded_elem<T, Pedantic> *elems() {
-    return (util::aligned_padded_elem<T, Pedantic> *)&bytes_[0];
+    return (util::aligned_padded_elem<T, Pedantic> *) &bytes_[0];
   }
 
   inline const util::aligned_padded_elem<T, Pedantic> *elems() const {
-    return (const util::aligned_padded_elem<T, Pedantic> *)&bytes_[0];
+    return (const util::aligned_padded_elem<T, Pedantic> *) &bytes_[0];
   }
 
   char bytes_[sizeof(util::aligned_padded_elem<T, Pedantic>) * NMAXCORES];
 };
 
 namespace private_ {
-template <typename T> struct buf {
-  char bytes_[sizeof(T)];
-  inline T *cast() { return (T *)&bytes_[0]; }
-  inline const T *cast() const { return (T *)&bytes_[0]; }
-};
-} // namespace private_
+  template<typename T>
+  struct buf {
+    char bytes_[sizeof(T)];
+    inline T *cast() { return (T *) &bytes_[0]; }
+    inline const T *cast() const { return (T *) &bytes_[0]; }
+  };
+}// namespace private_
 
-template <typename T>
+template<typename T>
 class percore_lazy : private percore<private_::buf<T>, false> {
   typedef private_::buf<T> buf_t;
 
 public:
   percore_lazy() { NDB_MEMSET(&flags_[0], 0, sizeof(flags_)); }
 
-  template <class... Args> inline T &get(unsigned i, Args &&...args) {
+  template<class... Args>
+  inline T &get(unsigned i, Args &&...args) {
     buf_t &b = this->elems()[i].elem;
     if (unlikely(!flags_[i])) {
       flags_[i] = true;
@@ -137,7 +140,8 @@ public:
     return *b.cast();
   }
 
-  template <class... Args> inline T &my(Args &&...args) {
+  template<class... Args>
+  inline T &my(Args &&...args) {
     return get(coreid::core_id(), std::forward<Args>(args)...);
   }
 

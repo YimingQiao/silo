@@ -16,26 +16,25 @@
  * legally binding.
  */
 
-#include "json.hh"
 #include <unordered_map>
+
+#include "json.hh"
 
 using namespace lcdf;
 
-#define CHECK(x)                                                               \
-  do {                                                                         \
-    if (!(x)) {                                                                \
-      std::cerr << __FILE__ << ":" << __LINE__ << ": test '" << #x             \
-                << "' failed\n";                                               \
-      exit(1);                                                                 \
-    }                                                                          \
+#define CHECK(x)                                                                    \
+  do {                                                                              \
+    if (!(x)) {                                                                     \
+      std::cerr << __FILE__ << ":" << __LINE__ << ": test '" << #x << "' failed\n"; \
+      exit(1);                                                                      \
+    }                                                                               \
   } while (0)
-#define CHECK_JUP(x, str)                                                      \
-  do {                                                                         \
-    if ((x).unparse() != (str)) {                                              \
-      std::cerr << __FILE__ << ":" << __LINE__ << ": '" #x "' is '" << (x)     \
-                << "', not '" << (str) << "'\n";                               \
-      exit(1);                                                                 \
-    }                                                                          \
+#define CHECK_JUP(x, str)                                                                                   \
+  do {                                                                                                      \
+    if ((x).unparse() != (str)) {                                                                           \
+      std::cerr << __FILE__ << ":" << __LINE__ << ": '" #x "' is '" << (x) << "', not '" << (str) << "'\n"; \
+      exit(1);                                                                                              \
+    }                                                                                                       \
   } while (0)
 
 #if 0
@@ -71,7 +70,7 @@ void benchmark_parse() {
 }
 
 int main(int argc, char **argv) {
-  (void)argc, (void)argv;
+  (void) argc, (void) argv;
   // benchmark_parse();
 
   Json j;
@@ -109,7 +108,8 @@ int main(int argc, char **argv) {
   j.assign_parse("[[[]],{\"a\":{}}]");
   CHECK(j.unparse() == "[[[]],{\"a\":{}}]");
 
-  j = Json::parse("{\"x22\":{\n\
+  j = Json::parse(
+      "{\"x22\":{\n\
       \"git-revision\":\"ebbd3d4767847300f552b181a10bda57a926f554M\",\n\
       \"time\":\"Tue Feb  7 20:20:33 2012\",\n\
       \"machine\":\"rtshanks-laptop\",\n\
@@ -216,7 +216,7 @@ int main(int argc, char **argv) {
 
   {
     Json j1 = Json::make_object(), j2 = Json::make_object();
-    j1.set("a", j2); // stores a COPY of j2 in j1
+    j1.set("a", j2);// stores a COPY of j2 in j1
     j2.set("b", 1);
     CHECK(j1.unparse() == "{\"a\":{}}");
     CHECK(j2.unparse() == "{\"b\":1}");
@@ -224,16 +224,14 @@ int main(int argc, char **argv) {
 
   {
     Json j = Json::parse("{\"a\":true}");
-    if (j["foo"]["bar"])
-      CHECK(false);
+    if (j["foo"]["bar"]) CHECK(false);
     CHECK(j.unparse() == "{\"a\":true}");
     j["foo"]["bar"] = true;
     CHECK(j.unparse() == "{\"a\":true,\"foo\":{\"bar\":true}}");
     j["a"]["2"] = false;
     CHECK(j.unparse() == "{\"a\":{\"2\":false},\"foo\":{\"bar\":true}}");
     j[3] = true;
-    CHECK(j.unparse() ==
-          "{\"a\":{\"2\":false},\"foo\":{\"bar\":true},\"3\":true}");
+    CHECK(j.unparse() == "{\"a\":{\"2\":false},\"foo\":{\"bar\":true},\"3\":true}");
     CHECK(j[3] == Json(true));
     j = Json::parse("[1,2,3,4]");
     CHECK(j["2"] == Json(3));
@@ -245,10 +243,10 @@ int main(int argc, char **argv) {
 
   {
     Json j = Json::parse("{}");
-    j.set("foo", String::make_out_of_memory())
-        .set(String::make_out_of_memory(), 2);
-    CHECK(j.unparse() == "{\"foo\":\"\360\237\222\243ENOMEM\360\237\222\243\","
-                         "\"\360\237\222\243ENOMEM\360\237\222\243\":2}");
+    j.set("foo", String::make_out_of_memory()).set(String::make_out_of_memory(), 2);
+    CHECK(j.unparse() ==
+          "{\"foo\":\"\360\237\222\243ENOMEM\360\237\222\243\","
+          "\"\360\237\222\243ENOMEM\360\237\222\243\":2}");
     j.clear();
     CHECK(j.unparse() == "{}");
     CHECK(j.get("foo") == Json());
@@ -529,8 +527,7 @@ int main(int argc, char **argv) {
     CHECK(j[1] == s);
     CHECK(j[1] == 77);
 
-    j = Json::array((uint64_t)-1, (int64_t)-1, (uint64_t)1, (int64_t)1,
-                    (uint64_t)2, (int64_t)2);
+    j = Json::array((uint64_t) -1, (int64_t) -1, (uint64_t) 1, (int64_t) 1, (uint64_t) 2, (int64_t) 2);
     CHECK(j[0] != j[1]);
     CHECK(j[2] == j[3]);
     CHECK(j[4] == j[5]);
@@ -580,12 +577,12 @@ int main(int argc, char **argv) {
   }
 
   {
-    Json j((uint64_t)1 << 63);
+    Json j((uint64_t) 1 << 63);
     CHECK(j.is_u());
     CHECK(j.unparse() == "9223372036854775808");
     j = Json::parse("9223372036854775808");
     CHECK(j.is_u());
-    CHECK(j.to_u() == (uint64_t)1 << 63);
+    CHECK(j.to_u() == (uint64_t) 1 << 63);
   }
 
   {
@@ -604,8 +601,7 @@ int main(int argc, char **argv) {
     CHECK(b.unparse() == "{\"a5\":null,\"a3\":{\"d\":4}}");
     CHECK(a.size() == 4);
     b.set_list("a6", a[6], "a2", a[2]);
-    CHECK(b.unparse() ==
-          "{\"a5\":null,\"a3\":{\"d\":4},\"a6\":null,\"a2\":{\"c\":3}}");
+    CHECK(b.unparse() == "{\"a5\":null,\"a3\":{\"d\":4},\"a6\":null,\"a2\":{\"c\":3}}");
     CHECK(a.size() == 4);
   }
 

@@ -17,7 +17,8 @@
 #include "util.h"
 
 class rcu {
-  template <bool> friend class scoped_rcu_base;
+  template<bool>
+  friend class scoped_rcu_base;
 
 public:
   class sync;
@@ -28,33 +29,29 @@ public:
     void *ptr;
     intptr_t action;
 
-    inline delete_entry(void *ptr, size_t sz) : ptr(ptr), action(-sz) {
-      INVARIANT(action < 0);
-    }
-    inline delete_entry(void *ptr, deleter_t fn)
-        : ptr(ptr), action(reinterpret_cast<uintptr_t>(fn)) {
+    inline delete_entry(void *ptr, size_t sz) : ptr(ptr), action(-sz) { INVARIANT(action < 0); }
+    inline delete_entry(void *ptr, deleter_t fn) : ptr(ptr), action(reinterpret_cast<uintptr_t>(fn)) {
       INVARIANT(action > 0);
     }
     void run(rcu::sync &s) {
-      if (action < 0)
-        s.dealloc(ptr, -action);
+      if (action < 0) s.dealloc(ptr, -action);
       else
         (*reinterpret_cast<deleter_t>(action))(ptr);
     }
-    bool operator==(const delete_entry &x) const {
-      return ptr == x.ptr && action == x.action;
-    }
+    bool operator==(const delete_entry &x) const { return ptr == x.ptr && action == x.action; }
     bool operator!=(const delete_entry &x) const { return !(*this == x); }
-    bool operator<(const delete_entry &x) const {
-      return ptr < x.ptr || (ptr == x.ptr && action < x.action);
-    }
+    bool operator<(const delete_entry &x) const { return ptr < x.ptr || (ptr == x.ptr && action < x.action); }
   };
   typedef basic_px_queue<delete_entry, 4096> px_queue;
 
-  template <typename T> static inline void deleter(void *p) { delete (T *)p; }
+  template<typename T>
+  static inline void deleter(void *p) {
+    delete (T *) p;
+  }
 
-  template <typename T> static inline void deleter_array(void *p) {
-    delete[] (T *)p;
+  template<typename T>
+  static inline void deleter_array(void *p) {
+    delete[] (T *) p;
   }
 
 #ifdef CHECK_INVARIANTS
@@ -77,12 +74,13 @@ public:
   // this is also serving as a memory allocator for the time being
   class sync {
     friend class rcu;
-    template <bool> friend class scoped_rcu_base;
+    template<bool>
+    friend class scoped_rcu_base;
 
   public:
     px_queue queue_;
     px_queue scratch_;
-    unsigned depth_; // 0 indicates no rcu region
+    unsigned depth_;// 0 indicates no rcu region
     unsigned last_reaped_epoch_;
 #ifdef ENABLE_EVENT_COUNTERS
     uint64_t last_reaped_timestamp_us_;
@@ -95,19 +93,22 @@ public:
     // local memory allocator
     ssize_t pin_cpu_;
     void *arenas_[allocator::MAX_ARENAS];
-    size_t deallocs_[allocator::MAX_ARENAS]; // keeps track of the number of
-                                             // un-released deallocations
+    size_t deallocs_[allocator::MAX_ARENAS];// keeps track of the number of
+                                            // un-released deallocations
 
   public:
     sync(rcu *impl)
-        : depth_(0), last_reaped_epoch_(0)
+        : depth_(0),
+          last_reaped_epoch_(0)
 #ifdef ENABLE_EVENT_COUNTERS
           ,
-          last_reaped_timestamp_us_(0), last_release_timestamp_us_(0)
+          last_reaped_timestamp_us_(0),
+          last_release_timestamp_us_(0)
 #endif
           ,
-          impl_(impl), pin_cpu_(-1) {
-      ALWAYS_ASSERT(((uintptr_t)this % CACHELINE_SIZE) == 0);
+          impl_(impl),
+          pin_cpu_(-1) {
+      ALWAYS_ASSERT(((uintptr_t) this % CACHELINE_SIZE) == 0);
       queue_.alloc_freelist(NQueueGroups);
       scratch_.alloc_freelist(NQueueGroups);
       NDB_MEMSET(&arenas_[0], 0, sizeof(arenas_));
@@ -142,8 +143,7 @@ public:
     void do_release();
 
     inline void ensure_arena(size_t arena) {
-      if (likely(arenas_[arena]))
-        return;
+      if (likely(arenas_[arena])) return;
       INVARIANT(pin_cpu_ >= 0);
       arenas_[arena] = allocator::AllocateArenas(pin_cpu_, arena);
     }
@@ -166,21 +166,23 @@ public:
 
   void free_with_fn(void *p, deleter_t fn);
 
-  template <typename T> inline void free(T *p) { free_with_fn(p, deleter<T>); }
+  template<typename T>
+  inline void free(T *p) {
+    free_with_fn(p, deleter<T>);
+  }
 
-  template <typename T> inline void free_array(T *p) {
+  template<typename T>
+  inline void free_array(T *p) {
     free_with_fn(p, deleter_array<T>);
   }
 
   // the tick is in units of rcu ticks
   inline bool in_rcu_region(uint64_t &rcu_tick) const {
     const sync *s = syncs_.myview();
-    if (unlikely(!s))
-      return false;
+    if (unlikely(!s)) return false;
     const bool is_guarded = ticker::s_instance.is_locally_guarded(rcu_tick);
     const bool has_depth = s->depth();
-    if (has_depth && !is_guarded)
-      INVARIANT(false);
+    if (has_depth && !is_guarded) INVARIANT(false);
     rcu_tick = to_rcu_ticks(rcu_tick);
     return has_depth;
   }
@@ -206,40 +208,35 @@ public:
 
   void fault_region();
 
-  static rcu s_instance CACHE_ALIGNED; // system wide instance
+  static rcu s_instance CACHE_ALIGNED;// system wide instance
 
   static void Test();
 
 private:
-  rcu(); // private ctor to enforce singleton
+  rcu();// private ctor to enforce singleton
 
-  static inline uint64_t constexpr to_rcu_ticks(uint64_t ticks) {
-    return ticks / EpochTimeMultiplier;
-  }
+  static inline uint64_t constexpr to_rcu_ticks(uint64_t ticks) { return ticks / EpochTimeMultiplier; }
 
   inline sync &mysync() { return syncs_.my(this); }
 
   percore_lazy<sync> syncs_;
 };
 
-template <bool DoCleanup> class scoped_rcu_base {
+template<bool DoCleanup>
+class scoped_rcu_base {
 public:
   // movable, but not copy-constructable
   scoped_rcu_base(scoped_rcu_base &&) = default;
   scoped_rcu_base(const scoped_rcu_base &) = delete;
   scoped_rcu_base &operator=(const scoped_rcu_base &) = delete;
 
-  scoped_rcu_base()
-      : sync_(&rcu::s_instance.mysync()), guard_(ticker::s_instance) {
-    sync_->depth_++;
-  }
+  scoped_rcu_base() : sync_(&rcu::s_instance.mysync()), guard_(ticker::s_instance) { sync_->depth_++; }
 
   ~scoped_rcu_base() {
     INVARIANT(sync_->depth_);
     const unsigned new_depth = --sync_->depth_;
     guard_.destroy();
-    if (new_depth || !DoCleanup)
-      return;
+    if (new_depth || !DoCleanup) return;
     // out of RCU region now, check if we need to run cleaner
     sync_->do_cleanup();
   }

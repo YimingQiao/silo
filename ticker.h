@@ -22,23 +22,16 @@ public:
     thd.detach();
   }
 
-  inline uint64_t global_current_tick() const {
-    return current_tick_.load(std::memory_order_acquire);
-  }
+  inline uint64_t global_current_tick() const { return current_tick_.load(std::memory_order_acquire); }
 
-  inline uint64_t global_last_tick_inclusive() const {
-    return last_tick_inclusive_.load(std::memory_order_acquire);
-  }
+  inline uint64_t global_last_tick_inclusive() const { return last_tick_inclusive_.load(std::memory_order_acquire); }
 
-  inline uint64_t global_last_tick_exclusive() const {
-    return global_last_tick_inclusive() + 1;
-  }
+  inline uint64_t global_last_tick_exclusive() const { return global_last_tick_inclusive() + 1; }
 
   // should yield a # >= global_last_tick_exclusive()
   uint64_t compute_global_last_tick_exclusive() const {
     uint64_t e = ticks_[0].current_tick_.load(std::memory_order_acquire);
-    for (size_t i = 1; i < ticks_.size(); i++)
-      e = std::min(e, ticks_[i].current_tick_.load(std::memory_order_acquire));
+    for (size_t i = 1; i < ticks_.size(); i++) e = std::min(e, ticks_[i].current_tick_.load(std::memory_order_acquire));
     return e;
   }
 
@@ -46,12 +39,9 @@ public:
   // cur_epoch out
   inline bool is_locally_guarded(uint64_t &cur_epoch) const {
     const uint64_t core_id = coreid::core_id();
-    const uint64_t current_tick =
-        ticks_[core_id].current_tick_.load(std::memory_order_acquire);
-    const uint64_t current_depth =
-        ticks_[core_id].depth_.load(std::memory_order_acquire);
-    if (current_depth)
-      cur_epoch = current_tick;
+    const uint64_t current_tick = ticks_[core_id].current_tick_.load(std::memory_order_acquire);
+    const uint64_t current_depth = ticks_[core_id].depth_.load(std::memory_order_acquire);
+    if (current_depth) cur_epoch = current_tick;
     return current_depth;
   }
 
@@ -94,8 +84,7 @@ public:
     guard &operator=(const guard &) = delete;
 
     ~guard() {
-      if (!impl_)
-        return;
+      if (!impl_) return;
       INVARIANT(core_ == coreid::core_id());
       tickinfo &ti = impl_->ticks_[core_];
       INVARIANT(ti.lock_.is_locked());
@@ -140,7 +129,7 @@ public:
     uint64_t start_us_;
   };
 
-  static ticker s_instance CACHE_ALIGNED; // system wide ticker
+  static ticker s_instance CACHE_ALIGNED;// system wide ticker
 
 private:
   void tickerloop() {
@@ -156,7 +145,7 @@ private:
         t.tv_sec = sleep_ns / ONE_SECOND_NS;
         t.tv_nsec = sleep_ns % ONE_SECOND_NS;
         nanosleep(&t, nullptr);
-        loop_timer.lap(); // since we slept away the lag
+        loop_timer.lap();// since we slept away the lag
       }
 
       // bump the current tick
@@ -167,11 +156,9 @@ private:
       // wait for all threads to finish the last tick
       for (size_t i = 0; i < ticks_.size(); i++) {
         tickinfo &ti = ticks_[i];
-        const uint64_t thread_cur_tick =
-            ti.current_tick_.load(std::memory_order_acquire);
+        const uint64_t thread_cur_tick = ti.current_tick_.load(std::memory_order_acquire);
         INVARIANT(thread_cur_tick == last_tick || thread_cur_tick == cur_tick);
-        if (thread_cur_tick == cur_tick)
-          continue;
+        if (thread_cur_tick == cur_tick) continue;
         lock_guard<spinlock> lg(ti.lock_);
         ti.current_tick_.store(cur_tick, std::memory_order_release);
       }
@@ -181,22 +168,19 @@ private:
   }
 
   struct tickinfo {
-    spinlock lock_; // guards current_tick_ and depth_
+    spinlock lock_;// guards current_tick_ and depth_
 
-    std::atomic<uint64_t>
-        current_tick_; // last RCU epoch this thread has seen
-                       // (implies completion through current_tick_ - 1)
-    std::atomic<uint64_t> depth_;    // 0 if not in RCU section
-    std::atomic<uint64_t> start_us_; // 0 if not in RCU section
+    std::atomic<uint64_t> current_tick_;// last RCU epoch this thread has seen
+                                        // (implies completion through current_tick_ - 1)
+    std::atomic<uint64_t> depth_;       // 0 if not in RCU section
+    std::atomic<uint64_t> start_us_;    // 0 if not in RCU section
 
-    tickinfo() : current_tick_(1), depth_(0), start_us_(0) {
-      ALWAYS_ASSERT(((uintptr_t)this % CACHELINE_SIZE) == 0);
-    }
+    tickinfo() : current_tick_(1), depth_(0), start_us_(0) { ALWAYS_ASSERT(((uintptr_t) this % CACHELINE_SIZE) == 0); }
   };
 
   percore<tickinfo> ticks_;
 
-  std::atomic<uint64_t> current_tick_; // which tick are we currenlty on?
+  std::atomic<uint64_t> current_tick_;// which tick are we currenlty on?
   std::atomic<uint64_t> last_tick_inclusive_;
   // all threads have *completed* ticks <= last_tick_inclusive_
   // (< current_tick_)

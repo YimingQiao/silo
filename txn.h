@@ -13,10 +13,9 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
-
-#include <unordered_map>
 
 #include "amd64.h"
 #include "btree_choice.h"
@@ -38,7 +37,7 @@
 #include "varkey.h"
 
 // forward decl
-template <template <typename> class Transaction, typename P>
+template<template<typename> class Transaction, typename P>
 class base_txn_btree;
 
 class transaction_unusable_exception {};
@@ -49,7 +48,7 @@ extern std::string (*g_proto_version_str)(uint64_t v);
 
 // base class with very simple definitions- nothing too exciting yet
 class transaction_base {
-  template <template <typename> class T, typename P>
+  template<template<typename> class T, typename P>
   friend class base_txn_btree;
 
 public:
@@ -79,15 +78,11 @@ public:
     // XXX: more flags in the future, things like consistency levels
   };
 
-#define ABORT_REASONS(x)                                                       \
-  x(ABORT_REASON_NONE) x(ABORT_REASON_USER) x(ABORT_REASON_UNSTABLE_READ)      \
-      x(ABORT_REASON_FUTURE_TID_READ)                                          \
-          x(ABORT_REASON_NODE_SCAN_WRITE_VERSION_CHANGED)                      \
-              x(ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED)                   \
-                  x(ABORT_REASON_WRITE_NODE_INTERFERENCE)                      \
-                      x(ABORT_REASON_INSERT_NODE_INTERFERENCE)                 \
-                          x(ABORT_REASON_READ_NODE_INTEREFERENCE)              \
-                              x(ABORT_REASON_READ_ABSENCE_INTEREFERENCE)
+#define ABORT_REASONS(x)                                                                                  \
+  x(ABORT_REASON_NONE) x(ABORT_REASON_USER) x(ABORT_REASON_UNSTABLE_READ) x(ABORT_REASON_FUTURE_TID_READ) \
+      x(ABORT_REASON_NODE_SCAN_WRITE_VERSION_CHANGED) x(ABORT_REASON_NODE_SCAN_READ_VERSION_CHANGED)      \
+          x(ABORT_REASON_WRITE_NODE_INTERFERENCE) x(ABORT_REASON_INSERT_NODE_INTERFERENCE)                \
+              x(ABORT_REASON_READ_NODE_INTEREFERENCE) x(ABORT_REASON_READ_ABSENCE_INTEREFERENCE)
 
   enum abort_reason {
 #define ENUM_X(x) x,
@@ -97,20 +92,19 @@ public:
 
   static const char *AbortReasonStr(abort_reason reason) {
     switch (reason) {
-#define CASE_X(x)                                                              \
-  case x:                                                                      \
+#define CASE_X(x) \
+  case x:         \
     return #x;
       ABORT_REASONS(CASE_X)
 #undef CASE_X
-    default:
-      break;
+      default:
+        break;
     }
     ALWAYS_ASSERT(false);
     return 0;
   }
 
-  transaction_base(uint64_t flags)
-      : state(TXN_EMBRYO), reason(ABORT_REASON_NONE), flags(flags) {}
+  transaction_base(uint64_t flags) : state(TXN_EMBRYO), reason(ABORT_REASON_NONE), flags(flags) {}
 
   transaction_base(const transaction_base &) = delete;
   transaction_base(transaction_base &&) = delete;
@@ -123,13 +117,13 @@ protected:
 
   static event_counter *AbortReasonCounter(abort_reason reason) {
     switch (reason) {
-#define EVENT_COUNTER_CASE_X(x)                                                \
-  case x:                                                                      \
+#define EVENT_COUNTER_CASE_X(x) \
+  case x:                       \
     return &g_##x##_ctr;
       ABORT_REASONS(EVENT_COUNTER_CASE_X)
 #undef EVENT_COUNTER_CASE_X
-    default:
-      break;
+      default:
+        break;
     }
     ALWAYS_ASSERT(false);
     return 0;
@@ -138,8 +132,7 @@ protected:
 public:
   // only fires during invariant checking
   inline void ensure_active() {
-    if (state == TXN_EMBRYO)
-      state = TXN_ACTIVE;
+    if (state == TXN_EMBRYO) state = TXN_ACTIVE;
     INVARIANT(state == TXN_ACTIVE);
   }
 
@@ -151,8 +144,7 @@ protected:
   // also belongs in the write set.
   struct read_record_t {
     constexpr read_record_t() : tuple(), t() {}
-    constexpr read_record_t(const dbtuple *tuple, tid_t t)
-        : tuple(tuple), t(t) {}
+    constexpr read_record_t(const dbtuple *tuple, tid_t t) : tuple(tuple), t(t) {}
     inline const dbtuple *get_tuple() const { return tuple; }
     inline tid_t get_tid() const { return t; }
 
@@ -173,10 +165,13 @@ protected:
     constexpr inline write_record_t() : tuple(), k(), r(), w(), btr() {}
 
     // all inputs are assumed to be stable
-    inline write_record_t(dbtuple *tuple, const string_type *k, const void *r,
-                          dbtuple::tuple_writer_t w, concurrent_btree *btr,
-                          bool insert)
-        : tuple(tuple), k(k), r(r), w(w), btr(btr) {
+    inline write_record_t(dbtuple *tuple, const string_type *k, const void *r, dbtuple::tuple_writer_t w,
+                          concurrent_btree *btr, bool insert)
+        : tuple(tuple),
+          k(k),
+          r(r),
+          w(w),
+          btr(btr) {
       this->btr.set_flags(insert ? FLAGS_INSERT : 0);
     }
     inline dbtuple *get_tuple() { return tuple; }
@@ -197,7 +192,7 @@ protected:
     const string_type *k;
     const void *r;
     dbtuple::tuple_writer_t w;
-    marked_ptr<concurrent_btree> btr; // first bit for inserted, 2nd for dowrite
+    marked_ptr<concurrent_btree> btr;// first bit for inserted, 2nd for dowrite
   };
 
   friend std::ostream &operator<<(std::ostream &o, const write_record_t &r);
@@ -215,15 +210,14 @@ protected:
       FLAGS_INSERT = 0x1 << 1,
     };
     dbtuple_write_info() : tuple(), entry(nullptr), pos() {}
-    dbtuple_write_info(dbtuple *tuple, write_record_t *entry, bool is_insert,
-                       size_t pos)
-        : tuple(tuple), entry(entry), pos(pos) {
-      if (is_insert)
-        this->tuple.set_flags(FLAGS_LOCKED | FLAGS_INSERT);
+    dbtuple_write_info(dbtuple *tuple, write_record_t *entry, bool is_insert, size_t pos)
+        : tuple(tuple),
+          entry(entry),
+          pos(pos) {
+      if (is_insert) this->tuple.set_flags(FLAGS_LOCKED | FLAGS_INSERT);
     }
     // XXX: for searching only
-    explicit dbtuple_write_info(const dbtuple *tuple)
-        : tuple(const_cast<dbtuple *>(tuple)), entry(), pos() {}
+    explicit dbtuple_write_info(const dbtuple *tuple) : tuple(const_cast<dbtuple *>(tuple)), entry(), pos() {}
     inline dbtuple *get_tuple() { return tuple.get(); }
     inline const dbtuple *get_tuple() const { return tuple.get(); }
     inline ALWAYS_INLINE void mark_locked() {
@@ -231,18 +225,12 @@ protected:
       tuple.or_flags(FLAGS_LOCKED);
       INVARIANT(is_locked());
     }
-    inline ALWAYS_INLINE bool is_locked() const {
-      return tuple.get_flags() & FLAGS_LOCKED;
-    }
-    inline ALWAYS_INLINE bool is_insert() const {
-      return tuple.get_flags() & FLAGS_INSERT;
-    }
+    inline ALWAYS_INLINE bool is_locked() const { return tuple.get_flags() & FLAGS_LOCKED; }
+    inline ALWAYS_INLINE bool is_insert() const { return tuple.get_flags() & FLAGS_INSERT; }
     inline ALWAYS_INLINE bool operator<(const dbtuple_write_info &o) const {
       // the unique key is [tuple, !is_insert, pos]
-      return tuple < o.tuple ||
-             (tuple == o.tuple && !is_insert() < !o.is_insert()) ||
-             (tuple == o.tuple && !is_insert() == !o.is_insert() &&
-              pos < o.pos);
+      return tuple < o.tuple || (tuple == o.tuple && !is_insert() < !o.is_insert()) ||
+             (tuple == o.tuple && !is_insert() == !o.is_insert() && pos < o.pos);
     }
     marked_ptr<dbtuple> tuple;
     write_record_t *entry;
@@ -258,20 +246,13 @@ protected:
   static event_counter evt_local_search_write_set_hits;
   static event_counter evt_dbtuple_latest_replacement;
 
-  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe0,
-                            g_txn_commit_probe0_cg);
-  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe1,
-                            g_txn_commit_probe1_cg);
-  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe2,
-                            g_txn_commit_probe2_cg);
-  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe3,
-                            g_txn_commit_probe3_cg);
-  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe4,
-                            g_txn_commit_probe4_cg);
-  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe5,
-                            g_txn_commit_probe5_cg);
-  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe6,
-                            g_txn_commit_probe6_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe0, g_txn_commit_probe0_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe1, g_txn_commit_probe1_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe2, g_txn_commit_probe2_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe3, g_txn_commit_probe3_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe4, g_txn_commit_probe4_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe5, g_txn_commit_probe5_cg);
+  CLASS_STATIC_COUNTER_DECL(scopedperf::tsc_ctr, g_txn_commit_probe6, g_txn_commit_probe6_cg);
 
   txn_state state;
   abort_reason reason;
@@ -280,43 +261,40 @@ protected:
 
 // type specializations
 namespace private_ {
-template <> struct is_trivially_destructible<transaction_base::read_record_t> {
-  static const bool value = true;
-};
+  template<>
+  struct is_trivially_destructible<transaction_base::read_record_t> {
+    static const bool value = true;
+  };
 
-template <> struct is_trivially_destructible<transaction_base::write_record_t> {
-  static const bool value = true;
-};
+  template<>
+  struct is_trivially_destructible<transaction_base::write_record_t> {
+    static const bool value = true;
+  };
 
-template <>
-struct is_trivially_destructible<transaction_base::absent_record_t> {
-  static const bool value = true;
-};
+  template<>
+  struct is_trivially_destructible<transaction_base::absent_record_t> {
+    static const bool value = true;
+  };
 
-template <>
-struct is_trivially_destructible<transaction_base::dbtuple_write_info> {
-  static const bool value = true;
-};
-} // namespace private_
+  template<>
+  struct is_trivially_destructible<transaction_base::dbtuple_write_info> {
+    static const bool value = true;
+  };
+}// namespace private_
 
-inline ALWAYS_INLINE std::ostream &
-operator<<(std::ostream &o, const transaction_base::read_record_t &r) {
+inline ALWAYS_INLINE std::ostream &operator<<(std::ostream &o, const transaction_base::read_record_t &r) {
   // o << "[tuple=" << util::hexify(r.get_tuple())
-  o << "[tuple=" << *r.get_tuple()
-    << ", tid_read=" << g_proto_version_str(r.get_tid()) << "]";
+  o << "[tuple=" << *r.get_tuple() << ", tid_read=" << g_proto_version_str(r.get_tid()) << "]";
   return o;
 }
 
-inline ALWAYS_INLINE std::ostream &
-operator<<(std::ostream &o, const transaction_base::write_record_t &r) {
-  o << "[tuple=" << r.get_tuple() << ", key=" << util::hexify(r.get_key())
-    << ", value=" << util::hexify(r.get_value()) << ", insert=" << r.is_insert()
-    << ", do_write=" << r.do_write() << ", btree=" << r.get_btree() << "]";
+inline ALWAYS_INLINE std::ostream &operator<<(std::ostream &o, const transaction_base::write_record_t &r) {
+  o << "[tuple=" << r.get_tuple() << ", key=" << util::hexify(r.get_key()) << ", value=" << util::hexify(r.get_value())
+    << ", insert=" << r.is_insert() << ", do_write=" << r.do_write() << ", btree=" << r.get_btree() << "]";
   return o;
 }
 
-inline ALWAYS_INLINE std::ostream &
-operator<<(std::ostream &o, const transaction_base::absent_record_t &r) {
+inline ALWAYS_INLINE std::ostream &operator<<(std::ostream &o, const transaction_base::absent_record_t &r) {
   o << "[v=" << r.version << "]";
   return o;
 }
@@ -326,13 +304,11 @@ struct default_transaction_traits {
   static const size_t absent_set_expected_size = EXTRA_SMALL_SIZE_MAP;
   static const size_t write_set_expected_size = SMALL_SIZE_MAP;
   static const bool stable_input_memory = false;
-  static const bool hard_expected_sizes =
-      false; // true if the expected sizes are hard maximums
-  static const bool read_own_writes =
-      true; // if we read a key which we previous put(), are we guaranteed
-            // to read our latest (uncommited) values? this comes at a
-            // performance penality [you should not need this behavior to
-            // write txns, since you *know* the values you inserted]
+  static const bool hard_expected_sizes = false;// true if the expected sizes are hard maximums
+  static const bool read_own_writes = true;     // if we read a key which we previous put(), are we guaranteed
+                                                // to read our latest (uncommited) values? this comes at a
+                                                // performance penality [you should not need this behavior to
+                                                // write txns, since you *know* the values you inserted]
 
   typedef util::default_string_allocator StringAllocator;
 };
@@ -341,10 +317,11 @@ struct default_stable_transaction_traits : public default_transaction_traits {
   static const bool stable_input_memory = true;
 };
 
-template <template <typename> class Protocol, typename Traits>
+template<template<typename> class Protocol, typename Traits>
 class transaction : public transaction_base {
   // XXX: weaker than necessary
-  template <template <typename> class, typename> friend class base_txn_btree;
+  template<template<typename> class, typename>
+  friend class base_txn_btree;
   friend Protocol<Traits>;
 
 public:
@@ -426,13 +403,9 @@ public:
 protected:
   // data structures
 
-  inline ALWAYS_INLINE Protocol<Traits> *cast() {
-    return static_cast<Protocol<Traits> *>(this);
-  }
+  inline ALWAYS_INLINE Protocol<Traits> *cast() { return static_cast<Protocol<Traits> *>(this); }
 
-  inline ALWAYS_INLINE const Protocol<Traits> *cast() const {
-    return static_cast<const Protocol<Traits> *>(this);
-  }
+  inline ALWAYS_INLINE const Protocol<Traits> *cast() const { return static_cast<const Protocol<Traits> *>(this); }
 
   // XXX: we have baked in b-tree into the protocol- other indexes are possible
   // but we would need to abstract it away. we don't bother for now.
@@ -441,46 +414,32 @@ protected:
   // XXX: use parameterized typedef to avoid duplication
 
   // small types
-  typedef small_vector<read_record_t, traits_type::read_set_expected_size>
-      read_set_map_small;
-  typedef small_vector<write_record_t, traits_type::write_set_expected_size>
-      write_set_map_small;
-  typedef small_unordered_map<const typename concurrent_btree::node_opaque_t *,
-                              absent_record_t,
+  typedef small_vector<read_record_t, traits_type::read_set_expected_size> read_set_map_small;
+  typedef small_vector<write_record_t, traits_type::write_set_expected_size> write_set_map_small;
+  typedef small_unordered_map<const typename concurrent_btree::node_opaque_t *, absent_record_t,
                               traits_type::absent_set_expected_size>
       absent_set_map_small;
 
   // static types
-  typedef static_vector<read_record_t, traits_type::read_set_expected_size>
-      read_set_map_static;
-  typedef static_vector<write_record_t, traits_type::write_set_expected_size>
-      write_set_map_static;
-  typedef static_unordered_map<const typename concurrent_btree::node_opaque_t *,
-                               absent_record_t,
+  typedef static_vector<read_record_t, traits_type::read_set_expected_size> read_set_map_static;
+  typedef static_vector<write_record_t, traits_type::write_set_expected_size> write_set_map_static;
+  typedef static_unordered_map<const typename concurrent_btree::node_opaque_t *, absent_record_t,
                                traits_type::absent_set_expected_size>
       absent_set_map_static;
 
   // helper types for log writing
-  typedef small_vector<uint32_t, traits_type::write_set_expected_size>
-      write_set_u32_vec_small;
-  typedef static_vector<uint32_t, traits_type::write_set_expected_size>
-      write_set_u32_vec_static;
+  typedef small_vector<uint32_t, traits_type::write_set_expected_size> write_set_u32_vec_small;
+  typedef static_vector<uint32_t, traits_type::write_set_expected_size> write_set_u32_vec_static;
 
   // use static types if the expected sizes are guarantees
-  typedef
-      typename std::conditional<traits_type::hard_expected_sizes,
-                                read_set_map_static, read_set_map_small>::type
-          read_set_map;
-  typedef
-      typename std::conditional<traits_type::hard_expected_sizes,
-                                write_set_map_static, write_set_map_small>::type
-          write_set_map;
-  typedef typename std::conditional<traits_type::hard_expected_sizes,
-                                    absent_set_map_static,
-                                    absent_set_map_small>::type absent_set_map;
-  typedef typename std::conditional<
-      traits_type::hard_expected_sizes, write_set_u32_vec_static,
-      write_set_u32_vec_small>::type write_set_u32_vec;
+  typedef typename std::conditional<traits_type::hard_expected_sizes, read_set_map_static, read_set_map_small>::type
+      read_set_map;
+  typedef typename std::conditional<traits_type::hard_expected_sizes, write_set_map_static, write_set_map_small>::type
+      write_set_map;
+  typedef typename std::conditional<traits_type::hard_expected_sizes, absent_set_map_static, absent_set_map_small>::type
+      absent_set_map;
+  typedef typename std::conditional<traits_type::hard_expected_sizes, write_set_u32_vec_static,
+                                    write_set_u32_vec_small>::type write_set_u32_vec;
 
 #else
   typedef std::vector<read_record_t> read_set_map;
@@ -489,36 +448,28 @@ protected:
   typedef std::vector<uint32_t> write_set_u32_vec;
 #endif
 
-  template <typename T>
-  using write_set_sized_vec = typename std::conditional<
-      traits_type::hard_expected_sizes,
-      static_vector<T, traits_type::write_set_expected_size>,
-      typename util::vec<T, traits_type::write_set_expected_size>::type>::type;
+  template<typename T>
+  using write_set_sized_vec =
+      typename std::conditional<traits_type::hard_expected_sizes,
+                                static_vector<T, traits_type::write_set_expected_size>,
+                                typename util::vec<T, traits_type::write_set_expected_size>::type>::type;
 
   // small type
-  typedef typename util::vec<dbtuple_write_info,
-                             traits_type::write_set_expected_size>::type
-      dbtuple_write_info_vec_small;
+  typedef
+      typename util::vec<dbtuple_write_info, traits_type::write_set_expected_size>::type dbtuple_write_info_vec_small;
 
   // static type
-  typedef static_vector<dbtuple_write_info,
-                        traits_type::write_set_expected_size>
-      dbtuple_write_info_vec_static;
+  typedef static_vector<dbtuple_write_info, traits_type::write_set_expected_size> dbtuple_write_info_vec_static;
 
   // chosen type
-  typedef typename std::conditional<
-      traits_type::hard_expected_sizes, dbtuple_write_info_vec_static,
-      dbtuple_write_info_vec_small>::type dbtuple_write_info_vec;
+  typedef typename std::conditional<traits_type::hard_expected_sizes, dbtuple_write_info_vec_static,
+                                    dbtuple_write_info_vec_small>::type dbtuple_write_info_vec;
 
-  static inline bool
-  sorted_dbtuples_contains(const dbtuple_write_info_vec &dbtuples,
-                           const dbtuple *tuple) {
+  static inline bool sorted_dbtuples_contains(const dbtuple_write_info_vec &dbtuples, const dbtuple *tuple) {
     // XXX: skip binary search for small-sized dbtuples?
     return std::binary_search(
         dbtuples.begin(), dbtuples.end(), dbtuple_write_info(tuple),
-        [](const dbtuple_write_info &lhs, const dbtuple_write_info &rhs) {
-          return lhs.get_tuple() < rhs.get_tuple();
-        });
+        [](const dbtuple_write_info &lhs, const dbtuple_write_info &rhs) { return lhs.get_tuple() < rhs.get_tuple(); });
   }
 
 public:
@@ -538,21 +489,17 @@ public:
 #ifdef DIE_ON_ABORT
   void abort_trap(abort_reason reason) {
     AbortReasonCounter(reason)->inc();
-    this->reason = reason; // for dump_debug_info() to see
+    this->reason = reason;// for dump_debug_info() to see
     dump_debug_info();
     ::abort();
   }
 #else
-  inline ALWAYS_INLINE void abort_trap(abort_reason reason) {
-    AbortReasonCounter(reason)->inc();
-  }
+  inline ALWAYS_INLINE void abort_trap(abort_reason reason) { AbortReasonCounter(reason)->inc(); }
 #endif
 
   std::map<std::string, uint64_t> get_txn_counters() const;
 
-  inline ALWAYS_INLINE bool is_snapshot() const {
-    return get_flags() & TXN_FLAG_READ_ONLY;
-  }
+  inline ALWAYS_INLINE bool is_snapshot() const { return get_flags() & TXN_FLAG_READ_ONLY; }
 
   // for debugging purposes only
   inline const read_set_map &get_read_set() const { return read_set; }
@@ -566,8 +513,7 @@ protected:
 
   // assumes lock on marker is held on marker by caller, and marker is the
   // latest: removes marker from tree, and clears latest
-  void cleanup_inserted_tuple_marker(dbtuple *marker, const std::string &key,
-                                     concurrent_btree *btr);
+  void cleanup_inserted_tuple_marker(dbtuple *marker, const std::string &key, concurrent_btree *btr);
 
   // low-level API for txn_btree
 
@@ -588,17 +534,15 @@ protected:
   //
   // NOTE: !ret.first => !ret.second
   // NOTE: assumes key/value are stable
-  std::pair<dbtuple *, bool>
-  try_insert_new_tuple(concurrent_btree &btr, const std::string *key,
-                       const void *value, dbtuple::tuple_writer_t writer);
+  std::pair<dbtuple *, bool> try_insert_new_tuple(concurrent_btree &btr, const std::string *key, const void *value,
+                                                  dbtuple::tuple_writer_t writer);
 
   // reads the contents of tuple into v
   // within this transaction context
-  template <typename ValueReader>
+  template<typename ValueReader>
   bool do_tuple_read(const dbtuple *tuple, ValueReader &value_reader);
 
-  void do_node_read(const typename concurrent_btree::node_opaque_t *n,
-                    uint64_t version);
+  void do_node_read(const typename concurrent_btree::node_opaque_t *n, uint64_t version);
 
 public:
   // expected public overrides
@@ -631,8 +575,7 @@ protected:
   // Called when the latest value written to ln is an empty
   // (delete) marker. The protocol can then decide how to schedule
   // the logical node for actual deletion
-  void on_logical_delete(dbtuple *tuple, const std::string &key,
-                         concurrent_btree *btr);
+  void on_logical_delete(dbtuple *tuple, const std::string &key, concurrent_btree *btr);
 
   // if gen_commit_tid() is called, then on_tid_finish() will be called
   // with the commit tid. before on_tid_finish() is called, state is updated
@@ -652,13 +595,11 @@ protected:
     typename read_set_map::iterator it = read_set.begin();
     typename read_set_map::iterator it_end = read_set.end();
     for (; it != it_end; ++it)
-      if (it->get_tuple() == tuple)
-        break;
+      if (it->get_tuple() == tuple) break;
     return it;
   }
 
-  inline typename read_set_map::const_iterator
-  find_read_set(const dbtuple *tuple) const {
+  inline typename read_set_map::const_iterator find_read_set(const dbtuple *tuple) const {
     return const_cast<transaction *>(this)->find_read_set(tuple);
   }
 
@@ -668,18 +609,15 @@ protected:
     typename write_set_map::iterator it = write_set.begin();
     typename write_set_map::iterator it_end = write_set.end();
     for (; it != it_end; ++it)
-      if (it->get_tuple() == tuple)
-        break;
+      if (it->get_tuple() == tuple) break;
     return it;
   }
 
-  inline typename write_set_map::const_iterator
-  find_write_set(const dbtuple *tuple) const {
+  inline typename write_set_map::const_iterator find_write_set(const dbtuple *tuple) const {
     return const_cast<transaction *>(this)->find_write_set(tuple);
   }
 
-  inline bool handle_last_tuple_in_group(dbtuple_write_info &info,
-                                         bool did_group_insert);
+  inline bool handle_last_tuple_in_group(dbtuple_write_info &info, bool did_group_insert);
 
   read_set_map read_set;
   write_set_map write_set;
@@ -694,9 +632,7 @@ class transaction_abort_exception : public std::exception {
 public:
   transaction_abort_exception(transaction_base::abort_reason r) : r(r) {}
   inline transaction_base::abort_reason get_reason() const { return r; }
-  virtual const char *what() const throw() {
-    return transaction_base::AbortReasonStr(r);
-  }
+  virtual const char *what() const throw() { return transaction_base::AbortReasonStr(r); }
 
 private:
   transaction_base::abort_reason r;
@@ -704,7 +640,8 @@ private:
 
 // XXX(stephentu): stupid hacks
 // XXX(stephentu): txn_epoch_sync is a misnomer
-template <template <typename> class Transaction> struct txn_epoch_sync {
+template<template<typename> class Transaction>
+struct txn_epoch_sync {
   // block until the next epoch
   static inline void sync() {}
   // finish any async jobs
@@ -713,9 +650,7 @@ template <template <typename> class Transaction> struct txn_epoch_sync {
   static inline void thread_end() {}
   // how many txns have we persisted in total, from
   // the last reset invocation?
-  static inline std::pair<uint64_t, double> compute_ntxn_persisted() {
-    return {0, 0.0};
-  }
+  static inline std::pair<uint64_t, double> compute_ntxn_persisted() { return {0, 0.0}; }
   // reset the persisted counters
   static inline void reset_ntxn_persisted() {}
 };

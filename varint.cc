@@ -1,8 +1,9 @@
+#include "varint.h"
+
 #include <iostream>
 
 #include "macros.h"
 #include "util.h"
-#include "varint.h"
 
 using namespace std;
 using namespace util;
@@ -22,7 +23,6 @@ static void do_test(uint32_t v) {
 
 void varint::Test() {
   fast_random r(2043859);
-  for (int i = 0; i < 1000; i++)
-    do_test(r.next_u32());
+  for (int i = 0; i < 1000; i++) do_test(r.next_u32());
   cerr << "varint tests passed" << endl;
 }

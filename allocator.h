@@ -34,8 +34,7 @@ public:
 
   static void ReleaseArenas(void **arenas);
 
-  static const size_t LgAllocAlignment =
-      4; // all allocations aligned to 2^4 = 16
+  static const size_t LgAllocAlignment = 4;// all allocations aligned to 2^4 = 16
   static const size_t AllocAlignment = 1 << LgAllocAlignment;
   static const size_t MAX_ARENAS = 32;
 
@@ -49,25 +48,21 @@ public:
   static void FaultRegion(size_t cpu);
 
   // returns true if managed by this allocator, false otherwise
-  static inline bool ManagesPointer(const void *p) {
-    return p >= g_memstart && p < g_memend;
-  }
+  static inline bool ManagesPointer(const void *p) { return p >= g_memstart && p < g_memend; }
 
   // assumes p is managed by this allocator- returns the CPU from which this
   // pointer was allocated
   static inline size_t PointerToCpu(const void *p) {
     ALWAYS_ASSERT(p >= g_memstart);
     ALWAYS_ASSERT(p < g_memend);
-    const size_t ret = (reinterpret_cast<const char *>(p) -
-                        reinterpret_cast<const char *>(g_memstart)) /
-                       g_maxpercore;
+    const size_t ret = (reinterpret_cast<const char *>(p) - reinterpret_cast<const char *>(g_memstart)) / g_maxpercore;
     ALWAYS_ASSERT(ret < g_ncpus);
     return ret;
   }
 
 #ifdef MEMCHECK_MAGIC
   struct pgmetadata {
-    uint32_t unit_; // 0-indexed
+    uint32_t unit_;// 0-indexed
   } PACKED;
 
   // returns nullptr if p is not managed, or has not been allocated yet.
@@ -91,8 +86,7 @@ private:
   static bool UseMAdvWillNeed();
 
   struct regionctx {
-    regionctx()
-        : region_begin(nullptr), region_end(nullptr), region_faulted(false) {
+    regionctx() : region_begin(nullptr), region_end(nullptr), region_faulted(false) {
       NDB_MEMSET(arenas, 0, sizeof(arenas));
     }
     regionctx(const regionctx &) = delete;
@@ -106,7 +100,7 @@ private:
     bool region_faulted;
 
     spinlock lock;
-    std::mutex fault_lock; // XXX: hacky
+    std::mutex fault_lock;// XXX: hacky
     void *arenas[MAX_ARENAS];
   };
 
@@ -117,7 +111,7 @@ private:
   // [g_memstart, g_memstart + ncpus * maxpercore) is the region of memory
   // mmap()-ed
   static void *g_memstart;
-  static void *g_memend; // g_memstart + ncpus * maxpercore
+  static void *g_memend;// g_memstart + ncpus * maxpercore
   static size_t g_ncpus;
   static size_t g_maxpercore;
 

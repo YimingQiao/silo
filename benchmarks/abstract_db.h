@@ -42,9 +42,7 @@ public:
   virtual bool index_has_stable_put_memory() const { return false; }
 
   // XXX(stephentu): laziness
-  virtual size_t sizeof_txn_object(uint64_t txn_flags) const {
-    NDB_UNIMPLEMENTED("sizeof_txn_object");
-  };
+  virtual size_t sizeof_txn_object(uint64_t txn_flags) const { NDB_UNIMPLEMENTED("sizeof_txn_object"); };
 
   /**
    * XXX(stephentu): hack
@@ -62,9 +60,7 @@ public:
   virtual void thread_end() {}
 
   // [ntxns_persisted, ntxns_committed, avg latency]
-  virtual std::tuple<uint64_t, uint64_t, double> get_ntxn_persisted() const {
-    return std::make_tuple(0, 0, 0.0);
-  }
+  virtual std::tuple<uint64_t, uint64_t, double> get_ntxn_persisted() const { return std::make_tuple(0, 0, 0.0); }
 
   virtual void reset_ntxn_persisted() {}
 
@@ -72,9 +68,9 @@ public:
     HINT_DEFAULT,
 
     // ycsb profiles
-    HINT_KV_GET_PUT, // KV workloads over a single key
-    HINT_KV_RMW,     // get/put over a single key
-    HINT_KV_SCAN,    // KV scan workloads (~100 keys)
+    HINT_KV_GET_PUT,// KV workloads over a single key
+    HINT_KV_RMW,    // get/put over a single key
+    HINT_KV_SCAN,   // KV scan workloads (~100 keys)
 
     // tpcc profiles
     HINT_TPCC_NEW_ORDER,
@@ -93,8 +89,7 @@ public:
    *
    * [buf, buf + sizeof_txn_object(txn_flags)) is a valid ptr
    */
-  virtual void *new_txn(uint64_t txn_flags, str_arena &arena, void *buf,
-                        TxnProfileHint hint = HINT_DEFAULT) = 0;
+  virtual void *new_txn(uint64_t txn_flags, str_arena &arena, void *buf, TxnProfileHint hint = HINT_DEFAULT) = 0;
 
   typedef std::map<std::string, uint64_t> counter_map;
   typedef std::map<std::string, counter_map> txn_counter_map;
@@ -102,9 +97,7 @@ public:
   /**
    * Reports things like read/write set sizes
    */
-  virtual counter_map get_txn_counters(void *txn) const {
-    return counter_map();
-  }
+  virtual counter_map get_txn_counters(void *txn) const { return counter_map(); }
 
   /**
    * Returns true on successful commit.
@@ -121,8 +114,7 @@ public:
 
   virtual void print_txn_debug(void *txn) const {}
 
-  virtual abstract_ordered_index *open_index(const std::string &name,
-                                             size_t value_size_hint,
+  virtual abstract_ordered_index *open_index(const std::string &name, size_t value_size_hint,
                                              bool mostly_append = false) = 0;
 
   virtual void close_index(abstract_ordered_index *idx) = 0;

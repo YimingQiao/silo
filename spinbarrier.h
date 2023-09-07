@@ -25,14 +25,12 @@ public:
     for (;;) {
       size_t copy = n;
       ALWAYS_ASSERT(copy > 0);
-      if (__sync_bool_compare_and_swap(&n, copy, copy - 1))
-        return;
+      if (__sync_bool_compare_and_swap(&n, copy, copy - 1)) return;
     }
   }
 
   void wait_for() {
-    while (n > 0)
-      nop_pause();
+    while (n > 0) nop_pause();
   }
 
 private:

@@ -14,6 +14,7 @@
  * is legally binding.
  */
 #include "testrunner.hh"
+
 #include <algorithm>
 #include <numeric>
 #include <vector>
@@ -25,19 +26,15 @@ void testrunner_base::print_names(FILE *stream, int ncol) {
   masstree_precondition(ncol >= 1);
 
   std::vector<lcdf::String> names;
-  for (testrunner_base *tr = thehead; tr; tr = tr->next_)
-    names.push_back(tr->name());
+  for (testrunner_base *tr = thehead; tr; tr = tr->next_) names.push_back(tr->name());
 
   size_t percol;
   std::vector<int> colwidth;
   while (1) {
     percol = (names.size() + ncol - 1) / ncol;
     colwidth.assign(ncol, 0);
-    for (size_t i = 0; i != names.size(); ++i)
-      colwidth[i / percol] = std::max(colwidth[i / percol], names[i].length());
-    if (ncol == 1 ||
-        std::accumulate(colwidth.begin(), colwidth.end(), 0) + ncol * 3 <= 78)
-      break;
+    for (size_t i = 0; i != names.size(); ++i) colwidth[i / percol] = std::max(colwidth[i / percol], names[i].length());
+    if (ncol == 1 || std::accumulate(colwidth.begin(), colwidth.end(), 0) + ncol * 3 <= 78) break;
     --ncol;
   }
 
@@ -45,9 +42,7 @@ void testrunner_base::print_names(FILE *stream, int ncol) {
     size_t off = row;
     for (int col = 0; col != ncol; ++col, off += percol)
       if (off < names.size())
-        fprintf(stream, "%*s   %s",
-                col ? colwidth[col - 1] - names[off - percol].length() : 0, "",
-                names[off].c_str());
+        fprintf(stream, "%*s   %s", col ? colwidth[col - 1] - names[off - percol].length() : 0, "", names[off].c_str());
     fprintf(stream, "\n");
   }
 }

@@ -24,7 +24,7 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 MODE ?= perf
 
 # run with 'MASSTREE=0' to turn off masstree
-MASSTREE ?= 1
+MASSTREE ?= 0
 
 ###############
 
@@ -75,7 +75,7 @@ else
 	$(error invalid mode)
 endif
 
-CXXFLAGS := -w -g -Wall -std=c++0x
+CXXFLAGS := -w -g -Wall -std=c++11
 CXXFLAGS += -MD -Ithird-party/lz4 -DCONFIG_H=\"$(CONFIG_H)\"
 ifeq ($(DEBUG_S),1)
         CXXFLAGS += -fno-omit-frame-pointer -DDEBUG
@@ -100,6 +100,8 @@ TOP     := $(shell echo $${PWD-`pwd`})
 LDFLAGS := -lpthread -lnuma -lrt
 
 LZ4LDFLAGS := -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
+
+BlitzLDFLAGS := -Ithird-party/libblitz/include -Lthird-party/libblitz/build -ldb_compress -Wl,-rpath,$(TOP)/third-party/libblitz/build
 
 ifeq ($(USE_MALLOC_MODE_S),1)
         CXXFLAGS+=-DUSE_JEMALLOC
@@ -200,6 +202,9 @@ $(MASSTREE_OBJFILES) : $(O)/%.o: masstree/%.cc masstree/config.h
 third-party/lz4/liblz4.so:
 	make -C third-party/lz4 library
 
+third-party/libblitz/build/libdb_compress.so:
+	@mkdir -p third-party/libblitz/build && cd third-party/libblitz/build && cmake .. && make
+
 .PHONY: test
 test: $(O)/test
 
@@ -229,8 +234,8 @@ masstree/configure masstree/config.h.in: masstree/configure.ac
 .PHONY: dbtest
 dbtest: $(O)/benchmarks/dbtest
 
-$(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES) third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS)
+$(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES) third-party/lz4/liblz4.so third-party/libblitz/build/libdb_compress.so
+	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) ${BlitzLDFLAGS}
 
 .PHONY: kvtest
 kvtest: $(O)/benchmarks/masstree/kvtest
@@ -242,7 +247,7 @@ $(O)/benchmarks/masstree/kvtest: $(O)/benchmarks/masstree/kvtest.o $(OBJFILES) $
 newdbtest: $(O)/new-benchmarks/dbtest
 
 $(O)/new-benchmarks/dbtest: $(O)/new-benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(NEWBENCH_OBJFILES) third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/new-benchmarks/dbtest $^ $(LDFLAGS) $(LZ4LDFLAGS)
+	$(CXX) -o $(O)/new-benchmarks/dbtest $^ $(LDFLAGS) $(LZ4LDFLAGS) ${BLITZFLAGS}
 
 DEPFILES := $(wildcard $(O)/*.d $(O)/*/*.d $(O)/*/*/*.d masstree/_masstree_config.d)
 ifneq ($(DEPFILES),)

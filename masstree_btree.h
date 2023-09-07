@@ -18,6 +18,13 @@
 #include "counter.h"
 #include "log2.hh"
 #include "macros.h"
+#include "masstree/circular_int.hh"
+#include "masstree/masstree_insert.hh"
+#include "masstree/masstree_print.hh"
+#include "masstree/masstree_remove.hh"
+#include "masstree/masstree_scan.hh"
+#include "masstree/mtcounters.hh"
+#include "masstree/timestamp.hh"
 #include "ndb_type_traits.h"
 #include "ownership_checker.h"
 #include "prefetch.h"
@@ -26,17 +33,9 @@
 #include "util.h"
 #include "varkey.h"
 
-#include "masstree/circular_int.hh"
-#include "masstree/masstree_insert.hh"
-#include "masstree/masstree_print.hh"
-#include "masstree/masstree_remove.hh"
-#include "masstree/masstree_scan.hh"
-#include "masstree/mtcounters.hh"
-#include "masstree/timestamp.hh"
-
 class simple_threadinfo {
 public:
-  simple_threadinfo() : ts_(0) { // XXX?
+  simple_threadinfo() : ts_(0) {// XXX?
   }
   class rcu_callback {
   public:
@@ -61,8 +60,7 @@ public:
     return ts_;
   }
   kvtimestamp_t update_timestamp(kvtimestamp_t x, kvtimestamp_t y) const {
-    if (circular_int<kvtimestamp_t>::less(x, y))
-      x = y;
+    if (circular_int<kvtimestamp_t>::less(x, y)) x = y;
     if (circular_int<kvtimestamp_t>::less_equal(ts_, x))
       // x might be a marker timestamp; ensure result is not
       ts_ = (x | 1) + 1;
@@ -70,8 +68,7 @@ public:
   }
   void increment_timestamp() { ts_ += 2; }
   void advance_timestamp(kvtimestamp_t x) {
-    if (circular_int<kvtimestamp_t>::less(ts_, x))
-      ts_ = x;
+    if (circular_int<kvtimestamp_t>::less(ts_, x)) ts_ = x;
   }
 
   // event counters
@@ -84,25 +81,22 @@ public:
    *
    * This function object can be used to count the number of relax_fence()s
    * executed. */
-  relax_fence_function accounting_relax_fence(threadcounter) {
-    return relax_fence_function();
-  }
+  relax_fence_function accounting_relax_fence(threadcounter) { return relax_fence_function(); }
 
   class accounting_relax_fence_function {
   public:
-    template <typename V> void operator()(V) { relax_fence(); }
+    template<typename V>
+    void operator()(V) {
+      relax_fence();
+    }
   };
   /** @brief Return a function object that calls mark(ci); relax_fence().
    *
    * This function object can be used to count the number of relax_fence()s
    * executed. */
-  accounting_relax_fence_function stable_fence() {
-    return accounting_relax_fence_function();
-  }
+  accounting_relax_fence_function stable_fence() { return accounting_relax_fence_function(); }
 
-  relax_fence_function lock_fence(threadcounter) {
-    return relax_fence_function();
-  }
+  relax_fence_function lock_fence(threadcounter) { return relax_fence_function(); }
 
   // memory allocation
   void *allocate(size_t sz, memtag) { return rcu::s_instance.alloc(sz); }
@@ -150,7 +144,8 @@ struct masstree_single_threaded_params : public masstree_params {
   static constexpr bool concurrent = false;
 };
 
-template <typename P> class mbtree {
+template<typename P>
+class mbtree {
 public:
   typedef Masstree::node_base<P> node_base_type;
   typedef Masstree::internode<P> internode_type;
@@ -163,8 +158,7 @@ public:
   typedef uint64_t key_slice;
   typedef typename P::value_type value_type;
   typedef typename P::threadinfo_type threadinfo;
-  typedef typename std::conditional<!P::RcuRespCaller, scoped_rcu_region,
-                                    disabled_rcu_region>::type rcu_region;
+  typedef typename std::conditional<!P::RcuRespCaller, scoped_rcu_region, disabled_rcu_region>::type rcu_region;
 
   // public to assist in testing
   static const unsigned int NKeysPerNode = P::leaf_width;
@@ -179,7 +173,7 @@ public:
     uint64_t new_version;
   };
 
-  void invariant_checker() {} // stub for now
+  void invariant_checker() {}// stub for now
 
 #ifdef BTREE_LOCK_OWNERSHIP_CHECKING
 public:
@@ -232,8 +226,7 @@ public:
   /** NOTE: the public interface assumes that the caller has taken care
    * of setting up RCU */
 
-  inline bool search(const key_type &k, value_type &v,
-                     versioned_node_t *search_info = nullptr) const;
+  inline bool search(const key_type &k, value_type &v, versioned_node_t *search_info = nullptr) const;
 
   /**
    * The low level callback interface is as follows:
@@ -258,8 +251,7 @@ public:
     /**
      * This key/value pair was read from node n @ version
      */
-    virtual bool invoke(const string_type &k, value_type v,
-                        const node_opaque_t *n, uint64_t version) = 0;
+    virtual bool invoke(const string_type &k, value_type v, const node_opaque_t *n, uint64_t version) = 0;
   };
 
   /**
@@ -307,21 +299,18 @@ public:
    *   B) no concurrent mutation of string
    * note that string contents upon return are arbitrary
    */
-  void search_range_call(const key_type &lower, const key_type *upper,
-                         low_level_search_range_callback &callback,
+  void search_range_call(const key_type &lower, const key_type *upper, low_level_search_range_callback &callback,
                          std::string *buf = nullptr) const;
 
   // (lower, upper]
-  void rsearch_range_call(const key_type &upper, const key_type *lower,
-                          low_level_search_range_callback &callback,
+  void rsearch_range_call(const key_type &upper, const key_type *lower, low_level_search_range_callback &callback,
                           std::string *buf = nullptr) const;
 
   class search_range_callback : public low_level_search_range_callback {
   public:
     virtual void on_resp_node(const node_opaque_t *n, uint64_t version) {}
 
-    virtual bool invoke(const string_type &k, value_type v,
-                        const node_opaque_t *n, uint64_t version) {
+    virtual bool invoke(const string_type &k, value_type v, const node_opaque_t *n, uint64_t version) {
       return invoke(k, v);
     }
 
@@ -335,9 +324,8 @@ public:
    * v), where the callback returns true if it wants to keep going, false
    * otherwise
    */
-  template <typename F>
-  inline void search_range(const key_type &lower, const key_type *upper,
-                           F &callback, std::string *buf = nullptr) const;
+  template<typename F>
+  inline void search_range(const key_type &lower, const key_type *upper, F &callback, std::string *buf = nullptr) const;
 
   /**
    * (*lower, upper]
@@ -346,9 +334,9 @@ public:
    * v), where the callback returns true if it wants to keep going, false
    * otherwise
    */
-  template <typename F>
-  inline void rsearch_range(const key_type &upper, const key_type *lower,
-                            F &callback, std::string *buf = nullptr) const;
+  template<typename F>
+  inline void rsearch_range(const key_type &upper, const key_type *lower, F &callback,
+                            std::string *buf = nullptr) const;
 
   /**
    * returns true if key k did not already exist, false otherwise
@@ -357,15 +345,13 @@ public:
    * If false and old_v is not NULL, then the overwritten value of v
    * is written into old_v
    */
-  inline bool insert(const key_type &k, value_type v, value_type *old_v = NULL,
-                     insert_info_t *insert_info = NULL);
+  inline bool insert(const key_type &k, value_type v, value_type *old_v = NULL, insert_info_t *insert_info = NULL);
 
   /**
    * Only puts k=>v if k does not exist in map. returns true
    * if k inserted, false otherwise (k exists already)
    */
-  inline bool insert_if_absent(const key_type &k, value_type v,
-                               insert_info_t *insert_info = NULL);
+  inline bool insert_if_absent(const key_type &k, value_type v, insert_info_t *insert_info = NULL);
 
   /**
    * return true if a value was removed, false otherwise.
@@ -413,8 +399,7 @@ public:
   }
 
   // [value, has_suffix]
-  static std::vector<std::pair<value_type, bool>>
-  ExtractValues(const node_opaque_t *n);
+  static std::vector<std::pair<value_type, bool>> ExtractValues(const node_opaque_t *n);
 
   /**
    * Not well defined if n is being concurrently modified, just for debugging
@@ -432,28 +417,28 @@ private:
 
   static leaf_type *leftmost_descend_layer(node_base_type *n);
   class size_walk_callback;
-  template <bool Reverse> class search_range_scanner_base;
-  template <bool Reverse> class low_level_search_range_scanner;
-  template <typename F> class low_level_search_range_callback_wrapper;
+  template<bool Reverse>
+  class search_range_scanner_base;
+  template<bool Reverse>
+  class low_level_search_range_scanner;
+  template<typename F>
+  class low_level_search_range_callback_wrapper;
 };
 
-template <typename P>
-typename mbtree<P>::leaf_type *
-mbtree<P>::leftmost_descend_layer(node_base_type *n) {
+template<typename P>
+typename mbtree<P>::leaf_type *mbtree<P>::leftmost_descend_layer(node_base_type *n) {
   node_base_type *cur = n;
   while (true) {
-    if (cur->isleaf())
-      return static_cast<leaf_type *>(cur);
+    if (cur->isleaf()) return static_cast<leaf_type *>(cur);
     internode_type *in = static_cast<internode_type *>(cur);
     nodeversion_type version = cur->stable();
     node_base_type *child = in->child_[0];
-    if (unlikely(in->has_changed(version)))
-      continue;
+    if (unlikely(in->has_changed(version))) continue;
     cur = child;
   }
 }
 
-template <typename P>
+template<typename P>
 void mbtree<P>::tree_walk(tree_walk_callback &callback) const {
   rcu_region guard;
   INVARIANT(rcu::s_instance.in_rcu_region());
@@ -471,8 +456,7 @@ void mbtree<P>::tree_walk(tree_walk_callback &callback) const {
       auto version = leaf->stable();
       auto perm = leaf->permutation();
       for (int i = 0; i != perm.size(); ++i)
-        if (leaf->is_layer(perm[i]))
-          layers.push_back(leaf->lv_[perm[i]].layer());
+        if (leaf->is_layer(perm[i])) layers.push_back(leaf->lv_[perm[i]].layer());
       leaf_type *next = leaf->safe_next();
       callback.on_node_begin(leaf);
       if (unlikely(leaf->has_changed(version))) {
@@ -490,7 +474,7 @@ void mbtree<P>::tree_walk(tree_walk_callback &callback) const {
   }
 }
 
-template <typename P>
+template<typename P>
 class mbtree<P>::size_walk_callback : public tree_walk_callback {
 public:
   size_walk_callback() : size_(0) {}
@@ -501,52 +485,48 @@ public:
   int node_size_;
 };
 
-template <typename P>
+template<typename P>
 void mbtree<P>::size_walk_callback::on_node_begin(const node_opaque_t *n) {
   auto perm = n->permutation();
   node_size_ = 0;
   for (int i = 0; i != perm.size(); ++i)
-    if (!n->is_layer(perm[i]))
-      ++node_size_;
+    if (!n->value_is_layer(perm[i])) ++node_size_;
 }
 
-template <typename P> void mbtree<P>::size_walk_callback::on_node_success() {
+template<typename P>
+void mbtree<P>::size_walk_callback::on_node_success() {
   size_ += node_size_;
 }
 
-template <typename P> void mbtree<P>::size_walk_callback::on_node_failure() {}
+template<typename P>
+void mbtree<P>::size_walk_callback::on_node_failure() {}
 
-template <typename P> inline size_t mbtree<P>::size() const {
+template<typename P>
+inline size_t mbtree<P>::size() const {
   size_walk_callback c;
   tree_walk(c);
   return c.size_;
 }
 
-template <typename P>
-inline bool mbtree<P>::search(const key_type &k, value_type &v,
-                              versioned_node_t *search_info) const {
+template<typename P>
+inline bool mbtree<P>::search(const key_type &k, value_type &v, versioned_node_t *search_info) const {
   rcu_region guard;
   threadinfo ti;
   Masstree::unlocked_tcursor<P> lp(table_, k.data(), k.length());
   bool found = lp.find_unlocked(ti);
-  if (found)
-    v = lp.value();
-  if (search_info)
-    *search_info = versioned_node_t(lp.node(), lp.full_version_value());
+  if (found) v = lp.value();
+  if (search_info) *search_info = versioned_node_t(lp.node(), lp.full_version_value());
   return found;
 }
 
-template <typename P>
-inline bool mbtree<P>::insert(const key_type &k, value_type v,
-                              value_type *old_v, insert_info_t *insert_info) {
+template<typename P>
+inline bool mbtree<P>::insert(const key_type &k, value_type v, value_type *old_v, insert_info_t *insert_info) {
   rcu_region guard;
   threadinfo ti;
   Masstree::tcursor<P> lp(table_, k.data(), k.length());
   bool found = lp.find_insert(ti);
-  if (!found)
-    ti.advance_timestamp(lp.node_timestamp());
-  if (found && old_v)
-    *old_v = lp.value();
+  if (!found) ti.advance_timestamp(lp.node_timestamp());
+  if (found && old_v) *old_v = lp.value();
   lp.value() = v;
   if (insert_info) {
     insert_info->node = lp.node();
@@ -557,9 +537,8 @@ inline bool mbtree<P>::insert(const key_type &k, value_type v,
   return !found;
 }
 
-template <typename P>
-inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v,
-                                        insert_info_t *insert_info) {
+template<typename P>
+inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v, insert_info_t *insert_info) {
   rcu_region guard;
   threadinfo ti;
   Masstree::tcursor<P> lp(table_, k.data(), k.length());
@@ -583,41 +562,33 @@ inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v,
  * if true and old_v is not NULL, then the removed value of v
  * is written into old_v
  */
-template <typename P>
+template<typename P>
 inline bool mbtree<P>::remove(const key_type &k, value_type *old_v) {
   rcu_region guard;
   threadinfo ti;
   Masstree::tcursor<P> lp(table_, k.data(), k.length());
   bool found = lp.find_locked(ti);
-  if (found && old_v)
-    *old_v = lp.value();
+  if (found && old_v) *old_v = lp.value();
   lp.finish(found ? -1 : 0, ti);
   return found;
 }
 
-template <typename P>
-template <bool Reverse>
+template<typename P>
+template<bool Reverse>
 class mbtree<P>::search_range_scanner_base {
 public:
-  search_range_scanner_base(const key_type *boundary)
-      : boundary_(boundary), boundary_compar_(false) {}
-  void check(const Masstree::scanstackelt<P> &iter,
-             const Masstree::key<uint64_t> &key) {
+  search_range_scanner_base(const key_type *boundary) : boundary_(boundary), boundary_compar_(false) {}
+  void check(const Masstree::scanstackelt<P> &iter, const Masstree::key<uint64_t> &key) {
     int min = std::min(boundary_->length(), key.prefix_length());
     int cmp = memcmp(boundary_->data(), key.full_string().data(), min);
     if (!Reverse) {
-      if (cmp < 0 || (cmp == 0 && boundary_->length() <= key.prefix_length()))
-        boundary_compar_ = true;
+      if (cmp < 0 || (cmp == 0 && boundary_->length() <= key.prefix_length())) boundary_compar_ = true;
       else if (cmp == 0) {
-        uint64_t last_ikey =
-            iter.node()
-                ->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
-        boundary_compar_ =
-            boundary_->slice_at(key.prefix_length()) <= last_ikey;
+        uint64_t last_ikey = iter.node()->ikey0_[iter.permutation()[iter.permutation().size() - 1]];
+        boundary_compar_ = boundary_->slice_at(key.prefix_length()) <= last_ikey;
       }
     } else {
-      if (cmp >= 0)
-        boundary_compar_ = true;
+      if (cmp >= 0) boundary_compar_ = true;
     }
   }
 
@@ -626,29 +597,23 @@ protected:
   bool boundary_compar_;
 };
 
-template <typename P>
-template <bool Reverse>
-class mbtree<P>::low_level_search_range_scanner
-    : public search_range_scanner_base<Reverse> {
+template<typename P>
+template<bool Reverse>
+class mbtree<P>::low_level_search_range_scanner : public search_range_scanner_base<Reverse> {
 public:
-  low_level_search_range_scanner(const key_type *boundary,
-                                 low_level_search_range_callback &callback)
-      : search_range_scanner_base<Reverse>(boundary), callback_(callback) {}
-  void visit_leaf(const Masstree::scanstackelt<P> &iter,
-                  const Masstree::key<uint64_t> &key, threadinfo &) {
+  low_level_search_range_scanner(const key_type *boundary, low_level_search_range_callback &callback)
+      : search_range_scanner_base<Reverse>(boundary),
+        callback_(callback) {}
+  void visit_leaf(const Masstree::scanstackelt<P> &iter, const Masstree::key<uint64_t> &key, threadinfo &) {
     this->n_ = iter.node();
     this->v_ = iter.full_version_value();
     callback_.on_resp_node(this->n_, this->v_);
-    if (this->boundary_)
-      this->check(iter, key);
+    if (this->boundary_) this->check(iter, key);
   }
-  bool visit_value(const Masstree::key<uint64_t> &key, value_type value,
-                   threadinfo &) {
+  bool visit_value(const Masstree::key<uint64_t> &key, value_type value, threadinfo &) {
     if (this->boundary_compar_) {
       lcdf::Str bs(this->boundary_->data(), this->boundary_->size());
-      if ((!Reverse && bs <= key.full_string()) ||
-          (Reverse && bs >= key.full_string()))
-        return false;
+      if ((!Reverse && bs <= key.full_string()) || (Reverse && bs >= key.full_string())) return false;
     }
     return callback_.invoke(key.full_string(), value, this->n_, this->v_);
   }
@@ -659,17 +624,15 @@ private:
   low_level_search_range_callback &callback_;
 };
 
-template <typename P>
-template <typename F>
-class mbtree<P>::low_level_search_range_callback_wrapper
-    : public mbtree<P>::low_level_search_range_callback {
+template<typename P>
+template<typename F>
+class mbtree<P>::low_level_search_range_callback_wrapper : public mbtree<P>::low_level_search_range_callback {
 public:
   low_level_search_range_callback_wrapper(F &callback) : callback_(callback) {}
 
   void on_resp_node(const node_opaque_t *n, uint64_t version) OVERRIDE {}
 
-  bool invoke(const string_type &k, value_type v, const node_opaque_t *n,
-              uint64_t version) OVERRIDE {
+  bool invoke(const string_type &k, value_type v, const node_opaque_t *n, uint64_t version) OVERRIDE {
     return callback_(k, v);
   }
 
@@ -677,69 +640,62 @@ private:
   F &callback_;
 };
 
-template <typename P>
-inline void
-mbtree<P>::search_range_call(const key_type &lower, const key_type *upper,
-                             low_level_search_range_callback &callback,
-                             std::string *) const {
+template<typename P>
+inline void mbtree<P>::search_range_call(const key_type &lower, const key_type *upper,
+                                         low_level_search_range_callback &callback, std::string *) const {
   low_level_search_range_scanner<false> scanner(upper, callback);
   threadinfo ti;
   table_.scan(lcdf::Str(lower.data(), lower.length()), true, scanner, ti);
 }
 
-template <typename P>
-inline void
-mbtree<P>::rsearch_range_call(const key_type &upper, const key_type *lower,
-                              low_level_search_range_callback &callback,
-                              std::string *) const {
+template<typename P>
+inline void mbtree<P>::rsearch_range_call(const key_type &upper, const key_type *lower,
+                                          low_level_search_range_callback &callback, std::string *) const {
   low_level_search_range_scanner<true> scanner(lower, callback);
   threadinfo ti;
   table_.rscan(lcdf::Str(upper.data(), upper.length()), true, scanner, ti);
 }
 
-template <typename P>
-template <typename F>
-inline void mbtree<P>::search_range(const key_type &lower,
-                                    const key_type *upper, F &callback,
-                                    std::string *) const {
+template<typename P>
+template<typename F>
+inline void mbtree<P>::search_range(const key_type &lower, const key_type *upper, F &callback, std::string *) const {
   low_level_search_range_callback_wrapper<F> wrapper(callback);
   low_level_search_range_scanner<false> scanner(upper, wrapper);
   threadinfo ti;
   table_.scan(lcdf::Str(lower.data(), lower.length()), true, scanner, ti);
 }
 
-template <typename P>
-template <typename F>
-inline void mbtree<P>::rsearch_range(const key_type &upper,
-                                     const key_type *lower, F &callback,
-                                     std::string *) const {
+template<typename P>
+template<typename F>
+inline void mbtree<P>::rsearch_range(const key_type &upper, const key_type *lower, F &callback, std::string *) const {
   low_level_search_range_callback_wrapper<F> wrapper(callback);
   low_level_search_range_scanner<true> scanner(lower, wrapper);
   threadinfo ti;
   table_.rscan(lcdf::Str(upper.data(), upper.length()), true, scanner, ti);
 }
 
-template <typename P>
+template<typename P>
 std::string mbtree<P>::NodeStringify(const node_opaque_t *n) {
   std::ostringstream b;
   b << "node[v=" << n->version_value() << "]";
   return b.str();
 }
 
-template <typename P>
-std::vector<std::pair<typename mbtree<P>::value_type, bool>>
-mbtree<P>::ExtractValues(const node_opaque_t *n) {
+template<typename P>
+std::vector<std::pair<typename mbtree<P>::value_type, bool>> mbtree<P>::ExtractValues(const node_opaque_t *n) {
   std::vector<std::pair<value_type, bool>> ret;
   auto perm = n->permutation();
   for (int i = 0; i != perm.size(); ++i) {
     int keylenx = n->keylenx_[perm[i]];
-    if (!n->keylenx_is_layer(keylenx))
-      ret.emplace_back(n->lv_[perm[i]].value(), n->keylenx_has_ksuf(keylenx));
+    if (!n->keylenx_is_layer(keylenx)) ret.emplace_back(n->lv_[perm[i]].value(), n->keylenx_has_ksuf(keylenx));
   }
   return ret;
 }
 
-template <typename P> void mbtree<P>::print() { table_.print(); }
+template<typename P>
+void mbtree<P>::print() {
+  table_.print();
+}
 
 typedef mbtree<masstree_params> concurrent_btree;
 typedef mbtree<masstree_single_threaded_params> single_threaded_btree;

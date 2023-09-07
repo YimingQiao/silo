@@ -1,19 +1,18 @@
+#include <stdlib.h>
+#include <unistd.h>
+
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <stdlib.h>
-#include <unistd.h>
-
 #include "../macros.h"
+#include "../record/encoder.h"
 #include "../spinbarrier.h"
 #include "../thread.h"
 #include "../util.h"
 #include "../varkey.h"
-
-#include "../record/encoder.h"
 #include "bench.h"
 
 using namespace std;
@@ -22,18 +21,17 @@ using namespace util;
 static size_t nkeys;
 
 #define ENCSTRESS_REC_KEY_FIELDS(x, y) x(int32_t, k0)
-#define ENCSTRESS_REC_VALUE_FIELDS(x, y)                                       \
-  x(int32_t, f0) y(int32_t, f1) y(int32_t, f2) y(int32_t, f3) y(int32_t, f4)   \
-      y(int32_t, f5) y(int32_t, f6) y(int32_t, f7)
+#define ENCSTRESS_REC_VALUE_FIELDS(x, y)                                                                   \
+  x(int32_t, f0) y(int32_t, f1) y(int32_t, f2) y(int32_t, f3) y(int32_t, f4) y(int32_t, f5) y(int32_t, f6) \
+      y(int32_t, f7)
 DO_STRUCT(encstress_rec, ENCSTRESS_REC_KEY_FIELDS, ENCSTRESS_REC_VALUE_FIELDS)
 
 class encstress_worker : public bench_worker {
 public:
   encstress_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
-                   const map<string, abstract_ordered_index *> &open_tables,
-                   spin_barrier *barrier_a, spin_barrier *barrier_b)
-      : bench_worker(worker_id, false, seed, db, open_tables, barrier_a,
-                     barrier_b),
+                   const map<string, abstract_ordered_index *> &open_tables, spin_barrier *barrier_a,
+                   spin_barrier *barrier_b)
+      : bench_worker(worker_id, false, seed, db, open_tables, barrier_a, barrier_b),
         tbl(open_tables.at("table")) {}
 
   txn_result txn_read() {
@@ -42,17 +40,12 @@ public:
     try {
       string v;
       ALWAYS_ASSERT(tbl->get(txn, k, v));
-      if (likely(db->commit_txn(txn)))
-        return txn_result(true, 0);
-    } catch (abstract_db::abstract_abort_exception &ex) {
-      db->abort_txn(txn);
-    }
+      if (likely(db->commit_txn(txn))) return txn_result(true, 0);
+    } catch (abstract_db::abstract_abort_exception &ex) { db->abort_txn(txn); }
     return txn_result(false, 0);
   }
 
-  static txn_result TxnRead(bench_worker *w) {
-    return static_cast<encstress_worker *>(w)->txn_read();
-  }
+  static txn_result TxnRead(bench_worker *w) { return static_cast<encstress_worker *>(w)->txn_read(); }
 
   virtual workload_desc_vec get_workload() const {
     workload_desc_vec w;
@@ -66,8 +59,7 @@ private:
 
 class encstress_loader : public bench_loader {
 public:
-  encstress_loader(unsigned long seed, abstract_db *db,
-                   const map<string, abstract_ordered_index *> &open_tables)
+  encstress_loader(unsigned long seed, abstract_db *db, const map<string, abstract_ordered_index *> &open_tables)
       : bench_loader(seed, db, open_tables) {}
 
 protected:
@@ -75,8 +67,7 @@ protected:
     abstract_ordered_index *tbl = open_tables.at("table");
     try {
       // load
-      const size_t batchsize =
-          (db->txn_max_batch_size() == -1) ? 10000 : db->txn_max_batch_size();
+      const size_t batchsize = (db->txn_max_batch_size() == -1) ? 10000 : db->txn_max_batch_size();
       ALWAYS_ASSERT(batchsize > 0);
       const size_t nbatches = nkeys / batchsize;
       if (nbatches == 0) {
@@ -95,8 +86,7 @@ protected:
           string buf;
           tbl->insert(txn, Encode(key), Encode(buf, rec));
         }
-        if (verbose)
-          cerr << "batch 1/1 done" << endl;
+        if (verbose) cerr << "batch 1/1 done" << endl;
         ALWAYS_ASSERT(db->commit_txn(txn));
       } else {
         for (size_t i = 0; i < nbatches; i++) {
@@ -116,8 +106,7 @@ protected:
             string buf;
             tbl->insert(txn, Encode(key), Encode(buf, rec));
           }
-          if (verbose)
-            cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
+          if (verbose) cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
           ALWAYS_ASSERT(db->commit_txn(txn));
         }
       }
@@ -125,8 +114,7 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
-    if (verbose)
-      cerr << "[INFO] finished loading USERTABLE" << endl;
+    if (verbose) cerr << "[INFO] finished loading USERTABLE" << endl;
   }
 };
 
@@ -147,8 +135,7 @@ protected:
     fast_random r(8544290);
     vector<bench_worker *> ret;
     for (size_t i = 0; i < nthreads; i++)
-      ret.push_back(new encstress_worker(i, r.next(), db, open_tables,
-                                         &barrier_a, &barrier_b));
+      ret.push_back(new encstress_worker(i, r.next(), db, open_tables, &barrier_a, &barrier_b));
     return ret;
   }
 };

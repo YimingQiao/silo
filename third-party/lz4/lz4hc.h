@@ -48,8 +48,7 @@ data not compressible) Worst case size evaluation is provided by function
 LZ4_compressBound() (see "lz4.h")
 */
 
-int LZ4_compressHC_limitedOutput(const char *source, char *dest, int inputSize,
-                                 int maxOutputSize);
+int LZ4_compressHC_limitedOutput(const char *source, char *dest, int inputSize, int maxOutputSize);
 /*
 LZ4_compress_limitedOutput() :
     Compress 'inputSize' bytes from 'source' into an output buffer 'dest' of
@@ -71,10 +70,8 @@ license)
 /* Advanced Functions */
 
 void *LZ4_createHC(const char *slidingInputBuffer);
-int LZ4_compressHC_continue(void *LZ4HC_Data, const char *source, char *dest,
-                            int inputSize);
-int LZ4_compressHC_limitedOutput_continue(void *LZ4HC_Data, const char *source,
-                                          char *dest, int inputSize,
+int LZ4_compressHC_continue(void *LZ4HC_Data, const char *source, char *dest, int inputSize);
+int LZ4_compressHC_limitedOutput_continue(void *LZ4HC_Data, const char *source, char *dest, int inputSize,
                                           int maxOutputSize);
 char *LZ4_slideInputBufferHC(void *LZ4HC_Data);
 int LZ4_freeHC(void *LZ4HC_Data);
