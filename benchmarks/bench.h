@@ -65,7 +65,7 @@ public:
       : r(seed),
         db(db),
         open_tables(open_tables),
-        b(0) {
+        b(nullptr) {
     txn_obj_buf.reserve(str_arena::MinStrReserveLength);
     txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
   }
@@ -75,7 +75,7 @@ public:
     this->b = &b;
   }
 
-  virtual void run() {
+  void run() override {
     {                     // XXX(stephentu): this is a hack
       scoped_rcu_region r;// register this thread in rcu region
     }

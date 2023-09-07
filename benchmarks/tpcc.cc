@@ -5,13 +5,13 @@
 
 #include "tpcc.h"
 
-#include <ctype.h>
 #include <getopt.h>
 #include <malloc.h>
-#include <stdlib.h>
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <cctype>
+#include <cstdlib>
 #include <set>
 #include <string>
 #include <vector>
@@ -200,7 +200,7 @@ class tpcc_worker_mixin : private _dummy {
 #define DEFN_TBL_INIT_X(name) , tbl_##name##_vec(partitions.at(#name))
 
 public:
-  tpcc_worker_mixin(const map<string, vector<abstract_ordered_index *>> &partitions)
+  explicit tpcc_worker_mixin(const map<string, vector<abstract_ordered_index *>> &partitions)
       : _dummy()// so hacky...
         TPCC_TABLE_LIST(DEFN_TBL_INIT_X) {
     ALWAYS_ASSERT(NumWarehouses() >= 1);
@@ -224,11 +224,8 @@ protected:                                                                    \
 
 #undef DEFN_TBL_ACCESSOR_X
 
-  // only TPCC loaders need to call this- workers are automatically
-  // pinned by their worker id (which corresponds to warehouse id
-  // in TPCC)
-  //
-  // pins the *calling* thread
+  // only TPCC loaders need to call this - workers are automatically pinned by their worker id (which corresponds
+  // to warehouse id in TPCC pins the *calling* thread
   static void PinToWarehouseId(unsigned int wid) {
     const unsigned int partid = PartitionId(wid);
     ALWAYS_ASSERT(partid < nthreads);
@@ -254,7 +251,6 @@ public:
   }
 
   // utils for generating random #s and strings
-
   static inline ALWAYS_INLINE int CheckBetweenInclusive(int v, int lower, int upper) {
     INVARIANT(v >= lower);
     INVARIANT(v <= upper);
@@ -337,17 +333,15 @@ public:
     return GetCustomerLastName(r, NonUniformRandom(r, 255, 223, 0, 999));
   }
 
-  // following oltpbench, we really generate strings of len - 1...
+  // following OLTP bench, we really generate strings of len - 1...
   static inline string RandomStr(fast_random &r, uint len) {
-    // this is a property of the oltpbench implementation...
-    if (!len) return "";
+    // this is a property of the OLTP bench implementation...
+    if (len == 0) return "";
 
     uint i = 0;
     string buf(len - 1, 0);
     while (i < (len - 1)) {
       const char c = (char) r.next_char();
-      // XXX(stephentu): oltpbench uses java's Character.isLetter(), which
-      // is a less restrictive filter than isalnum()
       if (!isalnum(c)) continue;
       buf[i++] = c;
     }
@@ -487,7 +481,7 @@ public:
         tpcc_worker_mixin(partitions) {}
 
 protected:
-  virtual void load() {
+  void load() override {
     string obj_buf;
     void *txn = db->new_txn(txn_flags, arena, txn_buf());
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;

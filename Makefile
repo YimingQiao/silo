@@ -21,7 +21,7 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 #   * factor-gc-nowriteinplace
 #   * factor-fake-compression
 #   * sandbox
-MODE ?= perf
+MODE ?= factor-fake-compression
 
 # run with 'MASSTREE=0' to turn off masstree
 MASSTREE ?= 1
