@@ -19,72 +19,72 @@
 #include <stdio.h>
 
 lcdf::String read_file_contents(int fd) {
-    lcdf::StringAccum sa;
-    while (1) {
-        char *buf = sa.reserve(4096);
-        if (!buf) {
-            errno = ENOMEM;
-            return lcdf::String();
-        }
-
-        ssize_t x = read(fd, buf, 4096);
-        if (x != -1 && x != 0)
-            sa.adjust_length(x);
-        else if (x == 0)
-            break;
-        else if (errno != EINTR)
-            return lcdf::String();
+  lcdf::StringAccum sa;
+  while (1) {
+    char *buf = sa.reserve(4096);
+    if (!buf) {
+      errno = ENOMEM;
+      return lcdf::String();
     }
 
-    errno = 0;
-    return sa.take_string();
+    ssize_t x = read(fd, buf, 4096);
+    if (x != -1 && x != 0)
+      sa.adjust_length(x);
+    else if (x == 0)
+      break;
+    else if (errno != EINTR)
+      return lcdf::String();
+  }
+
+  errno = 0;
+  return sa.take_string();
 }
 
 lcdf::String read_file_contents(const char *filename) {
-    int fd = open(filename, O_RDONLY);
-    if (fd == -1)
-        return lcdf::String();
+  int fd = open(filename, O_RDONLY);
+  if (fd == -1)
+    return lcdf::String();
 
-    lcdf::String text = read_file_contents(fd);
+  lcdf::String text = read_file_contents(fd);
 
-    if (text.empty() && errno) {
-        int saved_errno = errno;
-        close(fd);
-        errno = saved_errno;
-    }
-    return text;
+  if (text.empty() && errno) {
+    int saved_errno = errno;
+    close(fd);
+    errno = saved_errno;
+  }
+  return text;
 }
 
 int sync_write_file_contents(const char *filename, const lcdf::String &contents,
                              mode_t mode) {
-    int fd = open(filename, O_CREAT | O_TRUNC | O_WRONLY, mode);
-    if (fd == -1)
-        return -1;
+  int fd = open(filename, O_CREAT | O_TRUNC | O_WRONLY, mode);
+  if (fd == -1)
+    return -1;
 
-    ssize_t x = safe_write(fd, contents.data(), contents.length());
-    if (x != contents.length()) {
-        error:
-        close(fd);
-        return -1;
-    }
+  ssize_t x = safe_write(fd, contents.data(), contents.length());
+  if (x != contents.length()) {
+  error:
+    close(fd);
+    return -1;
+  }
 
-    int r = fsync(fd);
-    if (r != 0)
-        goto error;
+  int r = fsync(fd);
+  if (r != 0)
+    goto error;
 
-    r = close(fd);
-    if (r != 0)
-        goto error;
+  r = close(fd);
+  if (r != 0)
+    goto error;
 
-    return 0;
+  return 0;
 }
 
-int atomic_write_file_contents(const char *filename, const lcdf::String &contents,
-                               mode_t mode) {
-    lcdf::String tmp_filename = lcdf::String(filename) + ".tmp";
-    int r = sync_write_file_contents(tmp_filename.c_str(), contents, mode);
-    if (r != 0)
-        return -1;
+int atomic_write_file_contents(const char *filename,
+                               const lcdf::String &contents, mode_t mode) {
+  lcdf::String tmp_filename = lcdf::String(filename) + ".tmp";
+  int r = sync_write_file_contents(tmp_filename.c_str(), contents, mode);
+  if (r != 0)
+    return -1;
 
-    return rename(tmp_filename.c_str(), filename);
+  return rename(tmp_filename.c_str(), filename);
 }

@@ -13,6 +13,6 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-#include "kvrow.hh"
 #include "value_string.hh"
+#include "kvrow.hh"
 #include <string.h>

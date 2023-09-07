@@ -1,49 +1,38 @@
-#include <iostream>
 #include <functional>
-#include <unordered_map>
-#include <tuple>
+#include <iostream>
 #include <set>
+#include <tuple>
 #include <unistd.h>
+#include <unordered_map>
 
 #include "circbuf.h"
-#include "pxqueue.h"
 #include "core.h"
+#include "counter.h"
+#include "pxqueue.h"
+#include "record/cursor.h"
+#include "record/encoder.h"
+#include "record/inline_str.h"
+#include "small_unordered_map.h"
+#include "small_vector.h"
+#include "static_unordered_map.h"
+#include "static_vector.h"
 #include "thread.h"
 #include "txn.h"
 #include "txn_btree.h"
 #include "varint.h"
-#include "small_vector.h"
-#include "static_vector.h"
-#include "small_unordered_map.h"
-#include "static_unordered_map.h"
-#include "counter.h"
-#include "record/encoder.h"
-#include "record/inline_str.h"
-#include "record/cursor.h"
 
 #ifdef PROTO2_CAN_DISABLE_GC
 #include "txn_proto2_impl.h"
 #endif
 
-#define MYREC_KEY_FIELDS(x, y) \
-  x(int32_t,k0) \
-  y(int32_t,k1)
-#define MYREC_VALUE_FIELDS(x, y) \
-  x(int32_t,v0) \
-  y(int16_t,v1)
+#define MYREC_KEY_FIELDS(x, y) x(int32_t, k0) y(int32_t, k1)
+#define MYREC_VALUE_FIELDS(x, y) x(int32_t, v0) y(int16_t, v1)
 DO_STRUCT(myrec, MYREC_KEY_FIELDS, MYREC_VALUE_FIELDS)
 
-#define CURSORREC_KEY_FIELDS(x, y) \
-  x(int32_t,k0) \
-  y(int32_t,k1)
-#define CURSORREC_VALUE_FIELDS(x, y) \
-  x(int32_t,v0) \
-  y(int16_t,v1) \
-  y(int32_t,v2) \
-  y(inline_str_8<25>,v3) \
-  y(inline_str_fixed<25>,v4) \
-  y(int32_t,v5) \
-  y(int8_t,v6)
+#define CURSORREC_KEY_FIELDS(x, y) x(int32_t, k0) y(int32_t, k1)
+#define CURSORREC_VALUE_FIELDS(x, y)                                           \
+  x(int32_t, v0) y(int16_t, v1) y(int32_t, v2) y(inline_str_8<25>, v3)         \
+      y(inline_str_fixed<25>, v4) y(int32_t, v5) y(int8_t, v6)
 DO_STRUCT(cursorrec, CURSORREC_KEY_FIELDS, CURSORREC_VALUE_FIELDS)
 
 using namespace std;
@@ -54,146 +43,130 @@ static event_counter evt_test1("test1");
 static event_avg_counter evt_test_avg("test_avg");
 
 namespace varkeytest {
-  void
-  Test()
-  {
-    const string s0 = u64_varkey(1).str();
-    ALWAYS_ASSERT(s0.size() == 8);
-    const char e0[] = { 0, 0, 0, 0, 0, 0, 0, 1 };
-    ALWAYS_ASSERT(memcmp(s0.data(), &e0[0], 8) == 0);
-    cout << "varkey test passed" << endl;
-  }
+void Test() {
+  const string s0 = u64_varkey(1).str();
+  ALWAYS_ASSERT(s0.size() == 8);
+  const char e0[] = {0, 0, 0, 0, 0, 0, 0, 1};
+  ALWAYS_ASSERT(memcmp(s0.data(), &e0[0], 8) == 0);
+  cout << "varkey test passed" << endl;
 }
+} // namespace varkeytest
 
 namespace pxqueuetest {
 
-  static inline void *
-  N2P(uint64_t n)
+static inline void *N2P(uint64_t n) { return (void *)n; }
+
+static inline rcu::deleter_t N2D(uint64_t n) { return (rcu::deleter_t)n; }
+
+struct sorter {
+  bool operator()(const rcu::delete_entry &a,
+                  const rcu::delete_entry &b) const {
+    return (a.ptr < b.ptr) || (a.ptr == b.ptr && a.action < b.action);
+  }
+};
+
+void Test() {
+  typedef basic_px_queue<rcu::delete_entry, 8> px_queue;
+
   {
-    return (void *) n;
+    px_queue q0;
+    for (size_t i = 0; i < 14; i++)
+      q0.enqueue(rcu::delete_entry(N2P(i), N2D(i)), 1);
+    ALWAYS_ASSERT(!q0.empty());
+    q0.sanity_check();
+
+    uint64_t i = 0;
+    for (auto &p : q0) {
+      ALWAYS_ASSERT(p.ptr == N2P(i));
+      ALWAYS_ASSERT((rcu::deleter_t)p.action == N2D(i));
+      i++;
+    }
+    ALWAYS_ASSERT(i == 14);
+
+    px_queue q1;
+    q1.enqueue(rcu::delete_entry(N2P(123), N2D(543)), 1);
+    q1.enqueue(rcu::delete_entry(N2P(12345), N2D(54321)), 1);
+    q1.sanity_check();
+    auto q1_it = q1.begin();
+    ALWAYS_ASSERT(q1_it != q1.end());
+    ALWAYS_ASSERT(q1_it->ptr == N2P(123));
+    ALWAYS_ASSERT((rcu::deleter_t)q1_it->action == N2D(543));
+    ++q1_it;
+    ALWAYS_ASSERT(q1_it != q1.end());
+    ALWAYS_ASSERT(q1_it->ptr == N2P(12345));
+    ALWAYS_ASSERT((rcu::deleter_t)q1_it->action == N2D(54321));
+    ++q1_it;
+    ALWAYS_ASSERT(q1_it == q1.end());
   }
 
-  static inline rcu::deleter_t
-  N2D(uint64_t n)
   {
-    return (rcu::deleter_t) n;
+    px_queue q0, q1;
+    q1.enqueue(rcu::delete_entry(N2P(1), N2D(1)), 1);
+    q1.enqueue(rcu::delete_entry(N2P(2), N2D(2)), 2);
+
+    q0.sanity_check();
+    q1.sanity_check();
+
+    q0.empty_accept_from(q1, 1);
+    ALWAYS_ASSERT(q0.get_ngroups() == 1);
+    ALWAYS_ASSERT(q1.get_ngroups() == 1);
+
+    vector<rcu::delete_entry> v0(q0.begin(), q0.end());
+    vector<rcu::delete_entry> v0test = {{N2P(1), N2D(1)}};
+
+    vector<rcu::delete_entry> v1(q1.begin(), q1.end());
+    vector<rcu::delete_entry> v1test = {{N2P(2), N2D(2)}};
+
+    sort(v0.begin(), v0.end(), sorter());
+    sort(v0test.begin(), v0test.end(), sorter());
+    sort(v1.begin(), v1.end(), sorter());
+    sort(v1test.begin(), v1test.end(), sorter());
+
+    ALWAYS_ASSERT(v0 == v0test);
+    ALWAYS_ASSERT(v1 == v1test);
+
+    q0.clear();
+    ALWAYS_ASSERT(q0.empty());
+    q0.sanity_check();
+
+    q1.clear();
+    ALWAYS_ASSERT(q1.empty());
+    q1.sanity_check();
   }
 
-  struct sorter {
-    bool
-    operator()(const rcu::delete_entry &a,
-               const rcu::delete_entry &b) const
-    {
-      return (a.ptr < b.ptr) || (a.ptr == b.ptr && a.action < b.action);
-    }
-  };
-
-  void
-  Test()
   {
-    typedef basic_px_queue<rcu::delete_entry, 8> px_queue;
+    px_queue q0, q1;
+    q0.enqueue(rcu::delete_entry(N2P(1), N2D(1)), 1);
+    q0.enqueue(rcu::delete_entry(N2P(3), N2D(3)), 1);
 
-    {
-      px_queue q0;
-      for (size_t i = 0; i < 14; i++)
-        q0.enqueue(rcu::delete_entry(N2P(i), N2D(i)), 1);
-      ALWAYS_ASSERT(!q0.empty());
-      q0.sanity_check();
+    q1.enqueue(rcu::delete_entry(N2P(2), N2D(2)), 1);
+    q1.enqueue(rcu::delete_entry(N2P(4), N2D(4)), 1);
+    q1.enqueue(rcu::delete_entry(N2P(6), N2D(6)), 2);
 
-      uint64_t i = 0;
-      for (auto &p : q0) {
-        ALWAYS_ASSERT(p.ptr == N2P(i));
-        ALWAYS_ASSERT((rcu::deleter_t) p.action == N2D(i));
-        i++;
-      }
-      ALWAYS_ASSERT(i == 14);
+    q0.sanity_check();
+    q1.sanity_check();
 
-      px_queue q1;
-      q1.enqueue(rcu::delete_entry(N2P(123), N2D(543)), 1);
-      q1.enqueue(rcu::delete_entry(N2P(12345), N2D(54321)), 1);
-      q1.sanity_check();
-      auto q1_it = q1.begin();
-      ALWAYS_ASSERT(q1_it != q1.end());
-      ALWAYS_ASSERT(q1_it->ptr == N2P(123));
-      ALWAYS_ASSERT((rcu::deleter_t) q1_it->action == N2D(543));
-      ++q1_it;
-      ALWAYS_ASSERT(q1_it != q1.end());
-      ALWAYS_ASSERT(q1_it->ptr == N2P(12345));
-      ALWAYS_ASSERT((rcu::deleter_t) q1_it->action == N2D(54321));
-      ++q1_it;
-      ALWAYS_ASSERT(q1_it == q1.end());
-    }
+    q0.transfer_freelist(q1);
+    q0.sanity_check();
+    q1.sanity_check();
 
-    {
-      px_queue q0, q1;
-      q1.enqueue(rcu::delete_entry(N2P(1), N2D(1)), 1);
-      q1.enqueue(rcu::delete_entry(N2P(2), N2D(2)), 2);
+    q1.transfer_freelist(q0);
+    q0.sanity_check();
+    q1.sanity_check();
 
-      q0.sanity_check();
-      q1.sanity_check();
-
-      q0.empty_accept_from(q1, 1);
-      ALWAYS_ASSERT(q0.get_ngroups() == 1);
-      ALWAYS_ASSERT(q1.get_ngroups() == 1);
-
-      vector<rcu::delete_entry> v0(q0.begin(), q0.end());
-      vector<rcu::delete_entry> v0test = {{N2P(1), N2D(1)}};
-
-      vector<rcu::delete_entry> v1(q1.begin(), q1.end());
-      vector<rcu::delete_entry> v1test = {{N2P(2), N2D(2)}};
-
-      sort(v0.begin(), v0.end(), sorter());
-      sort(v0test.begin(), v0test.end(), sorter());
-      sort(v1.begin(), v1.end(), sorter());
-      sort(v1test.begin(), v1test.end(), sorter());
-
-      ALWAYS_ASSERT(v0 == v0test);
-      ALWAYS_ASSERT(v1 == v1test);
-
-      q0.clear();
-      ALWAYS_ASSERT(q0.empty());
-      q0.sanity_check();
-
-      q1.clear();
-      ALWAYS_ASSERT(q1.empty());
-      q1.sanity_check();
-    }
-
-    {
-      px_queue q0, q1;
-      q0.enqueue(rcu::delete_entry(N2P(1), N2D(1)), 1);
-      q0.enqueue(rcu::delete_entry(N2P(3), N2D(3)), 1);
-
-      q1.enqueue(rcu::delete_entry(N2P(2), N2D(2)), 1);
-      q1.enqueue(rcu::delete_entry(N2P(4), N2D(4)), 1);
-      q1.enqueue(rcu::delete_entry(N2P(6), N2D(6)), 2);
-
-      q0.sanity_check();
-      q1.sanity_check();
-
-      q0.transfer_freelist(q1);
-      q0.sanity_check();
-      q1.sanity_check();
-
-      q1.transfer_freelist(q0);
-      q0.sanity_check();
-      q1.sanity_check();
-
-      q0.clear();
-      ALWAYS_ASSERT(q0.empty());
-      q1.clear();
-      ALWAYS_ASSERT(q1.empty());
-      q0.sanity_check();
-      q1.sanity_check();
-    }
-
-    cout << "pxqueue test passed" << endl;
+    q0.clear();
+    ALWAYS_ASSERT(q0.empty());
+    q1.clear();
+    ALWAYS_ASSERT(q1.empty());
+    q0.sanity_check();
+    q1.sanity_check();
   }
+
+  cout << "pxqueue test passed" << endl;
 }
+} // namespace pxqueuetest
 
-void
-CircbufTest()
-{
+void CircbufTest() {
   // test circbuf
   int values[] = {0, 1, 2, 3, 4};
   circbuf<int, ARRAY_NELEMS(values)> b;
@@ -229,9 +202,7 @@ CircbufTest()
   cout << "circbuf test passed" << endl;
 }
 
-void
-CounterTest()
-{
+void CounterTest() {
 #ifdef ENABLE_EVENT_COUNTERS
   ++evt_test;
   ++evt_test;
@@ -253,9 +224,7 @@ CounterTest()
 #endif
 }
 
-void
-UtilTest()
-{
+void UtilTest() {
   static_assert(CACHELINE_SIZE == 64, "xx");
   static_assert(LG_CACHELINE_SIZE == 6, "xx");
 
@@ -269,9 +238,11 @@ UtilTest()
   ALWAYS_ASSERT(e3);
   const bool e4 = round_down<size_t, LG_CACHELINE_SIZE>(2) == 0;
   ALWAYS_ASSERT(e4);
-  const bool e5 = round_down<size_t, LG_CACHELINE_SIZE>(CACHELINE_SIZE) == CACHELINE_SIZE;
+  const bool e5 =
+      round_down<size_t, LG_CACHELINE_SIZE>(CACHELINE_SIZE) == CACHELINE_SIZE;
   ALWAYS_ASSERT(e5);
-  const bool e6 = round_down<size_t, LG_CACHELINE_SIZE>(CACHELINE_SIZE + 10) == CACHELINE_SIZE;
+  const bool e6 = round_down<size_t, LG_CACHELINE_SIZE>(CACHELINE_SIZE + 10) ==
+                  CACHELINE_SIZE;
   ALWAYS_ASSERT(e6);
 
   cout << "util test passed" << endl;
@@ -283,10 +254,7 @@ typedef small_vector<string, 4> vec_type;
 typedef static_vector<string, 4> static_vec_type;
 typedef vector<string> stl_vec_type;
 
-template <typename VecType>
-static void
-init_vec0(VecType &v)
-{
+template <typename VecType> static void init_vec0(VecType &v) {
   ALWAYS_ASSERT(v.empty());
   ALWAYS_ASSERT(v.size() == 0);
 
@@ -312,10 +280,7 @@ init_vec0(VecType &v)
   ALWAYS_ASSERT(v.back() == "d");
 }
 
-template <typename VecType>
-static void
-init_vec1(VecType &v)
-{
+template <typename VecType> static void init_vec1(VecType &v) {
   ALWAYS_ASSERT(v.empty());
   ALWAYS_ASSERT(v.size() == 0);
 
@@ -352,9 +317,7 @@ init_vec1(VecType &v)
 }
 
 template <typename VecA, typename VecB>
-static void
-assert_vecs_equal(VecA &v, const VecB &stl_v)
-{
+static void assert_vecs_equal(VecA &v, const VecB &stl_v) {
   ALWAYS_ASSERT(v.size() == stl_v.size());
   VecB tmp(v.begin(), v.end());
   ALWAYS_ASSERT(tmp == stl_v);
@@ -369,27 +332,19 @@ struct foo {
   int c;
   int d;
 
-  foo()
-    : a(), b(), c(), d()
-  {}
+  foo() : a(), b(), c(), d() {}
 
-  foo(int a, int b, int c, int d)
-    : a(a), b(b), c(c), d(d)
-  {}
+  foo(int a, int b, int c, int d) : a(a), b(b), c(c), d(d) {}
 };
 
 struct PComp {
-  inline bool
-  operator()(const pair<uint32_t, uint32_t> &a,
-             const pair<uint32_t, uint32_t> &b) const
-  {
+  inline bool operator()(const pair<uint32_t, uint32_t> &a,
+                         const pair<uint32_t, uint32_t> &b) const {
     return a.first < b.first;
   }
 };
 
-void
-Test()
-{
+void Test() {
   {
     vec_type v;
     static_vec_type static_v;
@@ -528,8 +483,8 @@ Test()
 
   {
     fast_random r(29395);
-    small_vector< pair<uint32_t, uint32_t> > v;
-    vector< pair<uint32_t, uint32_t> > stl_v;
+    small_vector<pair<uint32_t, uint32_t>> v;
+    vector<pair<uint32_t, uint32_t>> stl_v;
     for (size_t i = 0; i < 48; i++) {
       uint32_t x = r.next();
       v.push_back(make_pair(x, x + 1));
@@ -548,7 +503,7 @@ Test()
     v.emplace_back("hello");
     string world = "world";
     v.push_back(move(world));
-    //ALWAYS_ASSERT(world.empty());
+    // ALWAYS_ASSERT(world.empty());
     ALWAYS_ASSERT(v.size() == 2);
     ALWAYS_ASSERT(v[0] == "hello");
     ALWAYS_ASSERT(v[1] == "world");
@@ -583,7 +538,7 @@ Test()
   cout << "vec test passed" << endl;
 }
 
-}
+} // namespace small_vector_ns
 
 namespace small_map_ns {
 
@@ -592,9 +547,7 @@ typedef static_unordered_map<string, string, 4> static_map_type;
 typedef map<string, string> stl_map_type;
 
 template <typename MapType>
-static void
-assert_map_contains(MapType &m, const string &k, const string &v)
-{
+static void assert_map_contains(MapType &m, const string &k, const string &v) {
   ALWAYS_ASSERT(!m.empty());
   ALWAYS_ASSERT(m[k] == v);
   {
@@ -613,16 +566,13 @@ assert_map_contains(MapType &m, const string &k, const string &v)
 }
 
 template <typename MapType>
-static void
-assert_map_equals(MapType &m, const stl_map_type &stl_m)
-{
+static void assert_map_equals(MapType &m, const stl_map_type &stl_m) {
   ALWAYS_ASSERT(m.size() == stl_m.size());
 
   // reg version prefix
   {
     stl_map_type test;
-    for (typename MapType::iterator it = m.begin();
-         it != m.end(); ++it) {
+    for (typename MapType::iterator it = m.begin(); it != m.end(); ++it) {
       ALWAYS_ASSERT(test.find(it->first) == test.end());
       test[it->first] = it->second;
     }
@@ -632,8 +582,7 @@ assert_map_equals(MapType &m, const stl_map_type &stl_m)
   // reg version postfix
   {
     stl_map_type test;
-    for (typename MapType::iterator it = m.begin();
-         it != m.end(); it++) {
+    for (typename MapType::iterator it = m.begin(); it != m.end(); it++) {
       ALWAYS_ASSERT(test.find(it->first) == test.end());
       test[it->first] = it->second;
     }
@@ -665,20 +614,14 @@ assert_map_equals(MapType &m, const stl_map_type &stl_m)
   }
 }
 
-template <typename T>
-static void
-init_map(T& m)
-{
+template <typename T> static void init_map(T &m) {
   m["a"] = "1";
   m["b"] = "2";
   m["c"] = "3";
   m["d"] = "4";
 }
 
-template <typename T>
-static void
-init_map1(T& m)
-{
+template <typename T> static void init_map1(T &m) {
   m["a"] = "1";
   m["b"] = "2";
   m["c"] = "3";
@@ -687,9 +630,7 @@ init_map1(T& m)
   m["f"] = "6";
 }
 
-void
-Test()
-{
+void Test() {
   {
     map_type m, m_copy;
     static_map_type static_m, static_m_copy;
@@ -715,8 +656,7 @@ Test()
 
     map_type m_construct(m);
     INVARIANT(m_construct.size() == 4);
-    for (stl_map_type::iterator it = stl_m.begin();
-         it != stl_m.end(); ++it) {
+    for (stl_map_type::iterator it = stl_m.begin(); it != stl_m.end(); ++it) {
       assert_map_contains(m, it->first, it->second);
       assert_map_contains(m_copy, it->first, it->second);
       assert_map_contains(m_construct, it->first, it->second);
@@ -730,8 +670,7 @@ Test()
 
     static_map_type static_m_construct(static_m);
     INVARIANT(static_m_construct.size() == 4);
-    for (stl_map_type::iterator it = stl_m.begin();
-         it != stl_m.end(); ++it) {
+    for (stl_map_type::iterator it = stl_m.begin(); it != stl_m.end(); ++it) {
       assert_map_contains(static_m, it->first, it->second);
       assert_map_contains(static_m_copy, it->first, it->second);
       assert_map_contains(static_m_construct, it->first, it->second);
@@ -751,8 +690,7 @@ Test()
     init_map1(stl_m);
     m_copy = m;
     map_type m_construct(m);
-    for (stl_map_type::iterator it = stl_m.begin();
-         it != stl_m.end(); ++it) {
+    for (stl_map_type::iterator it = stl_m.begin(); it != stl_m.end(); ++it) {
       assert_map_contains(m, it->first, it->second);
       assert_map_contains(m_copy, it->first, it->second);
     }
@@ -810,33 +748,26 @@ Test()
 
   cout << "map test passed" << endl;
 }
-}
+} // namespace small_map_ns
 
 namespace recordtest {
 
-ostream &
-operator<<(ostream &o, const myrec::key &k)
-{
+ostream &operator<<(ostream &o, const myrec::key &k) {
   o << "[k0=" << k.k0 << ", k1=" << k.k1 << "]" << endl;
   return o;
 }
 
-ostream &
-operator<<(ostream &o, const myrec::value &v)
-{
+ostream &operator<<(ostream &o, const myrec::value &v) {
   o << "[v0=" << v.v0 << ", v1=" << v.v1 << "]" << endl;
   return o;
 }
 
-void
-TestCursor()
-{
+void TestCursor() {
   const cursorrec::value v(12345, 1, 54321, "foo", "bar", 98765, 2);
   const string enc_v = Encode(v);
   cursorrec::value v0;
-  read_record_cursor<cursorrec> rc((const uint8_t *) enc_v.data(), enc_v.size());
-  for (size_t i = rc.field();
-       i < cursorrec::value_descriptor::nfields();
+  read_record_cursor<cursorrec> rc((const uint8_t *)enc_v.data(), enc_v.size());
+  for (size_t i = rc.field(); i < cursorrec::value_descriptor::nfields();
        i = rc.field())
     rc.read_current_and_advance(&v0);
   ALWAYS_ASSERT(v == v0);
@@ -855,13 +786,15 @@ TestCursor()
   typedef serializer<inline_str_fixed<25>, true> sistr25;
   ALWAYS_ASSERT(si32::nbytes(&v.v2) == v2_oldsz);
   ALWAYS_ASSERT(sistr25::nbytes(&v.v4) == v4_oldsz);
-  ALWAYS_ASSERT(cursorrec::value_descriptor::nbytes_fn(2)((const uint8_t *) &v.v2) == v2_oldsz);
-  ALWAYS_ASSERT(cursorrec::value_descriptor::nbytes_fn(4)((const uint8_t *) &v.v4) == v4_oldsz);
+  ALWAYS_ASSERT(cursorrec::value_descriptor::nbytes_fn(2)(
+                    (const uint8_t *)&v.v2) == v2_oldsz);
+  ALWAYS_ASSERT(cursorrec::value_descriptor::nbytes_fn(4)(
+                    (const uint8_t *)&v.v4) == v4_oldsz);
 
   const size_t v2_newsz =
-    cursorrec::value_descriptor::nbytes_fn(2)((const uint8_t *) &v0.v2);
+      cursorrec::value_descriptor::nbytes_fn(2)((const uint8_t *)&v0.v2);
   const size_t v4_newsz =
-    cursorrec::value_descriptor::nbytes_fn(4)((const uint8_t *) &v0.v4);
+      cursorrec::value_descriptor::nbytes_fn(4)((const uint8_t *)&v0.v4);
 
   uint8_t v2_oldraw_v[cursorrec::value_descriptor::max_nbytes(2)];
   uint8_t v4_oldraw_v[cursorrec::value_descriptor::max_nbytes(4)];
@@ -869,17 +802,18 @@ TestCursor()
   string enc_v0 = enc_v;
   if ((v2_oldsz + v4_oldsz) < (v2_newsz + v4_newsz))
     // grow buffer
-    enc_v0.resize(enc_v0.size() + (v2_newsz + v4_newsz) - (v2_oldsz + v4_oldsz));
-  write_record_cursor<cursorrec> wc((uint8_t *) enc_v0.data());
+    enc_v0.resize(enc_v0.size() + (v2_newsz + v4_newsz) -
+                  (v2_oldsz + v4_oldsz));
+  write_record_cursor<cursorrec> wc((uint8_t *)enc_v0.data());
   wc.skip_to(2);
   wc.write_current_and_advance(&v0, &v2_oldraw_v[0]);
   wc.skip_to(4);
   wc.write_current_and_advance(&v0, &v4_oldraw_v[0]);
 
-  read_record_cursor<cursorrec> rc1((const uint8_t *) enc_v0.data(), enc_v0.size());
+  read_record_cursor<cursorrec> rc1((const uint8_t *)enc_v0.data(),
+                                    enc_v0.size());
   cursorrec::value v2;
-  for (size_t i = rc1.field();
-       i < cursorrec::value_descriptor::nfields();
+  for (size_t i = rc1.field(); i < cursorrec::value_descriptor::nfields();
        i = rc1.field())
     rc1.read_current_and_advance(&v2);
   ALWAYS_ASSERT(v2 == v0);
@@ -887,9 +821,7 @@ TestCursor()
   cerr << "v0: " << v2 << endl;
 }
 
-void
-Test()
-{
+void Test() {
   const myrec::key k0(123, 456);
   const myrec::key k1(999, 123);
   const myrec::key k2(123, 457);
@@ -935,9 +867,9 @@ Test()
     Encode(buf1, v1);
     Encode(buf2, v2);
 
-    const string s0((const char *) buf0, sz0);
-    const string s1((const char *) buf1, sz1);
-    const string s2((const char *) buf2, sz2);
+    const string s0((const char *)buf0, sz0);
+    const string s1((const char *)buf1, sz1);
+    const string s2((const char *)buf2, sz2);
 
     Decode(s0, v0_temp);
     Decode(s1, v1_temp);
@@ -952,18 +884,14 @@ Test()
   cout << "encoder test passed" << endl;
 }
 
-}
+} // namespace recordtest
 
 class main_thread : public ndb_thread {
 public:
   main_thread(int argc, char **argv)
-    : ndb_thread(false, string("main")),
-      argc(argc), argv(argv), ret(0)
-  {}
+      : ndb_thread(false, string("main")), argc(argc), argv(argv), ret(0) {}
 
-  virtual void
-  run()
-  {
+  virtual void run() {
 #ifndef CHECK_INVARIANTS
     cerr << "WARNING: tests are running without invariant checking" << endl;
 #endif
@@ -973,19 +901,19 @@ public:
 
     // initialize the numa allocator subsystem with the number of CPUs running
     // + reasonable size per core
-    ::allocator::Initialize(coreid::num_cpus_online(), size_t(128 * (1<<20)));
+    ::allocator::Initialize(coreid::num_cpus_online(), size_t(128 * (1 << 20)));
 #ifdef PROTO2_CAN_DISABLE_GC
     transaction_proto2_static::InitGC();
 #endif
-    //varkeytest::Test();
-    //pxqueuetest::Test();
-    //CounterTest();
-    //UtilTest();
-    //varint::Test();
-    //small_vector_ns::Test();
-    //small_map_ns::Test();
-    //recordtest::Test();
-    //rcu::Test();
+    // varkeytest::Test();
+    // pxqueuetest::Test();
+    // CounterTest();
+    // UtilTest();
+    // varint::Test();
+    // small_vector_ns::Test();
+    // small_map_ns::Test();
+    // recordtest::Test();
+    // rcu::Test();
     extern void TestConcurrentBtreeFast();
     extern void TestConcurrentBtreeSlow();
     // either tests Masstree or Silotree, depending on NDB_MASSTREE
@@ -995,20 +923,15 @@ public:
     ret = 0;
   }
 
-  inline int
-  retval() const
-  {
-    return ret;
-  }
+  inline int retval() const { return ret; }
+
 private:
   const int argc;
   char **const argv;
   volatile int ret;
 };
 
-int
-main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   main_thread t(argc, argv);
   t.start();
   t.join();

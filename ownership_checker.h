@@ -1,24 +1,17 @@
 #pragma once
 
-#include <vector>
 #include "macros.h"
+#include <vector>
 
 /**
  * T - node type. needs to implement is_lock_owner()
  */
-template <typename Scope, typename T>
-class ownership_checker {
+template <typename Scope, typename T> class ownership_checker {
 public:
-  static void
-  NodeLockRegionBegin()
-  {
-    MyLockedNodes(true)->clear();
-  }
+  static void NodeLockRegionBegin() { MyLockedNodes(true)->clear(); }
 
   // is used to signal the end of a tuple lock region
-  static void
-  AssertAllNodeLocksReleased()
-  {
+  static void AssertAllNodeLocksReleased() {
     std::vector<const T *> *nodes = MyLockedNodes(false);
     ALWAYS_ASSERT(nodes);
     for (auto p : *nodes)
@@ -26,9 +19,7 @@ public:
     nodes->clear();
   }
 
-  static void
-  AddNodeToLockRegion(const T *n)
-  {
+  static void AddNodeToLockRegion(const T *n) {
     ALWAYS_ASSERT(n->is_locked());
     ALWAYS_ASSERT(n->is_lock_owner());
     std::vector<const T *> *nodes = MyLockedNodes(false);
@@ -37,9 +28,7 @@ public:
   }
 
 private:
-  static std::vector<const T *> *
-  MyLockedNodes(bool create)
-  {
+  static std::vector<const T *> *MyLockedNodes(bool create) {
     static __thread std::vector<const T *> *tl_locked_nodes = nullptr;
     if (unlikely(!tl_locked_nodes) && create)
       tl_locked_nodes = new std::vector<const T *>;

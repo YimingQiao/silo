@@ -18,26 +18,24 @@
 
 #include "compiler.hh"
 #include "misc.hh"
-#include <stdlib.h>
 #include <inttypes.h>
+#include <stdlib.h>
 
 namespace Perf {
-    struct stat {
-        /** @brief An initialization call from main function
-         */
-        static void initmain(bool pinthreads);
+struct stat {
+  /** @brief An initialization call from main function
+   */
+  static void initmain(bool pinthreads);
 
 #if GCSTATS
-        int gc_nfree;
+  int gc_nfree;
 #endif
 
-        void initialize(int cid) {
-            this->cid = cid;
-        }
+  void initialize(int cid) { this->cid = cid; }
 
-        static void print(const stat **s, int n);
+  static void print(const stat **s, int n);
 
-        int cid;    // core index
-    };
-}
+  int cid; // core index
+};
+} // namespace Perf
 #endif

@@ -1,9 +1,9 @@
 #pragma once
 
-#include <atomic>
-#include <sys/types.h>
 #include "macros.h"
 #include "util.h"
+#include <atomic>
+#include <sys/types.h>
 
 /**
  * XXX: CoreIDs are not recyclable for now, so NMAXCORES is really the number
@@ -13,9 +13,7 @@ class coreid {
 public:
   static const unsigned NMaxCores = NMAXCORES;
 
-  static inline unsigned
-  core_id()
-  {
+  static inline unsigned core_id() {
     if (unlikely(tl_core_id == -1)) {
       // initialize per-core data structures
       tl_core_id = g_core_count.fetch_add(1, std::memory_order_acq_rel);
@@ -31,8 +29,7 @@ public:
    *
    * Returns -1 if it is impossible to do this w/o exceeding max allocations
    */
-  static int
-  allocate_contiguous_aligned_block(unsigned n, unsigned alignment);
+  static int allocate_contiguous_aligned_block(unsigned n, unsigned alignment);
 
   /**
    * WARNING: this function is scary, and exists solely as a hack
@@ -47,9 +44,7 @@ public:
    *
    * These are necessary but not sufficient conditions for uniqueness
    */
-  static void
-  set_core_id(unsigned cid)
-  {
+  static void set_core_id(unsigned cid) {
     ALWAYS_ASSERT(cid < NMaxCores);
     ALWAYS_ASSERT(cid < g_core_count.load(std::memory_order_acquire));
     ALWAYS_ASSERT(tl_core_id == -1);
@@ -71,17 +66,14 @@ private:
 template <typename T, bool CallDtor = false, bool Pedantic = true>
 class percore {
 public:
-
-  percore()
-  {
+  percore() {
     for (size_t i = 0; i < size(); i++) {
       using namespace util;
       new (&(elems()[i])) aligned_padded_elem<T, Pedantic>();
     }
   }
 
-  ~percore()
-  {
+  ~percore() {
     if (!CallDtor)
       return;
     for (size_t i = 0; i < size(); i++) {
@@ -90,80 +82,52 @@ public:
     }
   }
 
-  inline T &
-  operator[](unsigned i)
-  {
+  inline T &operator[](unsigned i) {
     INVARIANT(i < NMAXCORES);
     return elems()[i].elem;
   }
 
-  inline const T &
-  operator[](unsigned i) const
-  {
+  inline const T &operator[](unsigned i) const {
     INVARIANT(i < NMAXCORES);
     return elems()[i].elem;
   }
 
-  inline T &
-  my()
-  {
-    return (*this)[coreid::core_id()];
-  }
+  inline T &my() { return (*this)[coreid::core_id()]; }
 
-  inline const T &
-  my() const
-  {
-    return (*this)[coreid::core_id()];
-  }
+  inline const T &my() const { return (*this)[coreid::core_id()]; }
 
   // XXX: make an iterator
 
-  inline size_t
-  size() const
-  {
-    return NMAXCORES;
-  }
+  inline size_t size() const { return NMAXCORES; }
 
 protected:
-
-  inline util::aligned_padded_elem<T, Pedantic> *
-  elems()
-  {
-    return (util::aligned_padded_elem<T, Pedantic> *) &bytes_[0];
+  inline util::aligned_padded_elem<T, Pedantic> *elems() {
+    return (util::aligned_padded_elem<T, Pedantic> *)&bytes_[0];
   }
 
-  inline const util::aligned_padded_elem<T, Pedantic> *
-  elems() const
-  {
-    return (const util::aligned_padded_elem<T, Pedantic> *) &bytes_[0];
+  inline const util::aligned_padded_elem<T, Pedantic> *elems() const {
+    return (const util::aligned_padded_elem<T, Pedantic> *)&bytes_[0];
   }
 
   char bytes_[sizeof(util::aligned_padded_elem<T, Pedantic>) * NMAXCORES];
 };
 
 namespace private_ {
-  template <typename T>
-  struct buf {
-    char bytes_[sizeof(T)];
-    inline T * cast() { return (T *) &bytes_[0]; }
-    inline const T * cast() const { return (T *) &bytes_[0]; }
-  };
-}
+template <typename T> struct buf {
+  char bytes_[sizeof(T)];
+  inline T *cast() { return (T *)&bytes_[0]; }
+  inline const T *cast() const { return (T *)&bytes_[0]; }
+};
+} // namespace private_
 
 template <typename T>
 class percore_lazy : private percore<private_::buf<T>, false> {
   typedef private_::buf<T> buf_t;
+
 public:
+  percore_lazy() { NDB_MEMSET(&flags_[0], 0, sizeof(flags_)); }
 
-  percore_lazy()
-  {
-    NDB_MEMSET(&flags_[0], 0, sizeof(flags_));
-  }
-
-  template <class... Args>
-  inline T &
-  get(unsigned i, Args &&... args)
-  {
+  template <class... Args> inline T &get(unsigned i, Args &&...args) {
     buf_t &b = this->elems()[i].elem;
     if (unlikely(!flags_[i])) {
       flags_[i] = true;
@@ -173,32 +137,21 @@ public:
     return *b.cast();
   }
 
-  template <class... Args>
-  inline T &
-  my(Args &&... args)
-  {
+  template <class... Args> inline T &my(Args &&...args) {
     return get(coreid::core_id(), std::forward<Args>(args)...);
   }
 
-  inline T *
-  view(unsigned i)
-  {
+  inline T *view(unsigned i) {
     buf_t &b = this->elems()[i].elem;
     return flags_[i] ? b.cast() : nullptr;
   }
 
-  inline const T *
-  view(unsigned i) const
-  {
+  inline const T *view(unsigned i) const {
     const buf_t &b = this->elems()[i].elem;
     return flags_[i] ? b.cast() : nullptr;
   }
 
-  inline const T *
-  myview() const
-  {
-    return view(coreid::core_id());
-  }
+  inline const T *myview() const { return view(coreid::core_id()); }
 
 private:
   bool flags_[NMAXCORES];

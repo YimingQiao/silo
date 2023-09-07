@@ -6,9 +6,7 @@
 /**
  * XXX(stephentu): allow custom allocator
  */
-template <typename Key,
-          typename T,
-          size_t StaticSize = SMALL_SIZE_MAP,
+template <typename Key, typename T, size_t StaticSize = SMALL_SIZE_MAP,
           typename Hash = private_::myhash<Key>>
 class static_unordered_map {
 public:
@@ -16,56 +14,40 @@ public:
   typedef T mapped_type;
   typedef std::pair<const key_type, mapped_type> value_type;
   typedef Hash hasher;
-  typedef T & reference;
-  typedef const T & const_reference;
+  typedef T &reference;
+  typedef const T &const_reference;
 
 private:
   typedef std::unordered_map<Key, T, Hash> large_table_type;
   typedef std::pair<key_type, mapped_type> bucket_value_type;
 
   static const bool is_trivially_destructible =
-    private_::is_trivially_destructible<bucket_value_type>::value;
+      private_::is_trivially_destructible<bucket_value_type>::value;
 
   static const size_t TableSize = private_::TableSize(StaticSize);
   static_assert(StaticSize >= 1, "XXX");
   static_assert(TableSize >= 1, "XXX");
 
   struct bucket {
-    inline ALWAYS_INLINE bucket_value_type *
-    ptr()
-    {
+    inline ALWAYS_INLINE bucket_value_type *ptr() {
       return reinterpret_cast<bucket_value_type *>(&buf[0]);
     }
 
-    inline ALWAYS_INLINE const bucket_value_type *
-    ptr() const
-    {
+    inline ALWAYS_INLINE const bucket_value_type *ptr() const {
       return reinterpret_cast<const bucket_value_type *>(&buf[0]);
     }
 
-    inline ALWAYS_INLINE bucket_value_type &
-    ref()
-    {
-      return *ptr();
-    }
+    inline ALWAYS_INLINE bucket_value_type &ref() { return *ptr(); }
 
-    inline ALWAYS_INLINE const bucket_value_type &
-    ref() const
-    {
-      return *ptr();
-    }
+    inline ALWAYS_INLINE const bucket_value_type &ref() const { return *ptr(); }
 
     template <class... Args>
-    inline ALWAYS_INLINE void
-    construct(size_t hash, Args &&... args)
-    {
+    inline ALWAYS_INLINE void construct(size_t hash, Args &&...args) {
       h = hash;
       new (&ref()) bucket_value_type(std::forward<Args>(args)...);
     }
 
-    inline ALWAYS_INLINE void
-    destroy()
-    {
+    inline ALWAYS_INLINE void destroy() {
       if (!is_trivially_destructible)
         ref().~bucket_value_type();
     }
@@ -79,66 +61,44 @@ private:
   template <typename BucketType, typename ValueType>
   class iterator_ : public std::iterator<std::forward_iterator_tag, ValueType> {
     friend class static_unordered_map;
+
   public:
     inline iterator_() : b(0) {}
 
     template <typename B, typename V>
-    inline iterator_(const iterator_<B, V> &other)
-      : b(other.b)
-    {}
+    inline iterator_(const iterator_<B, V> &other) : b(other.b) {}
 
-    inline ValueType &
-    operator*() const
-    {
+    inline ValueType &operator*() const {
       return reinterpret_cast<ValueType &>(b->ref());
     }
 
-    inline ValueType *
-    operator->() const
-    {
+    inline ValueType *operator->() const {
       return reinterpret_cast<ValueType *>(b->ptr());
     }
 
-    inline bool
-    operator==(const iterator_ &o) const
-    {
-      return b == o.b;
-    }
+    inline bool operator==(const iterator_ &o) const { return b == o.b; }
 
-    inline bool
-    operator!=(const iterator_ &o) const
-    {
-      return !operator==(o);
-    }
+    inline bool operator!=(const iterator_ &o) const { return !operator==(o); }
 
-    inline iterator_ &
-    operator++()
-    {
+    inline iterator_ &operator++() {
       b++;
       return *this;
     }
 
-    inline iterator_
-    operator++(int)
-    {
+    inline iterator_ operator++(int) {
       iterator_ cur = *this;
       ++(*this);
       return cur;
     }
 
   protected:
-    inline iterator_(BucketType *b)
-      : b(b)
-    {
-    }
+    inline iterator_(BucketType *b) : b(b) {}
 
   private:
     BucketType *b;
   };
 
-  static size_t
-  chain_length(bucket *b)
-  {
+  static size_t chain_length(bucket *b) {
     size_t ret = 0;
     while (b) {
       ret++;
@@ -148,18 +108,12 @@ private:
   }
 
 public:
-
   typedef iterator_<bucket, value_type> iterator;
   typedef iterator_<const bucket, const value_type> const_iterator;
 
-  static_unordered_map()
-    : n(0)
-  {
-    NDB_MEMSET(&table[0], 0, sizeof(table));
-  }
+  static_unordered_map() : n(0) { NDB_MEMSET(&table[0], 0, sizeof(table)); }
 
-  ~static_unordered_map()
-  {
+  ~static_unordered_map() {
     for (size_t i = 0; i < n; i++)
       elems[i].destroy();
 #ifdef ENABLE_EVENT_COUNTERS
@@ -167,23 +121,18 @@ public:
     for (size_t i = 0; i < TableSize; i++) {
       const size_t l = chain_length(table[i]);
       ml = std::max(ml, l);
-
     }
     if (ml)
       private_::evt_avg_max_unordered_map_chain_length.offer(ml);
 #endif
   }
 
-  static_unordered_map(const static_unordered_map &other)
-    : n(0)
-  {
+  static_unordered_map(const static_unordered_map &other) : n(0) {
     NDB_MEMSET(&table[0], 0, sizeof(table));
     assignFrom(other);
   }
 
-  static_unordered_map &
-  operator=(const static_unordered_map &other)
-  {
+  static_unordered_map &operator=(const static_unordered_map &other) {
     // self assignment
     if (unlikely(this == &other))
       return *this;
@@ -192,9 +141,7 @@ public:
   }
 
 private:
-  bucket *
-  find_bucket(const key_type &k, size_t *hash_value)
-  {
+  bucket *find_bucket(const key_type &k, size_t *hash_value) {
     const size_t h = Hash()(k);
     if (hash_value)
       *hash_value = h;
@@ -209,19 +156,15 @@ private:
     return 0;
   }
 
-  inline ALWAYS_INLINE const bucket *
-  find_bucket(const key_type &k, size_t *hash_value) const
-  {
+  inline ALWAYS_INLINE const bucket *find_bucket(const key_type &k,
+                                                 size_t *hash_value) const {
     return const_cast<static_unordered_map *>(this)->find_bucket(k, hash_value);
   }
 
 public:
-
   // XXX(stephentu): template away this stuff
 
-  mapped_type &
-  operator[](const key_type &k)
-  {
+  mapped_type &operator[](const key_type &k) {
     size_t h;
     bucket *b = find_bucket(k, &h);
     if (b)
@@ -235,9 +178,7 @@ public:
     return b->ref().second;
   }
 
-  mapped_type &
-  operator[](key_type &&k)
-  {
+  mapped_type &operator[](key_type &&k) {
     size_t h;
     bucket *b = find_bucket(k, &h);
     if (b)
@@ -251,63 +192,33 @@ public:
     return b->ref().second;
   }
 
-  inline size_t
-  size() const
-  {
-    return n;
-  }
+  inline size_t size() const { return n; }
 
-  inline bool
-  empty() const
-  {
-    return !n;
-  }
+  inline bool empty() const { return !n; }
 
-  iterator
-  begin()
-  {
-    return iterator(&elems[0]);
-  }
+  iterator begin() { return iterator(&elems[0]); }
 
-  const_iterator
-  begin() const
-  {
-    return const_iterator(&elems[0]);
-  }
+  const_iterator begin() const { return const_iterator(&elems[0]); }
 
-  inline iterator
-  end()
-  {
-    return iterator(&elems[n]);
-  }
+  inline iterator end() { return iterator(&elems[n]); }
 
-  inline const_iterator
-  end() const
-  {
-    return const_iterator(&elems[n]);
-  }
+  inline const_iterator end() const { return const_iterator(&elems[n]); }
 
-  iterator
-  find(const key_type &k)
-  {
-    bucket * const b = find_bucket(k, 0);
+  iterator find(const key_type &k) {
+    bucket *const b = find_bucket(k, 0);
     if (b)
       return iterator(b);
     return end();
   }
 
-  const_iterator
-  find(const key_type &k) const
-  {
-    const bucket * const b = find_bucket(k, 0);
+  const_iterator find(const key_type &k) const {
+    const bucket *const b = find_bucket(k, 0);
     if (b)
       return const_iterator(b);
     return end();
   }
 
-  void
-  clear()
-  {
+  void clear() {
     if (!n)
       return;
     NDB_MEMSET(&table[0], 0, sizeof(table));
@@ -321,15 +232,12 @@ public:
   inline bool is_small_type() const { return true; }
 
 private:
-
   // doesn't check for self assignment
-  inline void
-  assignFrom(const static_unordered_map &that)
-  {
+  inline void assignFrom(const static_unordered_map &that) {
     clear();
     for (size_t i = 0; i < that.n; i++) {
-      bucket * const b = &elems[n++];
-      const bucket * const that_b = &that.elems[i];
+      bucket *const b = &elems[n++];
+      const bucket *const that_b = &that.elems[i];
       b->construct(that_b->h, that_b->ref().first, that_b->ref().second);
       const size_t idx = b->h % TableSize;
       b->bnext = table[idx];

@@ -1,9 +1,9 @@
 #ifndef _NDB_THREAD_H_
 #define _NDB_THREAD_H_
 
-#include <vector>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "macros.h"
 
@@ -21,39 +21,35 @@
 
 class ndb_thread {
 public:
+  typedef void (*run_t)(void);
 
-    typedef void (*run_t)(void);
+  ndb_thread(bool daemon = false, const std::string &name = "thd")
+      : body_(nullptr), daemon_(daemon), name_(name) {}
 
-    ndb_thread(bool daemon = false, const std::string &name = "thd")
-            : body_(nullptr), daemon_(daemon), name_(name) {}
+  ndb_thread(run_t body, bool daemon = false, const std::string &name = "thd")
+      : body_(body), daemon_(daemon), name_(name) {}
 
-    ndb_thread(run_t body, bool daemon = false, const std::string &name = "thd")
-            : body_(body), daemon_(daemon), name_(name) {}
+  ndb_thread(const ndb_thread &) = delete;
 
-    ndb_thread(const ndb_thread &) = delete;
+  ndb_thread(ndb_thread &&) = delete;
 
-    ndb_thread(ndb_thread &&) = delete;
+  ndb_thread &operator=(const ndb_thread &) = delete;
 
-    ndb_thread &operator=(const ndb_thread &) = delete;
+  virtual ~ndb_thread();
 
-    virtual ~ndb_thread();
+  inline const std::string &get_name() const { return name_; }
 
-    inline const std::string &
-    get_name() const {
-        return name_;
-    }
+  void start();
 
-    void start();
+  void join();
 
-    void join();
-
-    virtual void run();
+  virtual void run();
 
 private:
-    run_t body_;
-    std::thread thd_;
-    const bool daemon_;
-    const std::string name_;
+  run_t body_;
+  std::thread thd_;
+  const bool daemon_;
+  const std::string name_;
 };
 
 #endif /* _NDB_THREAD_H_ */

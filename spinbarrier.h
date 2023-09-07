@@ -11,24 +11,15 @@
 
 class spin_barrier {
 public:
-  spin_barrier(size_t n)
-    : n(n)
-  {
-    ALWAYS_ASSERT(n > 0);
-  }
+  spin_barrier(size_t n) : n(n) { ALWAYS_ASSERT(n > 0); }
 
   spin_barrier(const spin_barrier &) = delete;
   spin_barrier(spin_barrier &&) = delete;
   spin_barrier &operator=(const spin_barrier &) = delete;
 
-  ~spin_barrier()
-  {
-    ALWAYS_ASSERT(n == 0);
-  }
+  ~spin_barrier() { ALWAYS_ASSERT(n == 0); }
 
-  void
-  count_down()
-  {
+  void count_down() {
     // written like this (instead of using __sync_fetch_and_add())
     // so we can have assertions
     for (;;) {
@@ -39,9 +30,7 @@ public:
     }
   }
 
-  void
-  wait_for()
-  {
+  void wait_for() {
     while (n > 0)
       nop_pause();
   }

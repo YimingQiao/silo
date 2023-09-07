@@ -1,15 +1,13 @@
 #include <iostream>
 
-#include "varint.h"
 #include "macros.h"
 #include "util.h"
+#include "varint.h"
 
 using namespace std;
 using namespace util;
 
-static void
-do_test(uint32_t v)
-{
+static void do_test(uint32_t v) {
   uint8_t buf[5];
   uint8_t *p = &buf[0];
   p = write_uvint32(p, v);
@@ -22,9 +20,7 @@ do_test(uint32_t v)
   ALWAYS_ASSERT(p == p0);
 }
 
-void
-varint::Test()
-{
+void varint::Test() {
   fast_random r(2043859);
   for (int i = 0; i < 1000; i++)
     do_test(r.next_u32());

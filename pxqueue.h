@@ -12,19 +12,15 @@
 // forward decl
 template <typename T, size_t N> struct basic_px_queue;
 
-template <typename T, size_t N>
-struct basic_px_group {
-  basic_px_group()
-    : next_(nullptr), rcu_tick_(0)
-  {
-    static event_counter evt_px_group_creates(
-        util::cxx_typename<T>::value() + std::string("_px_group_creates"));
+template <typename T, size_t N> struct basic_px_group {
+  basic_px_group() : next_(nullptr), rcu_tick_(0) {
+    static event_counter evt_px_group_creates(util::cxx_typename<T>::value() +
+                                              std::string("_px_group_creates"));
     ++evt_px_group_creates;
   }
-  ~basic_px_group()
-  {
-    static event_counter evt_px_group_deletes(
-        util::cxx_typename<T>::value() + std::string("_px_group_deletes"));
+  ~basic_px_group() {
+    static event_counter evt_px_group_deletes(util::cxx_typename<T>::value() +
+                                              std::string("_px_group_deletes"));
     ++evt_px_group_deletes;
   }
 
@@ -45,12 +41,10 @@ private:
 };
 
 // not thread safe- should guard with lock for concurrent manipulation
-template <typename T, size_t N>
-struct basic_px_queue {
+template <typename T, size_t N> struct basic_px_queue {
   basic_px_queue()
-    : head_(nullptr), tail_(nullptr),
-      freelist_head_(nullptr), freelist_tail_(nullptr),
-      ngroups_(0) {}
+      : head_(nullptr), tail_(nullptr), freelist_head_(nullptr),
+        freelist_tail_(nullptr), ngroups_(0) {}
 
   typedef basic_px_group<T, N> px_group;
 
@@ -58,15 +52,12 @@ struct basic_px_queue {
   basic_px_queue(const basic_px_queue &) = delete;
   basic_px_queue &operator=(const basic_px_queue &) = delete;
 
-  ~basic_px_queue()
-  {
+  ~basic_px_queue() {
     reap_chain(head_);
     reap_chain(freelist_head_);
   }
 
-  void
-  swap(basic_px_queue &other)
-  {
+  void swap(basic_px_queue &other) {
     std::swap(head_, other.head_);
     std::swap(tail_, other.tail_);
     std::swap(freelist_head_, other.freelist_head_);
@@ -84,39 +75,19 @@ struct basic_px_queue {
     template <typename P, typename O>
     inline iterator_(const iterator_<P, O> &o) : px_(o.px_), i_(o.i_) {}
 
-    inline ObjType &
-    operator*() const
-    {
-      return px_->pxs_[i_];
-    }
+    inline ObjType &operator*() const { return px_->pxs_[i_]; }
 
-    inline ObjType *
-    operator->() const
-    {
-      return &px_->pxs_[i_];
-    }
+    inline ObjType *operator->() const { return &px_->pxs_[i_]; }
 
-    inline uint64_t
-    tick() const
-    {
-      return px_->rcu_tick_;
-    }
+    inline uint64_t tick() const { return px_->rcu_tick_; }
 
-    inline bool
-    operator==(const iterator_ &o) const
-    {
+    inline bool operator==(const iterator_ &o) const {
       return px_ == o.px_ && i_ == o.i_;
     }
 
-    inline bool
-    operator!=(const iterator_ &o) const
-    {
-      return !operator==(o);
-    }
+    inline bool operator!=(const iterator_ &o) const { return !operator==(o); }
 
-    inline iterator_ &
-    operator++()
-    {
+    inline iterator_ &operator++() {
       ++i_;
       if (i_ == px_->pxs_.size()) {
         px_ = px_->next_;
@@ -125,9 +96,7 @@ struct basic_px_queue {
       return *this;
     }
 
-    inline iterator_
-    operator++(int)
-    {
+    inline iterator_ operator++(int) {
       iterator_ cur = *this;
       ++(*this);
       return cur;
@@ -149,16 +118,13 @@ struct basic_px_queue {
 
   // enqueue t in epoch rcu_tick
   // assumption: rcu_ticks can only go up!
-  void
-  enqueue(const T &t, uint64_t rcu_tick)
-  {
+  void enqueue(const T &t, uint64_t rcu_tick) {
     INVARIANT(bool(head_) == bool(tail_));
     INVARIANT(bool(head_) == bool(ngroups_));
     INVARIANT(!tail_ || tail_->pxs_.size() <= px_group::GroupSize);
     INVARIANT(!tail_ || tail_->rcu_tick_ <= rcu_tick);
     px_group *g;
-    if (unlikely(!tail_ ||
-                 tail_->pxs_.size() == px_group::GroupSize ||
+    if (unlikely(!tail_ || tail_->pxs_.size() == px_group::GroupSize ||
                  tail_->rcu_tick_ != rcu_tick)) {
       ensure_freelist();
       // pop off freelist
@@ -189,9 +155,7 @@ struct basic_px_queue {
     sanity_check();
   }
 
-  void
-  ensure_freelist()
-  {
+  void ensure_freelist() {
     INVARIANT(bool(freelist_head_) == bool(freelist_tail_));
     if (likely(freelist_head_))
       return;
@@ -199,16 +163,10 @@ struct basic_px_queue {
     alloc_freelist(nalloc);
   }
 
-  inline bool
-  empty() const
-  {
-    return !head_;
-  }
+  inline bool empty() const { return !head_; }
 
 #ifdef CHECK_INVARIANTS
-  void
-  sanity_check() const
-  {
+  void sanity_check() const {
     INVARIANT(bool(head_) == bool(tail_));
     INVARIANT(!tail_ || ngroups_);
     INVARIANT(!tail_ || !tail_->next_);
@@ -242,9 +200,7 @@ struct basic_px_queue {
 
   // assumes this instance is EMPTY, accept from source
   // all entries <= e
-  inline void
-  empty_accept_from(basic_px_queue &source, uint64_t rcu_tick)
-  {
+  inline void empty_accept_from(basic_px_queue &source, uint64_t rcu_tick) {
     ALWAYS_ASSERT(empty());
     INVARIANT(this != &source);
     INVARIANT(!tail_);
@@ -269,9 +225,7 @@ struct basic_px_queue {
   }
 
   // transfer *this* elements freelist to dest
-  void
-  transfer_freelist(basic_px_queue &dest, ssize_t n = -1)
-  {
+  void transfer_freelist(basic_px_queue &dest, ssize_t n = -1) {
     if (!freelist_head_)
       return;
     if (n < 0) {
@@ -298,9 +252,7 @@ struct basic_px_queue {
     sanity_check();
   }
 
-  void
-  clear()
-  {
+  void clear() {
     if (!head_)
       return;
     tail_->next_ = freelist_head_;
@@ -312,9 +264,7 @@ struct basic_px_queue {
   }
 
   // adds n new groups to the freelist
-  void
-  alloc_freelist(size_t n)
-  {
+  void alloc_freelist(size_t n) {
     for (size_t i = 0; i < n; i++) {
       px_group *p = new px_group;
       if (!freelist_tail_)
@@ -326,9 +276,7 @@ struct basic_px_queue {
 
   inline size_t get_ngroups() const { return ngroups_; }
 
-  inline bool
-  get_latest_epoch(uint64_t &e) const
-  {
+  inline bool get_latest_epoch(uint64_t &e) const {
     if (!tail_)
       return false;
     e = tail_->rcu_tick_;
@@ -336,9 +284,7 @@ struct basic_px_queue {
   }
 
 private:
-  void
-  reap_chain(px_group *px)
-  {
+  void reap_chain(px_group *px) {
     while (px) {
       px_group *tmp = px->next_;
       delete px;

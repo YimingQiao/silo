@@ -4,83 +4,74 @@
 // system event counters, for
 
 #include <algorithm> // for std::max
-#include <vector>
 #include <map>
-#include <string>
 #include <stdint.h>
+#include <string>
+#include <vector>
 
-#include "macros.h"
 #include "core.h"
-#include "util.h"
+#include "macros.h"
 #include "spinlock.h"
+#include "util.h"
 
 struct counter_data {
   enum Type { TYPE_COUNT, TYPE_AGG };
 
-  counter_data()
-    : type_(TYPE_COUNT), count_(0), sum_(0), max_(0) {}
+  counter_data() : type_(TYPE_COUNT), count_(0), sum_(0), max_(0) {}
 
   Type type_;
   uint64_t count_;
   uint64_t sum_;
   uint64_t max_;
 
-  inline counter_data &
-  operator+=(const counter_data &that)
-  {
+  inline counter_data &operator+=(const counter_data &that) {
     count_ += that.count_;
-    sum_   += that.sum_;
-    max_    = std::max(max_, that.max_);
+    sum_ += that.sum_;
+    max_ = std::max(max_, that.max_);
     return *this;
   }
 
-  inline double
-  avg() const
-  {
+  inline double avg() const {
     INVARIANT(type_ == TYPE_AGG);
-    return double(sum_)/double(count_);
+    return double(sum_) / double(count_);
   }
 };
 
 namespace private_ {
 
-  // these objects are *never* supposed to be destructed
-  // (this is a purposeful memory leak)
-  struct event_ctx {
+// these objects are *never* supposed to be destructed
+// (this is a purposeful memory leak)
+struct event_ctx {
 
-    static std::map<std::string, event_ctx *> &event_counters();
-    static spinlock &event_counters_lock();
+  static std::map<std::string, event_ctx *> &event_counters();
+  static spinlock &event_counters_lock();
 
-    // tag to avoid making event_ctx virtual
-    event_ctx(const std::string &name, bool avg_tag)
-      : name_(name), avg_tag_(avg_tag)
-    {}
+  // tag to avoid making event_ctx virtual
+  event_ctx(const std::string &name, bool avg_tag)
+      : name_(name), avg_tag_(avg_tag) {}
 
-    ~event_ctx()
-    {
-      ALWAYS_ASSERT(false);
-    }
+  ~event_ctx() { ALWAYS_ASSERT(false); }
 
-    event_ctx(const event_ctx &) = delete;
-    event_ctx &operator=(const event_ctx &) = delete;
-    event_ctx(event_ctx &&) = delete;
+  event_ctx(const event_ctx &) = delete;
+  event_ctx &operator=(const event_ctx &) = delete;
+  event_ctx(event_ctx &&) = delete;
 
-    void stat(counter_data &d);
+  void stat(counter_data &d);
 
-    const std::string name_;
-    const bool avg_tag_;
+  const std::string name_;
+  const bool avg_tag_;
 
-    // per-thread counts
-    percore<uint64_t, false, false> counts_;
-  };
+  // per-thread counts
+  percore<uint64_t, false, false> counts_;
+};
 
-  // more expensive
-  struct event_ctx_avg : public event_ctx {
-    event_ctx_avg(const std::string &name) : event_ctx(name, true) {}
-    percore<uint64_t, false, false> sums_;
-    percore<uint64_t, false, false> highs_;
-  };
-}
+// more expensive
+struct event_ctx_avg : public event_ctx {
+  event_ctx_avg(const std::string &name) : event_ctx(name, true) {}
+  percore<uint64_t, false, false> sums_;
+  percore<uint64_t, false, false> highs_;
+};
+} // namespace private_
 
 class event_counter {
 public:
@@ -90,24 +81,18 @@ public:
   event_counter &operator=(const event_counter &) = delete;
   event_counter(event_counter &&) = delete;
 
-  inline ALWAYS_INLINE void
-  inc(uint64_t i = 1)
-  {
+  inline ALWAYS_INLINE void inc(uint64_t i = 1) {
 #ifdef ENABLE_EVENT_COUNTERS
     ctx_->counts_.my() += i;
 #endif
   }
 
-  inline ALWAYS_INLINE event_counter &
-  operator++()
-  {
+  inline ALWAYS_INLINE event_counter &operator++() {
     inc();
     return *this;
   }
 
-  inline ALWAYS_INLINE event_counter &
-  operator+=(uint64_t i)
-  {
+  inline ALWAYS_INLINE event_counter &operator+=(uint64_t i) {
     inc(i);
     return *this;
   }
@@ -117,8 +102,7 @@ public:
   // WARNING: an expensive operation!
   static void reset_all_counters();
   // WARNING: an expensive operation!
-  static bool
-  stat(const std::string &name, counter_data &d);
+  static bool stat(const std::string &name, counter_data &d);
 
 private:
 #ifdef ENABLE_EVENT_COUNTERS
@@ -134,9 +118,7 @@ public:
   event_avg_counter &operator=(const event_avg_counter &) = delete;
   event_avg_counter(event_avg_counter &&) = delete;
 
-  inline ALWAYS_INLINE void
-  offer(uint64_t value)
-  {
+  inline ALWAYS_INLINE void offer(uint64_t value) {
 #ifdef ENABLE_EVENT_COUNTERS
     ctx_->counts_.my()++;
     ctx_->sums_.my() += value;
@@ -150,9 +132,7 @@ private:
 #endif
 };
 
-inline std::ostream &
-operator<<(std::ostream &o, const counter_data &d)
-{
+inline std::ostream &operator<<(std::ostream &o, const counter_data &d) {
   if (d.type_ == counter_data::TYPE_COUNT)
     o << "count=" << d.count_;
   else

@@ -1,19 +1,19 @@
-#include <iostream>
-#include <thread>
 #include <fcntl.h>
-#include <unistd.h>
-#include <sys/uio.h>
+#include <iostream>
 #include <limits.h>
 #include <numa.h>
+#include <sys/uio.h>
+#include <thread>
+#include <unistd.h>
 
-#include "txn_proto2_impl.h"
 #include "counter.h"
+#include "txn_proto2_impl.h"
 #include "util.h"
 
 using namespace std;
 using namespace util;
 
-                    /** logger subsystem **/
+/** logger subsystem **/
 /*{{{*/
 bool txn_logger::g_persist = false;
 bool txn_logger::g_call_fsync = true;
@@ -21,56 +21,46 @@ bool txn_logger::g_use_compression = false;
 bool txn_logger::g_fake_writes = false;
 size_t txn_logger::g_nworkers = 0;
 txn_logger::epoch_array
-  txn_logger::per_thread_sync_epochs_[txn_logger::g_nmax_loggers];
-aligned_padded_elem<atomic<uint64_t>>
-  txn_logger::system_sync_epoch_(0);
-percore<txn_logger::persist_ctx>
-  txn_logger::g_persist_ctxs;
-percore<txn_logger::persist_stats>
-  txn_logger::g_persist_stats;
+    txn_logger::per_thread_sync_epochs_[txn_logger::g_nmax_loggers];
+aligned_padded_elem<atomic<uint64_t>> txn_logger::system_sync_epoch_(0);
+percore<txn_logger::persist_ctx> txn_logger::g_persist_ctxs;
+percore<txn_logger::persist_stats> txn_logger::g_persist_stats;
 event_counter
-  txn_logger::g_evt_log_buffer_epoch_boundary("log_buffer_epoch_boundary");
+    txn_logger::g_evt_log_buffer_epoch_boundary("log_buffer_epoch_boundary");
 event_counter
-  txn_logger::g_evt_log_buffer_out_of_space("log_buffer_out_of_space");
+    txn_logger::g_evt_log_buffer_out_of_space("log_buffer_out_of_space");
+event_counter txn_logger::g_evt_log_buffer_bytes_before_compress(
+    "log_buffer_bytes_before_compress");
+event_counter txn_logger::g_evt_log_buffer_bytes_after_compress(
+    "log_buffer_bytes_after_compress");
 event_counter
-  txn_logger::g_evt_log_buffer_bytes_before_compress("log_buffer_bytes_before_compress");
-event_counter
-  txn_logger::g_evt_log_buffer_bytes_after_compress("log_buffer_bytes_after_compress");
-event_counter
-  txn_logger::g_evt_logger_writev_limit_met("logger_writev_limit_met");
-event_counter
-  txn_logger::g_evt_logger_max_lag_wait("logger_max_lag_wait");
+    txn_logger::g_evt_logger_writev_limit_met("logger_writev_limit_met");
+event_counter txn_logger::g_evt_logger_max_lag_wait("logger_max_lag_wait");
+event_avg_counter txn_logger::g_evt_avg_log_buffer_compress_time_us(
+    "avg_log_buffer_compress_time_us");
 event_avg_counter
-  txn_logger::g_evt_avg_log_buffer_compress_time_us("avg_log_buffer_compress_time_us");
+    txn_logger::g_evt_avg_log_entry_ntxns("avg_log_entry_ntxns_per_entry");
+event_avg_counter txn_logger::g_evt_avg_logger_bytes_per_writev(
+    "avg_logger_bytes_per_writev");
 event_avg_counter
-  txn_logger::g_evt_avg_log_entry_ntxns("avg_log_entry_ntxns_per_entry");
-event_avg_counter
-  txn_logger::g_evt_avg_logger_bytes_per_writev("avg_logger_bytes_per_writev");
-event_avg_counter
-  txn_logger::g_evt_avg_logger_bytes_per_sec("avg_logger_bytes_per_sec");
+    txn_logger::g_evt_avg_logger_bytes_per_sec("avg_logger_bytes_per_sec");
 
-static event_avg_counter
-  evt_avg_log_buffer_iov_len("avg_log_buffer_iov_len");
+static event_avg_counter evt_avg_log_buffer_iov_len("avg_log_buffer_iov_len");
 
-void
-txn_logger::Init(
-    size_t nworkers,
-    const vector<string> &logfiles,
-    const vector<vector<unsigned>> &assignments_given,
-    vector<vector<unsigned>> *assignments_used,
-    bool call_fsync,
-    bool use_compression,
-    bool fake_writes)
-{
+void txn_logger::Init(size_t nworkers, const vector<string> &logfiles,
+                      const vector<vector<unsigned>> &assignments_given,
+                      vector<vector<unsigned>> *assignments_used,
+                      bool call_fsync, bool use_compression, bool fake_writes) {
   INVARIANT(!g_persist);
   INVARIANT(g_nworkers == 0);
   INVARIANT(nworkers > 0);
   INVARIANT(!logfiles.empty());
   INVARIANT(logfiles.size() <= g_nmax_loggers);
-  INVARIANT(!use_compression || g_perthread_buffers > 1); // need 1 as scratch buf
+  INVARIANT(!use_compression ||
+            g_perthread_buffers > 1); // need 1 as scratch buf
   vector<int> fds;
   for (auto &fname : logfiles) {
-    int fd = open(fname.c_str(), O_CREAT|O_WRONLY|O_TRUNC, 0664);
+    int fd = open(fname.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0664);
     if (fd == -1) {
       perror("open");
       ALWAYS_ASSERT(false);
@@ -95,16 +85,16 @@ txn_logger::Init(
     if (g_nworkers <= fds.size()) {
       // each thread gets its own logging worker
       for (size_t i = 0; i < g_nworkers; i++)
-        assignments.push_back({(unsigned) i});
+        assignments.push_back({(unsigned)i});
     } else {
       // XXX: currently we assume each logger is equally as fast- we should
       // adjust ratios accordingly for non-homogenous loggers
       const size_t threads_per_logger = g_nworkers / fds.size();
       for (size_t i = 0; i < fds.size(); i++) {
-        assignments.emplace_back(
-            MakeRange<unsigned>(
-              i * threads_per_logger,
-              ((i + 1) == fds.size()) ?  g_nworkers : (i + 1) * threads_per_logger));
+        assignments.emplace_back(MakeRange<unsigned>(
+            i * threads_per_logger, ((i + 1) == fds.size())
+                                        ? g_nworkers
+                                        : (i + 1) * threads_per_logger));
       }
     }
   }
@@ -112,9 +102,7 @@ txn_logger::Init(
   INVARIANT(AssignmentsValid(assignments, fds.size(), g_nworkers));
 
   for (size_t i = 0; i < assignments.size(); i++) {
-    writers.emplace_back(
-        &txn_logger::writer,
-        i, fds[i], assignments[i]);
+    writers.emplace_back(&txn_logger::writer, i, fds[i], assignments[i]);
     writers.back().detach();
   }
 
@@ -125,10 +113,7 @@ txn_logger::Init(
     *assignments_used = assignments;
 }
 
-void
-txn_logger::persister(
-    vector<vector<unsigned>> assignments)
-{
+void txn_logger::persister(vector<vector<unsigned>> assignments) {
   timer loop_timer;
   for (;;) {
     const uint64_t last_loop_usec = loop_timer.lap();
@@ -136,7 +121,7 @@ txn_logger::persister(
     if (last_loop_usec < delay_time_usec) {
       const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
       struct timespec t;
-      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
+      t.tv_sec = sleep_ns / ONE_SECOND_NS;
       t.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&t, nullptr);
     }
@@ -144,16 +129,12 @@ txn_logger::persister(
   }
 }
 
-void
-txn_logger::advance_system_sync_epoch(
-    const vector<vector<unsigned>> &assignments)
-{
+void txn_logger::advance_system_sync_epoch(
+    const vector<vector<unsigned>> &assignments) {
   uint64_t min_so_far = numeric_limits<uint64_t>::max();
-  const uint64_t best_tick_ex =
-    ticker::s_instance.global_current_tick();
+  const uint64_t best_tick_ex = ticker::s_instance.global_current_tick();
   // special case 0
-  const uint64_t best_tick_inc =
-    best_tick_ex ? (best_tick_ex - 1) : 0;
+  const uint64_t best_tick_inc = best_tick_ex ? (best_tick_ex - 1) : 0;
 
   for (size_t i = 0; i < assignments.size(); i++)
     for (auto j : assignments[i])
@@ -188,13 +169,11 @@ txn_logger::advance_system_sync_epoch(
           }
         }
         min_so_far = min(
-            per_thread_sync_epochs_[i].epochs_[k].load(
-              memory_order_acquire),
+            per_thread_sync_epochs_[i].epochs_[k].load(memory_order_acquire),
             min_so_far);
       }
 
-  const uint64_t syssync =
-    system_sync_epoch_->load(memory_order_acquire);
+  const uint64_t syssync = system_sync_epoch_->load(memory_order_acquire);
 
   INVARIANT(min_so_far < numeric_limits<uint64_t>::max());
   INVARIANT(syssync <= min_so_far);
@@ -204,35 +183,30 @@ txn_logger::advance_system_sync_epoch(
   for (size_t i = 0; i < g_persist_stats.size(); i++) {
     auto &ps = g_persist_stats[i];
     for (uint64_t e = syssync + 1; e <= min_so_far; e++) {
-        auto &pes = ps.d_[e % g_max_lag_epochs];
-        const uint64_t ntxns_in_epoch = pes.ntxns_.load(memory_order_acquire);
-        const uint64_t start_us = pes.earliest_start_us_.load(memory_order_acquire);
-        INVARIANT(now_us >= start_us);
-        non_atomic_fetch_add(ps.ntxns_persisted_, ntxns_in_epoch);
-        non_atomic_fetch_add(
-            ps.latency_numer_,
-            (now_us - start_us) * ntxns_in_epoch);
-        pes.ntxns_.store(0, memory_order_release);
-        pes.earliest_start_us_.store(0, memory_order_release);
+      auto &pes = ps.d_[e % g_max_lag_epochs];
+      const uint64_t ntxns_in_epoch = pes.ntxns_.load(memory_order_acquire);
+      const uint64_t start_us =
+          pes.earliest_start_us_.load(memory_order_acquire);
+      INVARIANT(now_us >= start_us);
+      non_atomic_fetch_add(ps.ntxns_persisted_, ntxns_in_epoch);
+      non_atomic_fetch_add(ps.latency_numer_,
+                           (now_us - start_us) * ntxns_in_epoch);
+      pes.ntxns_.store(0, memory_order_release);
+      pes.earliest_start_us_.store(0, memory_order_release);
     }
   }
 
   system_sync_epoch_->store(min_so_far, memory_order_release);
 }
 
-void
-txn_logger::writer(
-    unsigned id, int fd,
-    vector<unsigned> assignment)
-{
+void txn_logger::writer(unsigned id, int fd, vector<unsigned> assignment) {
 
   if (g_pin_loggers_to_numa_nodes) {
     ALWAYS_ASSERT(!numa_run_on_node(id % numa_num_configured_nodes()));
     ALWAYS_ASSERT(!sched_yield());
   }
 
-  vector<iovec> iovs(
-      min(size_t(IOV_MAX), g_nworkers * g_perthread_buffers));
+  vector<iovec> iovs(min(size_t(IOV_MAX), g_nworkers * g_perthread_buffers));
   vector<pbuffer *> pxs;
   timer loop_timer;
 
@@ -256,7 +230,7 @@ txn_logger::writer(
     if (last_loop_usec < delay_time_usec && nbufswritten < iovs.size()) {
       const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
       struct timespec t;
-      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
+      t.tv_sec = sleep_ns / ONE_SECOND_NS;
       t.tv_nsec = sleep_ns % ONE_SECOND_NS;
       nanosleep(&t, nullptr);
     }
@@ -266,7 +240,7 @@ txn_logger::writer(
     // cannot read any buffers with epoch >=
     // (cur_sync_epoch_ex + g_max_lag_epochs)
     const uint64_t cur_sync_epoch_ex =
-      system_sync_epoch_->load(memory_order_acquire) + 1;
+        system_sync_epoch_->load(memory_order_acquire) + 1;
     nbufswritten = nbyteswritten = 0;
     for (auto idx : assignment) {
       INVARIANT(idx >= 0 && idx < g_nworkers);
@@ -288,12 +262,12 @@ txn_logger::writer(
             ++g_evt_logger_max_lag_wait;
             break;
           }
-          iovs[nbufswritten].iov_base = (void *) &px->buf_start_[0];
+          iovs[nbufswritten].iov_base = (void *)&px->buf_start_[0];
 
 #ifdef LOGGER_UNSAFE_REDUCE_BUFFER_SIZE
-  #define PXLEN(px) (((px)->curoff_ < 4) ? (px)->curoff_ : ((px)->curoff_ / 4))
+#define PXLEN(px) (((px)->curoff_ < 4) ? (px)->curoff_ : ((px)->curoff_ / 4))
 #else
-  #define PXLEN(px) ((px)->curoff_)
+#define PXLEN(px) ((px)->curoff_)
 #endif
 
           const size_t pxlen = PXLEN(px);
@@ -305,7 +279,8 @@ txn_logger::writer(
           nbyteswritten += pxlen;
 
 #ifdef CHECK_INVARIANTS
-          auto last_tid_cid = transaction_proto2_static::CoreId(px->header()->last_tid_);
+          auto last_tid_cid =
+              transaction_proto2_static::CoreId(px->header()->last_tid_);
           auto px_cid = px->core_id_;
           if (last_tid_cid != px_cid) {
             cerr << "header: " << *px->header() << endl;
@@ -316,16 +291,16 @@ txn_logger::writer(
 #endif
 
           const uint64_t px_epoch =
-            transaction_proto2_static::EpochId(px->header()->last_tid_);
-          INVARIANT(
-              transaction_proto2_static::CoreId(px->header()->last_tid_) ==
-              px->core_id_);
+              transaction_proto2_static::EpochId(px->header()->last_tid_);
+          INVARIANT(transaction_proto2_static::CoreId(
+                        px->header()->last_tid_) == px->core_id_);
           INVARIANT(epoch_prefixes[sense][k] <= px_epoch);
           INVARIANT(px_epoch > 0);
           epoch_prefixes[sense][k] = px_epoch - 1;
           auto &pes = g_persist_stats[k].d_[px_epoch % g_max_lag_epochs];
           if (!pes.ntxns_.load(memory_order_acquire))
-            pes.earliest_start_us_.store(px->earliest_start_us_, memory_order_release);
+            pes.earliest_start_us_.store(px->earliest_start_us_,
+                                         memory_order_release);
           non_atomic_fetch_add(pes.ntxns_, px->header()->nentries_);
           g_evt_avg_log_entry_ntxns.offer(px->header()->nentries_);
         }
@@ -363,7 +338,7 @@ txn_logger::writer(
       {
         g_evt_avg_logger_bytes_per_writev.offer(nbyteswritten);
         const double bytes_per_sec =
-          double(nbyteswritten)/(write_timer.lap_ms() / 1000.0);
+            double(nbyteswritten) / (write_timer.lap_ms() / 1000.0);
         g_evt_avg_logger_bytes_per_sec.offer(bytes_per_sec);
       }
 #endif
@@ -374,7 +349,7 @@ txn_logger::writer(
     // return all buffers that have been io_scheduled_ - we can do this as
     // soon as write returns. we take care to return to the proper buffer
     epoch_array &ea = per_thread_sync_epochs_[id];
-    for (auto idx: assignment) {
+    for (auto idx : assignment) {
       for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
         const uint64_t x0 = ea.epochs_[k].load(memory_order_acquire);
         const uint64_t x1 = epoch_prefixes[dosense][k];
@@ -410,26 +385,23 @@ txn_logger::writer(
 }
 
 tuple<uint64_t, uint64_t, double>
-txn_logger::compute_ntxns_persisted_statistics()
-{
+txn_logger::compute_ntxns_persisted_statistics() {
   uint64_t acc = 0, acc1 = 0, acc2 = 0;
   uint64_t num = 0;
   for (size_t i = 0; i < g_persist_stats.size(); i++) {
-    acc  += g_persist_stats[i].ntxns_persisted_.load(memory_order_acquire);
+    acc += g_persist_stats[i].ntxns_persisted_.load(memory_order_acquire);
     acc1 += g_persist_stats[i].ntxns_pushed_.load(memory_order_acquire);
     acc2 += g_persist_stats[i].ntxns_committed_.load(memory_order_acquire);
-    num  += g_persist_stats[i].latency_numer_.load(memory_order_acquire);
+    num += g_persist_stats[i].latency_numer_.load(memory_order_acquire);
   }
   INVARIANT(acc <= acc1);
   INVARIANT(acc1 <= acc2);
   if (acc == 0)
     return make_tuple(0, acc1, 0.0);
-  return make_tuple(acc, acc1, double(num)/double(acc));
+  return make_tuple(acc, acc1, double(num) / double(acc));
 }
 
-void
-txn_logger::clear_ntxns_persisted_statistics()
-{
+void txn_logger::clear_ntxns_persisted_statistics() {
   for (size_t i = 0; i < g_persist_stats.size(); i++) {
     auto &ps = g_persist_stats[i];
     ps.ntxns_persisted_.store(0, memory_order_release);
@@ -444,9 +416,7 @@ txn_logger::clear_ntxns_persisted_statistics()
   }
 }
 
-void
-txn_logger::wait_for_idle_state()
-{
+void txn_logger::wait_for_idle_state() {
   for (size_t i = 0; i < NMAXCORES; i++) {
     persist_ctx &ctx = persist_ctx_for(i, INITMODE_NONE);
     if (!ctx.init_)
@@ -459,44 +429,36 @@ txn_logger::wait_for_idle_state()
   }
 }
 
-void
-txn_logger::wait_until_current_point_persisted()
-{
+void txn_logger::wait_until_current_point_persisted() {
   const uint64_t e = ticker::s_instance.global_current_tick();
   cerr << "waiting for system_sync_epoch_="
-       << system_sync_epoch_->load(memory_order_acquire)
-       << " to be < e=" << e << endl;
+       << system_sync_epoch_->load(memory_order_acquire) << " to be < e=" << e
+       << endl;
   while (system_sync_epoch_->load(memory_order_acquire) < e)
     nop_pause();
 }
 /*}}}*/
 
-                /** garbage collection subsystem **/
+/** garbage collection subsystem **/
 
 static event_counter evt_local_chain_cleanups("local_chain_cleanups");
 static event_counter evt_try_delete_unlinks("try_delete_unlinks");
-static event_avg_counter evt_avg_time_inbetween_ro_epochs_usec(
-    "avg_time_inbetween_ro_epochs_usec");
+static event_avg_counter
+    evt_avg_time_inbetween_ro_epochs_usec("avg_time_inbetween_ro_epochs_usec");
 
-void
-transaction_proto2_static::InitGC()
-{
+void transaction_proto2_static::InitGC() {
   g_flags->g_gc_init.store(true, memory_order_release);
 }
 
-static void
-sleep_ro_epoch()
-{
+static void sleep_ro_epoch() {
   const uint64_t sleep_ns = transaction_proto2_static::ReadOnlyEpochUsec * 1000;
   struct timespec t;
-  t.tv_sec  = sleep_ns / ONE_SECOND_NS;
+  t.tv_sec = sleep_ns / ONE_SECOND_NS;
   t.tv_nsec = sleep_ns % ONE_SECOND_NS;
   nanosleep(&t, nullptr);
 }
 
-void
-transaction_proto2_static::PurgeThreadOutstandingGCTasks()
-{
+void transaction_proto2_static::PurgeThreadOutstandingGCTasks() {
 #ifdef PROTO2_CAN_DISABLE_GC
   if (!IsGCEnabled())
     return;
@@ -508,7 +470,8 @@ transaction_proto2_static::PurgeThreadOutstandingGCTasks()
     return;
   // wait until we can clean up e
   for (;;) {
-    const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
+    const uint64_t last_tick_ex =
+        ticker::s_instance.global_last_tick_exclusive();
     const uint64_t ro_tick_ex = to_read_only_tick(last_tick_ex);
     if (unlikely(!ro_tick_ex)) {
       sleep_ro_epoch();
@@ -525,27 +488,26 @@ transaction_proto2_static::PurgeThreadOutstandingGCTasks()
   INVARIANT(ctx.queue_.empty());
 }
 
-//#ifdef CHECK_INVARIANTS
+// #ifdef CHECK_INVARIANTS
 //// make sure hidden is blocked by version e, when traversing from start
-//static bool
-//IsBlocked(dbtuple *start, dbtuple *hidden, uint64_t e)
+// static bool
+// IsBlocked(dbtuple *start, dbtuple *hidden, uint64_t e)
 //{
-//  dbtuple *c = start;
-//  while (c) {
-//    if (c == hidden)
-//      return false;
-//    if (c->is_not_behind(e))
-//      // blocked
-//      return true;
-//    c = c->next;
-//  }
-//  ALWAYS_ASSERT(false); // hidden should be found on chain
-//}
-//#endif
+//   dbtuple *c = start;
+//   while (c) {
+//     if (c == hidden)
+//       return false;
+//     if (c->is_not_behind(e))
+//       // blocked
+//       return true;
+//     c = c->next;
+//   }
+//   ALWAYS_ASSERT(false); // hidden should be found on chain
+// }
+// #endif
 
-void
-transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq)
-{
+void transaction_proto2_static::clean_up_to_including(threadctx &ctx,
+                                                      uint64_t ro_tick_geq) {
   INVARIANT(!rcu::s_instance.in_rcu_region());
   INVARIANT(ctx.last_reaped_epoch_ <= ro_tick_geq);
   INVARIANT(ctx.scratch_.empty());
@@ -566,7 +528,8 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
   const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
   INVARIANT(last_tick_ex);
   const uint64_t last_consistent_tid = ComputeReadOnlyTid(last_tick_ex - 1);
-  const uint64_t computed_last_tick_ex = ticker::s_instance.compute_global_last_tick_exclusive();
+  const uint64_t computed_last_tick_ex =
+      ticker::s_instance.compute_global_last_tick_exclusive();
   INVARIANT(last_tick_ex <= computed_last_tick_ex);
   INVARIANT(to_read_only_tick(last_tick_ex) > ro_tick_geq);
 #endif
@@ -574,15 +537,15 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
   // XXX: hacky
   char rcu_guard[sizeof(scoped_rcu_base<false>)] = {0};
   const size_t max_niters_with_rcu = 128;
-#define ENTER_RCU() \
-    do { \
-      new (&rcu_guard[0]) scoped_rcu_base<false>(); \
-    } while (0)
-#define EXIT_RCU() \
-    do { \
-      scoped_rcu_base<false> *px = (scoped_rcu_base<false> *) &rcu_guard[0]; \
-      px->~scoped_rcu_base<false>(); \
-    } while (0)
+#define ENTER_RCU()                                                            \
+  do {                                                                         \
+    new (&rcu_guard[0]) scoped_rcu_base<false>();                              \
+  } while (0)
+#define EXIT_RCU()                                                             \
+  do {                                                                         \
+    scoped_rcu_base<false> *px = (scoped_rcu_base<false> *)&rcu_guard[0];      \
+    px->~scoped_rcu_base<false>();                                             \
+  } while (0)
 
   ctx.scratch_.empty_accept_from(ctx.queue_, ro_tick_geq);
   ctx.scratch_.transfer_freelist(ctx.queue_);
@@ -598,11 +561,15 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
       // guaranteed to be gc-able now (even w/o RCU)
 #ifdef CHECK_INVARIANTS
       if (delent.trigger_tid_ > last_consistent_tid /*|| !IsBlocked(delent.tuple_ahead_, delent.tuple(), last_consistent_tid) */) {
-        cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
+        cerr << "tuple ahead     : "
+             << g_proto_version_str(delent.tuple_ahead_->version) << endl;
         cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
-        cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
-        cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
-        cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+        cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_)
+             << endl;
+        cerr << "tuple           : "
+             << g_proto_version_str(delent.tuple()->version) << endl;
+        cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid)
+             << endl;
         cerr << "last_tick_ex    : " << last_tick_ex << endl;
         cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
         cerr << "rcu_block_tick  : " << it.tick() << endl;
@@ -614,13 +581,17 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
     } else {
       INVARIANT(!delent.tuple_ahead_);
       INVARIANT(delent.btr_);
-      // check if an element preceeds the (deleted) tuple before doing the delete
+      // check if an element preceeds the (deleted) tuple before doing the
+      // delete
       ::lock_guard<dbtuple> lg_tuple(delent.tuple(), false);
 #ifdef CHECK_INVARIANTS
       if (!delent.tuple()->is_not_behind(last_consistent_tid)) {
-        cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
-        cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
-        cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+        cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_)
+             << endl;
+        cerr << "tuple           : "
+             << g_proto_version_str(delent.tuple()->version) << endl;
+        cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid)
+             << endl;
         cerr << "last_tick_ex    : " << last_tick_ex << endl;
         cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
         cerr << "rcu_block_tick  : " << it.tick() << endl;
@@ -631,15 +602,14 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
 #endif
       if (unlikely(!delent.tuple()->is_latest())) {
         // requeue it up, except this time as a regular delete
-        const uint64_t my_ro_tick = to_read_only_tick(
-            ticker::s_instance.global_current_tick());
+        const uint64_t my_ro_tick =
+            to_read_only_tick(ticker::s_instance.global_current_tick());
         ctx.queue_.enqueue(
             delete_entry(
-              nullptr,
-              MakeTid(CoreMask, NumIdMask >> NumIdShift, (my_ro_tick + 1) * ReadOnlyEpochMultiplier - 1),
-              delent.tuple(),
-              marked_ptr<string>(),
-              nullptr),
+                nullptr,
+                MakeTid(CoreMask, NumIdMask >> NumIdShift,
+                        (my_ro_tick + 1) * ReadOnlyEpochMultiplier - 1),
+                delent.tuple(), marked_ptr<string>(), nullptr),
             my_ro_tick);
         ++g_evt_proto_gc_delete_requeue;
         // reclaim string ptrs
@@ -674,7 +644,8 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
       typename concurrent_btree::value_type removed = 0;
       const bool did_remove = delent.btr_->remove(k, &removed);
       ALWAYS_ASSERT(did_remove);
-      INVARIANT(removed == (typename concurrent_btree::value_type) delent.tuple());
+      INVARIANT(removed ==
+                (typename concurrent_btree::value_type)delent.tuple());
       delent.tuple()->clear_latest();
       dbtuple::release(delent.tuple()); // rcu free it
     }
@@ -694,23 +665,18 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
 }
 
 aligned_padded_elem<transaction_proto2_static::hackstruct>
-  transaction_proto2_static::g_hack;
+    transaction_proto2_static::g_hack;
 aligned_padded_elem<transaction_proto2_static::flags>
-  transaction_proto2_static::g_flags;
+    transaction_proto2_static::g_flags;
 percore_lazy<transaction_proto2_static::threadctx>
-  transaction_proto2_static::g_threadctxs;
-event_counter
-  transaction_proto2_static::g_evt_worker_thread_wait_log_buffer(
-      "worker_thread_wait_log_buffer");
-event_counter
-  transaction_proto2_static::g_evt_dbtuple_no_space_for_delkey(
-      "dbtuple_no_space_for_delkey");
-event_counter
-  transaction_proto2_static::g_evt_proto_gc_delete_requeue(
-      "proto_gc_delete_requeue");
+    transaction_proto2_static::g_threadctxs;
+event_counter transaction_proto2_static::g_evt_worker_thread_wait_log_buffer(
+    "worker_thread_wait_log_buffer");
+event_counter transaction_proto2_static::g_evt_dbtuple_no_space_for_delkey(
+    "dbtuple_no_space_for_delkey");
+event_counter transaction_proto2_static::g_evt_proto_gc_delete_requeue(
+    "proto_gc_delete_requeue");
 event_avg_counter
-  transaction_proto2_static::g_evt_avg_log_entry_size(
-      "avg_log_entry_size");
-event_avg_counter
-  transaction_proto2_static::g_evt_avg_proto_gc_queue_len(
-      "avg_proto_gc_queue_len");
+    transaction_proto2_static::g_evt_avg_log_entry_size("avg_log_entry_size");
+event_avg_counter transaction_proto2_static::g_evt_avg_proto_gc_queue_len(
+    "avg_proto_gc_queue_len");

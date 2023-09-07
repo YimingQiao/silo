@@ -1,14 +1,11 @@
 #pragma once
 
-#include <unistd.h>
 #include <errno.h>
+#include <unistd.h>
 
 class fileutils {
 public:
-
-  static int
-  writeall(int fd, const char *buf, int n)
-  {
+  static int writeall(int fd, const char *buf, int n) {
     while (n) {
       int r = write(fd, buf, n);
       if (unlikely(r < 0))
@@ -19,9 +16,7 @@ public:
     return 0;
   }
 
-  static int
-  readall(int fd, char *buf, int n)
-  {
+  static int readall(int fd, char *buf, int n) {
     while (n) {
       int r = read(fd, buf, n);
       if (r == 0)
@@ -36,5 +31,4 @@ public:
     }
     return 0;
   }
-
 };

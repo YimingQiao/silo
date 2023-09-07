@@ -16,27 +16,27 @@
 #ifndef KVIO_H
 #define KVIO_H
 
+#include "str.hh"
+#include "string.hh"
+#include <stdlib.h>
 #include <string>
 #include <vector>
-#include <stdlib.h>
-#include "string.hh"
-#include "str.hh"
 
 struct kvout {
-    int fd;
-    char *buf;
-    unsigned capacity; // allocated size of buf
-    unsigned n;   // # of chars we've written to buf
+  int fd;
+  char *buf;
+  unsigned capacity; // allocated size of buf
+  unsigned n;        // # of chars we've written to buf
 
-    inline void append(char c);
+  inline void append(char c);
 
-    inline char *reserve(int n);
+  inline char *reserve(int n);
 
-    inline void adjust_length(int delta);
+  inline void adjust_length(int delta);
 
-    inline void set_end(char *end);
+  inline void set_end(char *end);
 
-    void grow(unsigned want);
+  void grow(unsigned want);
 };
 
 kvout *new_kvout(int fd, int buflen);
@@ -52,26 +52,26 @@ int kvwrite(kvout *kv, const void *buf, unsigned int n);
 void kvflush(kvout *kv);
 
 inline void kvout::append(char c) {
-    if (n == capacity)
-        grow(0);
-    buf[n] = c;
-    ++n;
+  if (n == capacity)
+    grow(0);
+  buf[n] = c;
+  ++n;
 }
 
 inline char *kvout::reserve(int nchars) {
-    if (n + nchars > capacity)
-        grow(n + nchars);
-    return buf + n;
+  if (n + nchars > capacity)
+    grow(n + nchars);
+  return buf + n;
 }
 
 inline void kvout::adjust_length(int delta) {
-    masstree_precondition(n + delta <= capacity);
-    n += delta;
+  masstree_precondition(n + delta <= capacity);
+  n += delta;
 }
 
 inline void kvout::set_end(char *x) {
-    masstree_precondition(x >= buf && x <= buf + capacity);
-    n = x - buf;
+  masstree_precondition(x >= buf && x <= buf + capacity);
+  n = x - buf;
 }
 
 #endif

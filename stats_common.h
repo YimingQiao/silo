@@ -1,8 +1,8 @@
 #pragma once
 
 #include "counter.h"
-#include "macros.h"
 #include "fileutils.h"
+#include "macros.h"
 
 enum class stats_command : uint8_t { GET_COUNTER_VALUE = 0x1 };
 
@@ -16,31 +16,20 @@ public:
   static const size_t MAX_DATA = 0xFFFF - 4;
   packet() : size_(0) {}
   inline void clear() { size_ = 0; }
-  inline void
-  assign(const char *p, size_t n)
-  {
+  inline void assign(const char *p, size_t n) {
     INVARIANT(n <= MAX_DATA);
     NDB_MEMCPY(&data_[0], p, n);
     size_ = n;
   }
-  inline void
-  assign(const std::string &s)
-  {
-    assign(s.data(), s.size());
-  }
-  int
-  sendpkt(int fd) const
-  {
+  inline void assign(const std::string &s) { assign(s.data(), s.size()); }
+  int sendpkt(int fd) const {
     // XXX: we don't care about endianness
-    return fileutils::writeall(
-        fd, (const char *) &size_, sizeof(size_) + size_);
+    return fileutils::writeall(fd, (const char *)&size_, sizeof(size_) + size_);
   }
-  int
-  recvpkt(int fd)
-  {
+  int recvpkt(int fd) {
     // XXX: we don't care about endianness
     int r;
-    if ((r = fileutils::readall(fd, (char *) &size_, sizeof(size_)))) {
+    if ((r = fileutils::readall(fd, (char *)&size_, sizeof(size_)))) {
       clear();
       return r;
     }
@@ -56,7 +45,8 @@ public:
     return 0;
   }
   inline uint32_t size() const { return size_; }
-  inline const char * data() const { return &data_[0]; }
+  inline const char *data() const { return &data_[0]; }
+
 private:
   uint32_t size_;
   char data_[MAX_DATA];

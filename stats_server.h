@@ -1,7 +1,7 @@
 #pragma once
 
-#include <string>
 #include "stats_common.h"
+#include <string>
 
 // serves over unix socket
 class stats_server {

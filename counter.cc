@@ -1,28 +1,22 @@
 #include "counter.h"
-#include "util.h"
 #include "lockguard.h"
+#include "util.h"
 
 using namespace std;
 using namespace util;
 using namespace private_;
 
-map<string, event_ctx *> &
-event_ctx::event_counters()
-{
+map<string, event_ctx *> &event_ctx::event_counters() {
   static map<string, event_ctx *> s_counters;
   return s_counters;
 }
 
-spinlock &
-event_ctx::event_counters_lock()
-{
+spinlock &event_ctx::event_counters_lock() {
   static spinlock s_lock;
   return s_lock;
 }
 
-void
-event_ctx::stat(counter_data &d)
-{
+void event_ctx::stat(counter_data &d) {
   for (size_t i = 0; i < coreid::NMaxCores; i++)
     d.count_ += counts_[i];
   if (avg_tag_) {
@@ -39,9 +33,7 @@ event_ctx::stat(counter_data &d)
   }
 }
 
-map<string, counter_data>
-event_counter::get_all_counters()
-{
+map<string, counter_data> event_counter::get_all_counters() {
   map<string, counter_data> ret;
   const map<string, event_ctx *> &evts = event_ctx::event_counters();
   spinlock &l = event_ctx::event_counters_lock();
@@ -56,9 +48,7 @@ event_counter::get_all_counters()
   return ret;
 }
 
-void
-event_counter::reset_all_counters()
-{
+void event_counter::reset_all_counters() {
   const map<string, event_ctx *> &evts = event_ctx::event_counters();
   spinlock &l = event_ctx::event_counters_lock();
   lock_guard<spinlock> sl(l);
@@ -72,9 +62,7 @@ event_counter::reset_all_counters()
     }
 }
 
-bool
-event_counter::stat(const string &name, counter_data &d)
-{
+bool event_counter::stat(const string &name, counter_data &d) {
   const map<string, event_ctx *> &evts = event_ctx::event_counters();
   spinlock &l = event_ctx::event_counters_lock();
   event_ctx *ctx = nullptr;
@@ -91,29 +79,21 @@ event_counter::stat(const string &name, counter_data &d)
 }
 
 #ifdef ENABLE_EVENT_COUNTERS
-event_counter::event_counter(const string &name)
-  : ctx_(name, false)
-{
+event_counter::event_counter(const string &name) : ctx_(name, false) {
   spinlock &l = event_ctx::event_counters_lock();
   map<string, event_ctx *> &evts = event_ctx::event_counters();
   lock_guard<spinlock> sl(l);
   evts[name] = ctx_.obj();
 }
 
-event_avg_counter::event_avg_counter(const string &name)
-  : ctx_(name)
-{
+event_avg_counter::event_avg_counter(const string &name) : ctx_(name) {
   spinlock &l = event_ctx::event_counters_lock();
   map<string, event_ctx *> &evts = event_ctx::event_counters();
   lock_guard<spinlock> sl(l);
   evts[name] = ctx_.obj();
 }
 #else
-event_counter::event_counter(const string &name)
-{
-}
+event_counter::event_counter(const string &name) {}
 
-event_avg_counter::event_avg_counter(const string &name)
-{
-}
+event_avg_counter::event_avg_counter(const string &name) {}
 #endif
