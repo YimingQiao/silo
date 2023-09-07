@@ -376,7 +376,7 @@ public:
 
   static bool keylenx_has_ksuf(int keylenx) { return keylenx == ksuf_keylenx; }
 
-  bool is_layer(int p) const { return keylenx_is_layer(keylenx_[p]); }
+  bool value_is_layer(int p) const { return keylenx_is_layer(keylenx_[p]); }
 
   bool has_ksuf(int p) const { return keylenx_has_ksuf(keylenx_[p]); }
 

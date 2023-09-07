@@ -24,7 +24,7 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 MODE ?= perf
 
 # run with 'MASSTREE=0' to turn off masstree
-MASSTREE ?= 0
+MASSTREE ?= 1
 
 ###############
 
@@ -75,7 +75,7 @@ else
 	$(error invalid mode)
 endif
 
-CXXFLAGS := -w -g -Wall -std=c++11
+CXXFLAGS := -w -g -Wall -std=c++17
 CXXFLAGS += -MD -Ithird-party/lz4 -DCONFIG_H=\"$(CONFIG_H)\"
 ifeq ($(DEBUG_S),1)
         CXXFLAGS += -fno-omit-frame-pointer -DDEBUG

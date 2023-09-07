@@ -19,6 +19,7 @@
 #include "../macros.h"
 #include "../scopedperf.hh"
 #include "../spinlock.h"
+#include "../third-party/libblitz/include/compression.h"
 #include "../txn.h"
 #include "bench.h"
 

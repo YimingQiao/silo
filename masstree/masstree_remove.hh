@@ -42,8 +42,7 @@ template <typename P> bool tcursor<P>::gc_layer(threadinfo &ti) {
     return false;
   permuter_type perm(n_->permutation_);
   kx_.p = perm[kx_.i];
-  if (n_->ikey0_[kx_.p] != ka_.ikey() || !n_->is_layer(kx_.p))
-    return false;
+  if (n_->ikey0_[kx_.p] != ka_.ikey() || !n_->value_is_layer(kx_.p)) return false;
 
   // remove redundant internode layers
   node_type *layer;
@@ -326,8 +325,7 @@ template <typename P> void destroy_rcu_callback<P>::operator()(threadinfo &ti) {
       typename leaf_type::permuter_type perm = l->permutation();
       for (int i = 0; i != l->size(); ++i) {
         int p = perm[i];
-        if (l->is_layer(p))
-          enqueue(l->lv_[p].layer(), tailp);
+        if (l->value_is_layer(p)) enqueue(l->lv_[p].layer(), tailp);
       }
       l->deallocate(ti);
     } else {
