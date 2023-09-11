@@ -35,25 +35,76 @@ public:
       for (position = length; position >= 0; position--) {
         if (s_data[position] == ' ') break;
       }
-      s_data = s_data.substr(0, position) + "original";
+      s_data = s_data.substr(0, position + 1) + "original";
     }
 
     return s_data;
   }
 
-  inline ALWAYS_INLINE void HistoryData(char *s, int upper_length);
+  inline ALWAYS_INLINE std::string HistoryData(int upper_length) { return wordsData(upper_length, 3); }
 
-  inline ALWAYS_INLINE void CustomerData(char *s, int upper_length, bool bad_credit);
+  std::string CustomerData(int upper_length, bool bad_credit);
 
-  inline ALWAYS_INLINE void PhoneData(char *s, int length);
+  inline ALWAYS_INLINE std::string PhoneData(int length) {
+    if (length == 16) {
+      std::string s("+01-");
+      std::string &word = phone_district_code[RandomNumber(0, phone_district_code.size() - 1)];
+      s += word + "-" + RandomString(3, 3) + "-" + RandomString(4, 4);
+      return s;
+    } else {
+      std::cerr << "[TPCCRandomGenerator::PhoneData] length is not supported\n";
+      return "";
+    }
+  }
 
-  inline ALWAYS_INLINE void DepartmentData(char *s, int upper_length);
+  inline ALWAYS_INLINE std::string DepartmentData(int upper_length) {
+    if (upper_length > 13) {
+      std::string s = "Department#";
+      return s + RandomString(1, 2);
+    } else {
+      std::cerr << "[TPCCRandomGenerator::DepartmentData] upper_length is too small (<= 13)\n";
+    }
+  }
 
-  inline ALWAYS_INLINE void CustomerString(char *s, int upper_length, const std::string &corpus_name);
+  inline ALWAYS_INLINE std::string CustomerString(int upper_length, const std::string &corpus_name) {
+    std::vector<std::string> *corpus;
+    if (corpus_name == "first_name") {
+      corpus = &first_names_;
+    } else if (corpus_name == "street") {
+      corpus = &street_;
+    } else if (corpus_name == "city") {
+      corpus = &city_;
+    } else if (corpus_name == "state") {
+      corpus = &state_;
+    } else if (corpus_name == "zip") {
+      corpus = &zip_;
+    } else if (corpus_name == "stock_data") {
+      corpus = &stock_data_corpus_;
+    } else {
+      printf("Corpus name %s is not supported\n", corpus_name.c_str());
+      return "";
+    }
 
-  inline ALWAYS_INLINE uint32_t CustomerIntDist(const std::string &name);
+    std::string &words = (*corpus)[RandomNumber(0, corpus->size() - 1)];
+    while (words.length() > upper_length) words = (*corpus)[RandomNumber(0, corpus->size() - 1)];
+    return words;
+  }
 
-  inline ALWAYS_INLINE float CustomerFloatDist(const std::string &name);
+  inline ALWAYS_INLINE uint32_t CustomerIntDist(const std::string &name) {
+    if (name == "payment_cnt") return cus_payment_cnt_dist_[RandomNumber(0, cus_payment_cnt_dist_.size() - 1)];
+    else if (name == "delivery_cnt")
+      return cus_delivery_cnt_dist_[RandomNumber(0, cus_delivery_cnt_dist_.size() - 1)];
+    else { printf("Customer num dist name %s is not supported\n", name.c_str()); }
+    return 0;
+  }
+
+  inline ALWAYS_INLINE float CustomerFloatDist(const std::string &name) {
+    if (name == "balance") return cus_balance_dist_[RandomNumber(0, cus_balance_dist_.size() - 1)];
+    else if (name == "ytd_payment")
+      return cus_ytd_payment_dist_[RandomNumber(0, cus_ytd_payment_dist_.size() - 1)];
+    else { printf("Customer float dist name %s is not supported\n", name.c_str()); }
+    return 0;
+  }
 
   static inline ALWAYS_INLINE std::string DistInfo(int d_id, int w_id, int i_id) {
     std::vector<char> buffer(24 + 1);// +1 for the null terminator
@@ -64,10 +115,12 @@ public:
 private:
   inline ALWAYS_INLINE int RandomNumber(int min, int max) { return r_.next_uniform() * (max - min + 1) + min; }
 
-  inline ALWAYS_INLINE void RandomString(char *s, int lower, int upper, char base = '0', int num_characters = 10) {
+  inline ALWAYS_INLINE std::string RandomString(int lower, int upper, char base = '0', int num_characters = 10) {
     int length = RandomNumber(lower, upper);
+    std::string s;
+    s.resize(length);
     for (int i = 0; i < length; ++i) { s[i] = static_cast<char>(base + RandomNumber(0, num_characters - 1)); }
-    s[length] = '\0';
+    return s;
   }
 
 private:

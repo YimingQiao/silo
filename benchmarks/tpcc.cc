@@ -287,8 +287,8 @@ public:
 
   static string NameTokens[];
 
-  // all tokens are at most 5 chars long
-  static const size_t CustomerLastNameMaxSize = 5 * 3;
+  // all tokens are at most 5 chars long, it has 3 tokens, plus two '-'
+  static const size_t CustomerLastNameMaxSize = 5 * 3 + 2;
 
   static inline size_t GetCustomerLastName(uint8_t *buf, fast_random &r, int num) {
     const string &s0 = NameTokens[num / 100];
@@ -299,9 +299,11 @@ public:
     const size_t s1_sz = s1.size();
     const size_t s2_sz = s2.size();
     NDB_MEMCPY(buf, s0.data(), s0_sz);
-    buf += s0_sz;
+    *(buf + s0_sz) = '-';
+    buf += s0_sz + 1;
     NDB_MEMCPY(buf, s1.data(), s1_sz);
-    buf += s1_sz;
+    *(buf + s1_sz) = '-';
+    buf += s1_sz + 1;
     NDB_MEMCPY(buf, s2.data(), s2_sz);
     buf += s2_sz;
     return buf - begin;
@@ -656,8 +658,8 @@ protected:
             v_data.s_dist_10.assign(TPCCRandomGenerator::DistInfo(10, w, i));
 
             checker::SanityCheckStock(&k, &v);
-            const size_t sz = Size(v);
-            stock_total_sz += sz;
+            stock_total_sz += Size(v);
+            stock_total_sz += Size(v_data);
             n_stocks++;
             tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, v));
             tbl_stock_data(w)->insert(txn, Encode(k_data), Encode(obj_buf1, v_data));
@@ -786,7 +788,8 @@ protected:
 
               customer::value v;
               v.c_discount = (float) (RandomNumber(r, 1, 5000) / 10000.0);
-              if (RandomNumber(r, 1, 100) <= 10) v.c_credit.assign("BC");
+              bool bad_credit = RandomNumber(r, 1, 100) <= 10;
+              if (bad_credit) v.c_credit.assign("BC");
               else
                 v.c_credit.assign("GC");
 
@@ -794,23 +797,23 @@ protected:
               else
                 v.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
 
-              v.c_first.assign(RandomStr(r, RandomNumber(r, 8, 16)));
+              v.c_first.assign(blitz_generator.CustomerString(16, "first_name"));
               v.c_credit_lim = 50000;
 
-              v.c_balance = -10;
-              v.c_ytd_payment = 10;
-              v.c_payment_cnt = 1;
-              v.c_delivery_cnt = 0;
+              v.c_balance = blitz_generator.CustomerFloatDist("balance");
+              v.c_ytd_payment = blitz_generator.CustomerFloatDist("ytd_payment");
+              v.c_payment_cnt = blitz_generator.CustomerIntDist("payment_cnt");
+              v.c_delivery_cnt = blitz_generator.CustomerIntDist("delivery_cnt");
 
-              v.c_street_1.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-              v.c_street_2.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-              v.c_city.assign(RandomStr(r, RandomNumber(r, 10, 20)));
-              v.c_state.assign(RandomStr(r, 3));
-              v.c_zip.assign(RandomNStr(r, 4) + "11111");
-              v.c_phone.assign(RandomNStr(r, 16));
+              v.c_street_1.assign(blitz_generator.CustomerString(20, "street"));
+              v.c_street_2.assign(blitz_generator.DepartmentData(20));
+              v.c_city.assign(blitz_generator.CustomerString(20, "city"));
+              v.c_state.assign(blitz_generator.CustomerString(2, "state"));
+              v.c_zip.assign(blitz_generator.CustomerString(5, "zip") + "1111");
+              v.c_phone.assign(blitz_generator.PhoneData(16));
               v.c_since = GetCurrentTimeMillis();
               v.c_middle.assign("OE");
-              v.c_data.assign(RandomStr(r, RandomNumber(r, 300, 500)));
+              v.c_data.assign(blitz_generator.CustomerData(500, bad_credit));
 
               checker::SanityCheckCustomer(&k, &v);
               const size_t sz = Size(v);
@@ -836,7 +839,7 @@ protected:
 
               history::value v_hist;
               v_hist.h_amount = 10;
-              v_hist.h_data.assign(RandomStr(r, RandomNumber(r, 10, 24)));
+              v_hist.h_data.assign(blitz_generator.HistoryData(24));
 
               tbl_history(w)->insert(txn, Encode(k_hist), Encode(obj_buf, v_hist));
             }
@@ -955,9 +958,7 @@ protected:
 
               v_ol.ol_supply_w_id = k_ol.ol_w_id;
               v_ol.ol_quantity = 5;
-              // v_ol.ol_dist_info comes from stock_data(ol_supply_w_id,
-              // ol_o_id)
-              // v_ol.ol_dist_info = RandomStr(r, 24);
+              v_ol.ol_dist_info.assign(blitz_generator.DistInfo(d, w, v_ol.ol_i_id));
 
               checker::SanityCheckOrderLine(&k_ol, &v_ol);
               const size_t sz = Size(v_ol);
@@ -1357,7 +1358,7 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
       uint8_t lastname_buf[CustomerLastNameMaxSize + 1];
-      static_assert(sizeof(lastname_buf) == 16, "xx");
+      static_assert(sizeof(lastname_buf) == 18, "xx");
       NDB_MEMSET(lastname_buf, 0, sizeof(lastname_buf));
       GetNonUniformCustomerLastNameRun(lastname_buf, r);
 
@@ -1484,7 +1485,7 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
     if (RandomNumber(r, 1, 100) <= 60) {
       // cust by name
       uint8_t lastname_buf[CustomerLastNameMaxSize + 1];
-      static_assert(sizeof(lastname_buf) == 16, "xx");
+      static_assert(sizeof(lastname_buf) == 18, "xx");
       NDB_MEMSET(lastname_buf, 0, sizeof(lastname_buf));
       GetNonUniformCustomerLastNameRun(lastname_buf, r);
 

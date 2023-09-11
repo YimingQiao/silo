@@ -53,8 +53,9 @@ DO_STRUCT(oorder, OORDER_KEY_FIELDS, OORDER_VALUE_FIELDS)
 DO_STRUCT(oorder_c_id_idx, OORDER_C_ID_IDX_KEY_FIELDS, OORDER_C_ID_IDX_VALUE_FIELDS)
 
 #define ORDER_LINE_KEY_FIELDS(x, y) x(int32_t, ol_w_id) y(int32_t, ol_d_id) y(int32_t, ol_o_id) y(int32_t, ol_number)
-#define ORDER_LINE_VALUE_FIELDS(x, y) \
-  x(int32_t, ol_i_id) y(uint32_t, ol_delivery_d) y(float, ol_amount) y(int32_t, ol_supply_w_id) y(int8_t, ol_quantity)
+#define ORDER_LINE_VALUE_FIELDS(x, y)                                                                                  \
+  x(int32_t, ol_i_id) y(uint32_t, ol_delivery_d) y(float, ol_amount) y(int32_t, ol_supply_w_id) y(int8_t, ol_quantity) \
+      y(inline_str_fixed<24>, ol_dist_info)
 DO_STRUCT(order_line, ORDER_LINE_KEY_FIELDS, ORDER_LINE_VALUE_FIELDS)
 
 #define STOCK_KEY_FIELDS(x, y) x(int32_t, s_w_id) y(int32_t, s_i_id)
