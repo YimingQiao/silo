@@ -162,6 +162,7 @@ BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/tpcc.cc \
 	benchmarks/ycsb.cc \
 	benchmarks/tpcc_random_generator.cc \
+	benchmarks/blitz.cc \
 
 ifeq ($(MYSQL_S),1)
 BENCH_CXXFLAGS += -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"

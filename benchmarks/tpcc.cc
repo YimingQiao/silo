@@ -22,6 +22,7 @@
 #include "../third-party/libblitz/include/compression.h"
 #include "../txn.h"
 #include "bench.h"
+#include "blitz.h"
 #include "tpcc_random_generator.h"
 
 using namespace std;
@@ -369,6 +370,9 @@ STATIC_COUNTER_DECL(scopedperf::tsc_ctr, tpcc_txn, tpcc_txn_cg)
 
 class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
 public:
+  // Blitzcrank
+  Blitzcrank *stock_blitz, *stock_data_blitz;
+
   // resp for [warehouse_id_start, warehouse_id_end)
   tpcc_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
               const map<string, abstract_ordered_index *> &open_tables,
@@ -607,12 +611,81 @@ public:
                     const map<string, vector<abstract_ordered_index *>> &partitions, ssize_t warehouse_id)
       : bench_loader(seed, db, open_tables),
         tpcc_worker_mixin(partitions),
-        warehouse_id(warehouse_id) {
+        warehouse_id(warehouse_id),
+        stock_blitz(new Blitzcrank("stock")),
+        stock_data_blitz(new Blitzcrank("stock_data")) {
     ALWAYS_ASSERT(warehouse_id == -1 || (warehouse_id >= 1 && static_cast<size_t>(warehouse_id) <= NumWarehouses()));
   }
 
+  Blitzcrank *GetStockBlitz() { return stock_blitz; }
+  Blitzcrank *GetStockDataBlitz() { return stock_data_blitz; }
+
 protected:
-  virtual void load() {
+  void BlitzTraining() {
+    uint64_t stock_total_sz = 0, n_stocks = 0;
+    const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
+    const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
+
+    for (uint w = w_start; w <= w_end; w++) {
+      if (pin_cpus) PinToWarehouseId(w);
+
+      for (uint i = 1; i <= NumItems(); ++i) {
+        const stock::key k(w, i);
+        const stock_data::key k_data(w, i);
+
+        stock::value v;
+        v.s_quantity = RandomNumber(r, 10, 100);
+        v.s_ytd = blitz_generator.StockIntDist("ytd");
+        v.s_order_cnt = blitz_generator.StockIntDist("order_cnt");
+        v.s_remote_cnt = blitz_generator.StockIntDist("remote_cnt");
+
+        stock_data::value v_data;
+        if (RandomNumber(r, 1, 100) > 10) {
+          v_data.s_data.assign(blitz_generator.StockData(50, false));
+        } else {
+          v_data.s_data.assign(blitz_generator.StockData(50, true));
+        }
+        v_data.s_dist_01.assign(TPCCRandomGenerator::DistInfo(1, w, i));
+        v_data.s_dist_02.assign(TPCCRandomGenerator::DistInfo(2, w, i));
+        v_data.s_dist_03.assign(TPCCRandomGenerator::DistInfo(3, w, i));
+        v_data.s_dist_04.assign(TPCCRandomGenerator::DistInfo(4, w, i));
+        v_data.s_dist_05.assign(TPCCRandomGenerator::DistInfo(5, w, i));
+        v_data.s_dist_06.assign(TPCCRandomGenerator::DistInfo(6, w, i));
+        v_data.s_dist_07.assign(TPCCRandomGenerator::DistInfo(7, w, i));
+        v_data.s_dist_08.assign(TPCCRandomGenerator::DistInfo(8, w, i));
+        v_data.s_dist_09.assign(TPCCRandomGenerator::DistInfo(9, w, i));
+        v_data.s_dist_10.assign(TPCCRandomGenerator::DistInfo(10, w, i));
+
+        stock_total_sz += Size(v);
+        stock_total_sz += Size(v_data);
+        n_stocks++;
+
+        tmp_db_stock_.PushTuple(v);
+        tmp_db_stock_data_.PushTuple(v_data);
+      }
+    }
+
+    stock_blitz->Train(tmp_db_stock_);
+    stock_data_blitz->Train(tmp_db_stock_data_);
+
+    if (verbose) {
+      if (warehouse_id == -1) {
+        cerr << "[INFO] finished Learning stock" << endl;
+        cerr << "[INFO]   * average stock record length: " << (double(stock_total_sz) / double(n_stocks)) << " bytes"
+             << endl;
+        cerr << "[INFO]   * stock number in Blitz table: " << tmp_db_stock_data_.RowsNum() << endl;
+      } else {
+        cerr << "[INFO] Blitzcrank must be training with single thread" << endl;
+      }
+    }
+  }
+
+  void load() override {
+    // Training the Blitz-crank model
+    BlitzTraining();
+
+    // ----------------- Training Done, Load Compressed Value Into KV Store ----------------------- //
+
     string obj_buf, obj_buf1;
 
     uint64_t stock_total_sz = 0, n_stocks = 0;
@@ -620,63 +693,44 @@ protected:
     const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
 
     for (uint w = w_start; w <= w_end; w++) {
-      const size_t batchsize = (db->txn_max_batch_size() == -1) ? NumItems() : db->txn_max_batch_size();
-      const size_t nbatches = (batchsize > NumItems()) ? 1 : (NumItems() / batchsize);
-
       if (pin_cpus) PinToWarehouseId(w);
 
-      for (uint b = 0; b < nbatches;) {
-        scoped_str_arena s_arena(arena);
-        void *const txn = db->new_txn(txn_flags, arena, txn_buf());
-        try {
-          const size_t iend = std::min((b + 1) * batchsize + 1, NumItems());
-          for (uint i = (b * batchsize + 1); i <= iend; i++) {
-            const stock::key k(w, i);
-            const stock_data::key k_data(w, i);
+      scoped_str_arena s_arena(arena);
+      void *const txn = db->new_txn(txn_flags, arena, txn_buf());
+      try {
+        for (uint i = 1; i <= NumItems(); i++) {
+          const stock::key k(w, i);
+          const stock_data::key k_data(w, i);
 
-            stock::value v;
-            v.s_quantity = RandomNumber(r, 10, 100);
-            v.s_ytd = blitz_generator.StockIntDist("ytd");
-            v.s_order_cnt = blitz_generator.StockIntDist("order_cnt");
-            v.s_remote_cnt = blitz_generator.StockIntDist("remote_cnt");
+          auto &v = tmp_db_stock_.GetTuple((w - w_start) * NumItems() + i - 1);
+          auto &v_data = tmp_db_stock_data_.GetTuple((w - w_start) * NumItems() + i - 1);
 
-            stock_data::value v_data;
-            if (RandomNumber(r, 1, 100) > 10) {
-              v_data.s_data.assign(blitz_generator.StockData(50, false));
-            } else {
-              v_data.s_data.assign(blitz_generator.StockData(50, true));
-            }
-            v_data.s_dist_01.assign(TPCCRandomGenerator::DistInfo(1, w, i));
-            v_data.s_dist_02.assign(TPCCRandomGenerator::DistInfo(2, w, i));
-            v_data.s_dist_03.assign(TPCCRandomGenerator::DistInfo(3, w, i));
-            v_data.s_dist_04.assign(TPCCRandomGenerator::DistInfo(4, w, i));
-            v_data.s_dist_05.assign(TPCCRandomGenerator::DistInfo(5, w, i));
-            v_data.s_dist_06.assign(TPCCRandomGenerator::DistInfo(6, w, i));
-            v_data.s_dist_07.assign(TPCCRandomGenerator::DistInfo(7, w, i));
-            v_data.s_dist_08.assign(TPCCRandomGenerator::DistInfo(8, w, i));
-            v_data.s_dist_09.assign(TPCCRandomGenerator::DistInfo(9, w, i));
-            v_data.s_dist_10.assign(TPCCRandomGenerator::DistInfo(10, w, i));
+          vector<uint8_t> v_codes = std::move(stock_blitz->cpr_->TransformTupleToBits(v, 4));
+          vector<uint8_t> v_data_codes = std::move(stock_data_blitz->cpr_->TransformTupleToBits(v_data, 11));
+          std::string v_str(v_codes.begin(), v_codes.end());
+          std::string v_data_str(v_data_codes.begin(), v_data_codes.end());
 
-            checker::SanityCheckStock(&k, &v);
-            stock_total_sz += Size(v);
-            stock_total_sz += Size(v_data);
-            n_stocks++;
-            tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, v));
-            tbl_stock_data(w)->insert(txn, Encode(k_data), Encode(obj_buf1, v_data));
-          }
-          if (db->commit_txn(txn)) {
-            b++;
-          } else {
-            db->abort_txn(txn);
-            if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
-          }
-        } catch (abstract_db::abstract_abort_exception &ex) {
+          stock_total_sz += v_str.size();
+          stock_total_sz += v_data_str.size();
+          n_stocks++;
+
+          // tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, ToStock(v)));
+          tbl_stock(w)->insert(txn, Encode(k), v_str);
+          tbl_stock_data(w)->insert(txn, Encode(k_data), v_data_str);
+        }
+        if (db->commit_txn(txn)) {
+          b++;
+        } else {
           db->abort_txn(txn);
-          ALWAYS_ASSERT(warehouse_id != -1);
           if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
         }
+      } catch (abstract_db::abstract_abort_exception &ex) {
+        db->abort_txn(txn);
+        ALWAYS_ASSERT(warehouse_id != -1);
+        if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
       }
     }
+
 
     if (verbose) {
       if (warehouse_id == -1) {
@@ -687,10 +741,20 @@ protected:
         cerr << "[INFO] finished loading stock (w=" << warehouse_id << ")" << endl;
       }
     }
+
+    // delete the training data
+    tmp_db_stock_.Clear();
+    tmp_db_stock_data_.Clear();
   }
 
 private:
   ssize_t warehouse_id;
+
+  StockBlitz tmp_db_stock_;
+  StockDataBlitz tmp_db_stock_data_;
+
+  Blitzcrank *stock_blitz;
+  Blitzcrank *stock_data_blitz;
 };
 
 class tpcc_district_loader : public bench_loader, public tpcc_worker_mixin {
@@ -1134,8 +1198,13 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
 
       const stock::key k_s(ol_supply_w_id, ol_i_id);
       ALWAYS_ASSERT(tbl_stock(ol_supply_w_id)->get(txn, Encode(obj_key0, k_s), obj_v));
-      stock::value v_s_temp;
-      const stock::value *v_s = Decode(obj_v, v_s_temp);
+      //      stock::value v_s_temp;
+      //      const stock::value *v_s = Decode(obj_v, v_s_temp);
+      //      checker::SanityCheckStock(&k_s, v_s);
+      vector<uint8_t> obj_v_vector(obj_v.begin(), obj_v.end());
+      db_compress::AttrVector &v_s_vector = StockBuffer();
+      stock_blitz->dpr_->TransformBytesToTuple(&obj_v_vector, &v_s_vector, 4);
+      const stock::value *v_s = ToStock(v_s_vector);
       checker::SanityCheckStock(&k_s, v_s);
 
       stock::value v_s_new(*v_s);
@@ -1144,8 +1213,6 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
         v_s_new.s_quantity += -int32_t(ol_quantity) + 91;
       v_s_new.s_ytd += ol_quantity;
       v_s_new.s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
-
-      tbl_stock(ol_supply_w_id)->put(txn, Encode(str(), k_s), Encode(str(), v_s_new));
 
       const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
       order_line::value v_ol;
@@ -1760,59 +1827,85 @@ public:
 
 protected:
   virtual vector<bench_loader *> make_loaders() {
-    vector<bench_loader *> ret;
-    ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions));
-    ret.push_back(new tpcc_item_loader(235443, db, open_tables, partitions));
+    vector<bench_loader *> loaders;
+
+    // warehouse
+    loaders.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions));
+
+    // item
+    loaders.push_back(new tpcc_item_loader(235443, db, open_tables, partitions));
+
+    // stock
     if (enable_parallel_loading) {
       fast_random r(89785943);
       for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_stock_loader(r.next(), db, open_tables, partitions, i));
+        loaders.push_back(new tpcc_stock_loader(r.next(), db, open_tables, partitions, i));
     } else {
-      ret.push_back(new tpcc_stock_loader(89785943, db, open_tables, partitions, -1));
+      auto loader = new tpcc_stock_loader(89785943, db, open_tables, partitions, -1);
+      loaders.push_back(loader);
+
+      stock_blitz = loader->GetStockBlitz();
+      stock_data_blitz = loader->GetStockDataBlitz();
     }
-    ret.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions));
+
+    // district
+    loaders.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions));
+
+    // customer
     if (enable_parallel_loading) {
       fast_random r(923587856425);
       for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_customer_loader(r.next(), db, open_tables, partitions, i));
+        loaders.push_back(new tpcc_customer_loader(r.next(), db, open_tables, partitions, i));
     } else {
-      ret.push_back(new tpcc_customer_loader(923587856425, db, open_tables, partitions, -1));
+      loaders.push_back(new tpcc_customer_loader(923587856425, db, open_tables, partitions, -1));
     }
+
+    // order, new order, and orderline
     if (enable_parallel_loading) {
       fast_random r(2343352);
       for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_order_loader(r.next(), db, open_tables, partitions, i));
+        loaders.push_back(new tpcc_order_loader(r.next(), db, open_tables, partitions, i));
     } else {
-      ret.push_back(new tpcc_order_loader(2343352, db, open_tables, partitions, -1));
+      loaders.push_back(new tpcc_order_loader(2343352, db, open_tables, partitions, -1));
     }
-    return ret;
+
+    return loaders;
   }
 
-  virtual vector<bench_worker *> make_workers() {
+  vector<bench_worker *> make_workers() override {
     const unsigned alignment = coreid::num_cpus_online();
     const int blockstart = coreid::allocate_contiguous_aligned_block(nthreads, alignment);
     ALWAYS_ASSERT(blockstart >= 0);
     ALWAYS_ASSERT((blockstart % alignment) == 0);
     fast_random r(23984543);
-    vector<bench_worker *> ret;
+    vector<bench_worker *> workers;
     if (NumWarehouses() <= nthreads) {
       for (size_t i = 0; i < nthreads; i++)
-        ret.push_back(new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
-                                      (i % NumWarehouses()) + 1, (i % NumWarehouses()) + 2));
+        workers.push_back(new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
+                                          (i % NumWarehouses()) + 1, (i % NumWarehouses()) + 2));
+
     } else {
       const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
       for (size_t i = 0; i < nthreads; i++) {
         const unsigned wstart = i * nwhse_per_partition;
         const unsigned wend = (i + 1 == nthreads) ? NumWarehouses() : (i + 1) * nwhse_per_partition;
-        ret.push_back(new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
-                                      wstart + 1, wend + 1));
+        workers.push_back(new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
+                                          wstart + 1, wend + 1));
       }
     }
-    return ret;
+
+    for (auto worker: workers) {
+      ((tpcc_worker *) worker)->stock_blitz = stock_blitz;
+      ((tpcc_worker *) worker)->stock_data_blitz = stock_data_blitz;
+    }
+
+    return workers;
   }
 
 private:
   map<string, vector<abstract_ordered_index *>> partitions;
+
+  Blitzcrank *stock_blitz, *stock_data_blitz;
 };
 
 void tpcc_do_test(abstract_db *db, int argc, char **argv) {
