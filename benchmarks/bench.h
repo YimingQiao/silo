@@ -14,6 +14,7 @@
 #include "../thread.h"
 #include "../util.h"
 #include "abstract_db.h"
+#include "tpcc_random_generator.h"
 
 extern void ycsb_do_test(abstract_db *db, int argc, char **argv);
 
@@ -65,7 +66,8 @@ public:
       : r(seed),
         db(db),
         open_tables(open_tables),
-        b(nullptr) {
+        b(nullptr),
+        blitz_generator(r) {
     txn_obj_buf.reserve(str_arena::MinStrReserveLength);
     txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
   }
@@ -97,6 +99,7 @@ protected:
   spin_barrier *b;
   std::string txn_obj_buf;
   str_arena arena;
+  TPCCRandomGenerator blitz_generator;
 };
 
 class bench_worker : public ndb_thread {

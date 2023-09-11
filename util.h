@@ -257,7 +257,7 @@ namespace util {
   }
 
   template<typename T, typename U>
-  static inline ALWAYS_INLINE T iceil(T x, U y) {
+  static inline ALWAYS_INLINE T iceil_(T x, U y) {
     U mod = x % y;
     return x + (mod ? y - mod : 0);
   }

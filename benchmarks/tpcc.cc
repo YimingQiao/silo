@@ -22,6 +22,7 @@
 #include "../third-party/libblitz/include/compression.h"
 #include "../txn.h"
 #include "bench.h"
+#include "tpcc_random_generator.h"
 
 using namespace std;
 using namespace util;
@@ -490,6 +491,7 @@ protected:
       for (uint i = 1; i <= NumWarehouses(); i++) {
         const warehouse::key k(i);
 
+        // Blitzcrank does not compress the warehouse table, so we ignore it.
         const string w_name = RandomStr(r, RandomNumber(r, 6, 10));
         const string w_street_1 = RandomStr(r, RandomNumber(r, 10, 20));
         const string w_street_2 = RandomStr(r, RandomNumber(r, 10, 20));
@@ -632,31 +634,26 @@ protected:
 
             stock::value v;
             v.s_quantity = RandomNumber(r, 10, 100);
-            v.s_ytd = 0;
-            v.s_order_cnt = 0;
-            v.s_remote_cnt = 0;
+            v.s_ytd = blitz_generator.StockIntDist("ytd");
+            v.s_order_cnt = blitz_generator.StockIntDist("order_cnt");
+            v.s_remote_cnt = blitz_generator.StockIntDist("remote_cnt");
 
             stock_data::value v_data;
-            const int len = RandomNumber(r, 26, 50);
             if (RandomNumber(r, 1, 100) > 10) {
-              const string s_data = RandomStr(r, len);
-              v_data.s_data.assign(s_data);
+              v_data.s_data.assign(blitz_generator.StockData(50, false));
             } else {
-              const int startOriginal = RandomNumber(r, 2, (len - 8));
-              const string s_data =
-                  RandomStr(r, startOriginal + 1) + "ORIGINAL" + RandomStr(r, len - startOriginal - 7);
-              v_data.s_data.assign(s_data);
+              v_data.s_data.assign(blitz_generator.StockData(50, true));
             }
-            v_data.s_dist_01.assign(RandomStr(r, 24));
-            v_data.s_dist_02.assign(RandomStr(r, 24));
-            v_data.s_dist_03.assign(RandomStr(r, 24));
-            v_data.s_dist_04.assign(RandomStr(r, 24));
-            v_data.s_dist_05.assign(RandomStr(r, 24));
-            v_data.s_dist_06.assign(RandomStr(r, 24));
-            v_data.s_dist_07.assign(RandomStr(r, 24));
-            v_data.s_dist_08.assign(RandomStr(r, 24));
-            v_data.s_dist_09.assign(RandomStr(r, 24));
-            v_data.s_dist_10.assign(RandomStr(r, 24));
+            v_data.s_dist_01.assign(TPCCRandomGenerator::DistInfo(1, w, i));
+            v_data.s_dist_02.assign(TPCCRandomGenerator::DistInfo(2, w, i));
+            v_data.s_dist_03.assign(TPCCRandomGenerator::DistInfo(3, w, i));
+            v_data.s_dist_04.assign(TPCCRandomGenerator::DistInfo(4, w, i));
+            v_data.s_dist_05.assign(TPCCRandomGenerator::DistInfo(5, w, i));
+            v_data.s_dist_06.assign(TPCCRandomGenerator::DistInfo(6, w, i));
+            v_data.s_dist_07.assign(TPCCRandomGenerator::DistInfo(7, w, i));
+            v_data.s_dist_08.assign(TPCCRandomGenerator::DistInfo(8, w, i));
+            v_data.s_dist_09.assign(TPCCRandomGenerator::DistInfo(9, w, i));
+            v_data.s_dist_10.assign(TPCCRandomGenerator::DistInfo(10, w, i));
 
             checker::SanityCheckStock(&k, &v);
             const size_t sz = Size(v);

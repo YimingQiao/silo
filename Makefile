@@ -21,7 +21,7 @@ MYSQL_SHARE_DIR ?= /x/stephentu/mysql-5.5.29/build/sql/share
 #   * factor-gc-nowriteinplace
 #   * factor-fake-compression
 #   * sandbox
-MODE ?= factor-fake-compression
+MODE ?= perf
 
 # run with 'MASSTREE=0' to turn off masstree
 MASSTREE ?= 1
@@ -160,7 +160,8 @@ BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/masstree/kvrandom.cc \
 	benchmarks/queue.cc \
 	benchmarks/tpcc.cc \
-	benchmarks/ycsb.cc
+	benchmarks/ycsb.cc \
+	benchmarks/tpcc_random_generator.cc \
 
 ifeq ($(MYSQL_S),1)
 BENCH_CXXFLAGS += -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"
