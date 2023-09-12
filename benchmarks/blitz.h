@@ -14,12 +14,22 @@
 #define kString 3
 
 namespace {
+  static db_compress::AttrVector customer_buffer(18);
+  stock_data::value customer_value;
+
+  static db_compress::AttrVector order_line_buffer(6);
+  order_line::value order_line_value;
+
   static db_compress::AttrVector stock_buffer(4);
   stock::value stock_value;
 
   static db_compress::AttrVector stock_data_buffer(11);
   stock_data::value stock_data_value;
 }// namespace
+
+int EnumStrToId(const std::string &str, int32_t attr, const std::string &table_name);
+
+std::string &EnumIdToStr(int32_t id, int32_t attr, const std::string &table_name);
 
 /**
  * This class is used to interpret categorical attributes.
@@ -71,6 +81,71 @@ protected:
   std::vector<AttrConfig> config_;
 
   void RegisterAttrInterpreter();
+};
+
+class CustomerBlitz : public BlitzTable {
+public:
+  static const int kNumAttrs = 18;
+
+  CustomerBlitz() : BlitzTable(kNumAttrs) {
+    config_ = {
+        {kEnum, 2, 0},      {kDouble, 0, 0.0025},   {kDouble, 0, 0.0025}, {kEnum, 200, 0}, {kString, 0, 0},
+        {kString, 0, 0},    {kDouble, 0, 0.000025}, {kEnum, 1, 0},        {kEnum, 200, 0}, {kString, 0, 0},
+        {kString, 0, 0},    {kString, 0, 0},        {kEnum, 50, 0},       {kString, 0, 0}, {kString, 0, 0},
+        {kInteger, 0, 0.5}, {kEnum, 1, 0},          {kString, 0, 0},
+    };
+    RegisterAttrInterpreter();
+  }
+
+  bool PushTuple(customer::value &customer) {
+    buffer_.attr_[0].value_ = EnumStrToId(customer.c_credit.str(), 0, "customer");
+    buffer_.attr_[1].value_ = (double) customer.c_balance;
+    buffer_.attr_[2].value_ = (double) customer.c_ytd_payment;
+    buffer_.attr_[3].value_ = (int) customer.c_payment_cnt;
+
+    buffer_.attr_[4].value_ = customer.c_last.str();
+    buffer_.attr_[5].value_ = customer.c_first.str();
+
+    buffer_.attr_[6].value_ = (double) customer.c_discount;
+    buffer_.attr_[7].value_ = EnumStrToId(std::to_string(customer.c_credit_lim), 7, "customer");
+    buffer_.attr_[8].value_ = (int) customer.c_delivery_cnt;
+    buffer_.attr_[9].value_ = customer.c_street_1.str();
+    buffer_.attr_[10].value_ = customer.c_street_2.str();
+    buffer_.attr_[11].value_ = customer.c_city.str();
+    buffer_.attr_[12].value_ = EnumStrToId(customer.c_state.str(), 12, "customer");
+    buffer_.attr_[13].value_ = customer.c_zip.str();
+    buffer_.attr_[14].value_ = customer.c_phone.str();
+    buffer_.attr_[15].value_ = (int) customer.c_since;
+    buffer_.attr_[16].value_ = EnumStrToId(customer.c_middle.str(), 16, "customer");
+    buffer_.attr_[17].value_ = customer.c_data.str();
+
+    table_.push_back(buffer_);
+    return true;
+  }
+};
+
+class OrderLineBlitz : public BlitzTable {
+public:
+  static const int kNumAttrs = 6;
+
+  OrderLineBlitz() : BlitzTable(kNumAttrs) {
+    config_ = {
+        {kInteger, 0, 0.5}, {kDouble, 0, 0.0025}, {kEnum, 5, 0}, {kEnum, 100, 0}, {kInteger, 0, 0.5}, {kString, 0, 0},
+    };
+    RegisterAttrInterpreter();
+  }
+
+  inline ALWAYS_INLINE bool pushTuple(order_line::value &order_line) {
+    buffer_.attr_[0].value_ = (int) order_line.ol_i_id;
+    buffer_.attr_[1].value_ = (double) order_line.ol_amount;
+    buffer_.attr_[2].value_ = (int) order_line.ol_supply_w_id;
+    buffer_.attr_[3].value_ = (int) order_line.ol_quantity;
+    buffer_.attr_[4].value_ = (int) order_line.ol_delivery_d;
+    buffer_.attr_[5].value_ = order_line.ol_dist_info.str();
+
+    table_.push_back(buffer_);
+    return true;
+  }
 };
 
 class StockBlitz : public BlitzTable {
@@ -152,7 +227,7 @@ public:
     dpr_ = new db_compress::RelationDecompressor(name_.c_str(), table.Schema(), kBlockSize);
     dpr_->InitWithoutIndex();
 
-    std::cerr << "[INFO - Blitzcrank] Compressor for " << name_ << " trained." << std::endl;
+    std::cerr << "[INFO][Blitzcrank] Compressor for " << name_ << " trained." << std::endl;
   }
 
 private:
@@ -161,21 +236,13 @@ private:
   static void BlitzLearning(BlitzTable &table, db_compress::RelationCompressor &compressor);
 };
 
+// ----------------------------------- Value to AttrVector -----------------------------------
 static inline ALWAYS_INLINE db_compress::AttrVector &ToAttrVector(stock::value &stock) {
   stock_buffer.attr_[0].value_ = (int) stock.s_quantity;
   stock_buffer.attr_[1].value_ = (int) stock.s_ytd;
   stock_buffer.attr_[2].value_ = (int) stock.s_order_cnt;
   stock_buffer.attr_[3].value_ = (int) stock.s_remote_cnt;
   return stock_buffer;
-}
-
-static inline ALWAYS_INLINE stock::value *ToStock(db_compress::AttrVector &attr_vector) {
-  stock::value &stock = stock_value;
-  stock.s_quantity = attr_vector.attr_[0].Int();
-  stock.s_ytd = attr_vector.attr_[1].Int();
-  stock.s_order_cnt = attr_vector.attr_[2].Int();
-  stock.s_remote_cnt = attr_vector.attr_[3].Int();
-  return &stock;
 }
 
 static inline ALWAYS_INLINE db_compress::AttrVector &ToAttrVector(stock_data::value &stock_data) {
@@ -193,8 +260,30 @@ static inline ALWAYS_INLINE db_compress::AttrVector &ToAttrVector(stock_data::va
   return stock_data_buffer;
 }
 
-static inline ALWAYS_INLINE stock_data::value* ToStockData(db_compress::AttrVector &attr_vector) {
-  stock_data::value& stock_data = stock_data_value;
+static inline ALWAYS_INLINE db_compress::AttrVector &ToAttrVector(order_line::value &order_line) {
+  order_line_buffer.attr_[0].value_ = (int) order_line.ol_i_id;
+  order_line_buffer.attr_[1].value_ = (double) order_line.ol_amount;
+  order_line_buffer.attr_[2].value_ = (int) order_line.ol_supply_w_id;
+  order_line_buffer.attr_[3].value_ = (int) order_line.ol_quantity;
+  order_line_buffer.attr_[4].value_ = (int) order_line.ol_delivery_d;
+  order_line_buffer.attr_[5].value_ = order_line.ol_dist_info.str();
+
+  return order_line_buffer;
+}
+
+// ----------------------------------- AttrVector to Value -----------------------------------
+
+static inline ALWAYS_INLINE stock::value *ToStock(db_compress::AttrVector &attr_vector) {
+  stock::value &stock = stock_value;
+  stock.s_quantity = attr_vector.attr_[0].Int();
+  stock.s_ytd = attr_vector.attr_[1].Int();
+  stock.s_order_cnt = attr_vector.attr_[2].Int();
+  stock.s_remote_cnt = attr_vector.attr_[3].Int();
+  return &stock;
+}
+
+static inline ALWAYS_INLINE stock_data::value *ToStockData(db_compress::AttrVector &attr_vector) {
+  stock_data::value &stock_data = stock_data_value;
   stock_data.s_data = attr_vector.attr_[0].String();
   stock_data.s_dist_01 = attr_vector.attr_[1].String();
   stock_data.s_dist_02 = attr_vector.attr_[2].String();
@@ -209,4 +298,26 @@ static inline ALWAYS_INLINE stock_data::value* ToStockData(db_compress::AttrVect
   return &stock_data;
 }
 
+static inline ALWAYS_INLINE order_line::value *ToOrderLine(db_compress::AttrVector &attr_vector) {
+  order_line_value.ol_i_id = attr_vector.attr_[0].Int();
+  order_line_value.ol_amount = attr_vector.attr_[1].Double();
+  order_line_value.ol_supply_w_id = attr_vector.attr_[2].Int();
+  order_line_value.ol_quantity = attr_vector.attr_[3].Int();
+  order_line_value.ol_delivery_d = attr_vector.attr_[4].Int();
+  order_line_value.ol_dist_info = attr_vector.attr_[5].String();
+
+  return &order_line_value;
+}
+
+// ---------------------------------- AttrVector Buffer --------------------------------------
+
 static inline ALWAYS_INLINE db_compress::AttrVector &StockBuffer() { return stock_buffer; }
+
+static inline ALWAYS_INLINE db_compress::AttrVector &OrderLineBuffer() { return order_line_buffer; }
+
+static inline ALWAYS_INLINE db_compress::AttrVector &CustomerBuffer() { return customer_buffer; }
+
+namespace {
+  // ------------------------ Enum Handle ------------------------------
+  std::vector<db_compress::BiMap> enum_map;
+}// namespace

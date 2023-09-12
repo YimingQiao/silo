@@ -64,3 +64,43 @@ void Blitzcrank::BlitzLearning(BlitzTable &table, db_compress::RelationCompresso
     if (!compressor.RequireMoreIterationsForLearning()) { break; }
   }
 }
+
+// --------------------------- Enum Handle ----------------------------------
+int EnumStrToId(const std::string &str, int32_t attr, const std::string &table_name) {
+  int32_t idx = 0;
+  if (table_name == "order line") idx = attr;
+  else if (table_name == "stock")
+    idx = OrderLineBlitz::kNumAttrs + attr;
+  else if (table_name == "customer")
+    idx = OrderLineBlitz::kNumAttrs + StockBlitz::kNumAttrs + attr;
+  else
+    printf("Unknown table name.\n");
+
+  if (enum_map.size() <= idx) enum_map.resize(idx + 1);
+  auto &enum2idx = enum_map[idx].enum2idx;
+  auto &enums = enum_map[idx].enums;
+
+  auto it = enum2idx.find(str);
+  if (it != enum2idx.end()) return it->second;
+  else {
+    enum2idx[str] = enums.size();
+    enums.push_back(str);
+    return enums.size() - 1;
+  }
+}
+
+std::string &EnumIdToStr(int32_t id, int32_t attr, const std::string &table_name) {
+  int32_t map_idx = 0;
+  if (table_name == "order line") map_idx = attr;
+  else if (table_name == "stock")
+    map_idx = OrderLineBlitz::kNumAttrs + attr;
+  else if (table_name == "customer")
+    map_idx = OrderLineBlitz::kNumAttrs + StockBlitz::kNumAttrs + attr;
+  else
+    printf("Unknown table name.\n");
+
+  assert(enum_map.size() > map_idx);
+  db_compress::BiMap &map = enum_map[map_idx];
+  assert(map.enums.size() > id);
+  return map.enums[id];
+}
