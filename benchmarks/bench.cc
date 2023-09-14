@@ -145,21 +145,24 @@ void bench_runner::run() {
   // load data
   const vector<bench_loader *> loaders = make_loaders();
   {
-    spin_barrier b(loaders.size());
-    const pair<uint64_t, uint64_t> mem_info_before = get_system_memory_info();
+    // spin_barrier b(1);
     {
       scoped_timer t("dataloading", verbose);
       for (vector<bench_loader *>::const_iterator it = loaders.begin(); it != loaders.end(); ++it) {
-        (*it)->set_barrier(b);
+        // (*it)->set_barrier(b);
         (*it)->start();
+        (*it)->join();
       }
-      for (vector<bench_loader *>::const_iterator it = loaders.begin(); it != loaders.end(); ++it) (*it)->join();
     }
-    const pair<uint64_t, uint64_t> mem_info_after = get_system_memory_info();
-    const int64_t delta = int64_t(mem_info_before.first) - int64_t(mem_info_after.first);// free mem
-    const double delta_mb = double(delta) / 1048576.0;
-    if (verbose) cerr << "DB size: " << delta_mb << " MB" << endl;
   }
+  std::vector<std::string> table_names;
+  std::vector<double> table_avg_length;
+  std::unordered_map<std::string, size_t> table_index_map{{"warehouse_0", 0}, {"item_0", 1},      {"district_0", 2},
+                                                          {"stock_0", 3},     {"customer_0", 4},  {"oorder_0", 5},
+                                                          {"new_order_0", 6}, {"order_line_0", 7}};
+  for (vector<bench_loader *>::const_iterator it = loaders.begin(); it != loaders.end(); ++it)
+    (*it)->GetAvgLength(table_names, table_avg_length);
+
 
   db->do_txn_epoch_sync();// also waits for worker threads to be persisted
   {
@@ -185,12 +188,22 @@ void bench_runner::run() {
 
   map<string, size_t> table_sizes_before;
   if (verbose) {
+    size_t i = 0;
+    double total_size = 0;
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin(); it != open_tables.end(); ++it) {
       scoped_rcu_region guard;
       const size_t s = it->second->size();
-      cerr << "table " << it->first << " size " << s << endl;
       table_sizes_before[it->first] = s;
+
+      const std::string &name = it->first;
+      if (table_index_map.count(name) == 0) continue;
+      size_t table_idx = table_index_map[name];
+      double table_size = it->second->size() * table_avg_length[table_idx];
+      std::cerr << "Table: " << name << "\tSize: " << (((double) table_size) / (1 << 20)) << " MB\n";
+
+      total_size += table_size;
     }
+    std::cerr << "Total Size: " << (((double) total_size) / (1 << 20)) << " MB\n";
     cerr << "starting benchmark..." << endl;
   }
 
@@ -264,15 +277,28 @@ void bench_runner::run() {
     map<string, counter_data> ctrs = event_counter::get_all_counters();
 
     cerr << "--- table statistics ---" << endl;
+    double total_size = 0;
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin(); it != open_tables.end(); ++it) {
       scoped_rcu_region guard;
       const size_t s = it->second->size();
       const ssize_t delta = ssize_t(s) - ssize_t(table_sizes_before[it->first]);
-      cerr << "table " << it->first << " size " << it->second->size();
-      if (delta < 0) cerr << " (" << delta << " records)" << endl;
+      cerr << "table: " << it->first << "\t#tuple: " << it->second->size();
+      if (delta < 0) cerr << " (" << delta << " records)\t";
       else
-        cerr << " (+" << delta << " records)" << endl;
+        cerr << " (+" << delta << " records)\t";
+
+      const std::string &name = it->first;
+      if (table_index_map.count(name) == 0) {
+        std::cerr << "\n";
+        continue;
+      }
+      size_t table_idx = table_index_map[name];
+      double table_size = it->second->size() * table_avg_length[table_idx];
+      std::cerr << "Size: " << (((double) table_size) / (1 << 20)) << " MB\n";
+
+      total_size += table_size;
     }
+    std::cerr << "Total Size: " << (((double) total_size) / (1 << 20)) << " MB\n";
 #ifdef ENABLE_BENCH_TXN_COUNTERS
     cerr << "--- txn counter statistics ---" << endl;
     {

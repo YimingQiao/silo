@@ -483,8 +483,17 @@ public:
       : bench_loader(seed, db, open_tables),
         tpcc_worker_mixin(partitions) {}
 
+  double avg_warehouse_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Warehouse");
+    avg_lengths.push_back(avg_warehouse_sz);
+  }
+
 protected:
   void load() override {
+    if (verbose) { cerr << "[INFO] Start Loading Warehouse\n"; }
+
     string obj_buf;
     void *txn = db->new_txn(txn_flags, arena, txn_buf());
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
@@ -537,10 +546,12 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
+
+    avg_warehouse_sz = double(warehouse_total_sz) / double(n_warehouses);
+
     if (verbose) {
-      cerr << "[INFO] finished loading warehouse" << endl;
-      cerr << "[INFO]   * average warehouse record length: " << (double(warehouse_total_sz) / double(n_warehouses))
-           << " bytes" << endl;
+      cerr << "[INFO]   * #Record: " << n_warehouses << "\n";
+      cerr << "[INFO]   * Total size: " << (double(warehouse_total_sz) / (1 << 20)) << " MB\n";
     }
   }
 };
@@ -552,8 +563,17 @@ public:
       : bench_loader(seed, db, open_tables),
         tpcc_worker_mixin(partitions) {}
 
+  double avg_item_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Item");
+    avg_lengths.push_back(avg_item_sz);
+  }
+
 protected:
   virtual void load() {
+    if (verbose) { cerr << "[INFO] Start Loading Item\n"; }
+
     string obj_buf;
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags, arena, txn_buf());
@@ -594,9 +614,12 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
+
+    avg_item_sz = double(total_sz) / double(NumItems());
+
     if (verbose) {
-      cerr << "[INFO] finished loading item" << endl;
-      cerr << "[INFO]   * average item record length: " << (double(total_sz) / double(NumItems())) << " bytes" << endl;
+      cerr << "[INFO]   * #Record: " << NumItems() << "\n";
+      cerr << "[INFO]   * Total size: " << (double(total_sz) / (1 << 20)) << " MB\n";
     }
   }
 };
@@ -611,9 +634,11 @@ public:
     ALWAYS_ASSERT(warehouse_id == -1 || (warehouse_id >= 1 && static_cast<size_t>(warehouse_id) <= NumWarehouses()));
   }
 
+  int avg_stock_sz;
+
 protected:
   virtual void load() {
-    string obj_buf, obj_buf1;
+    if (verbose) { cerr << "[INFO] Start Loading Stock\n"; }
 
     uint64_t stock_total_sz = 0, n_stocks = 0;
     const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
@@ -678,14 +703,11 @@ protected:
       }
     }
 
+    avg_stock_sz = double(stock_total_sz) / double(n_stocks);
+
     if (verbose) {
-      if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading stock" << endl;
-        cerr << "[INFO]   * average stock record length: " << (double(stock_total_sz) / double(n_stocks)) << " bytes"
-             << endl;
-      } else {
-        cerr << "[INFO] finished loading stock (w=" << warehouse_id << ")" << endl;
-      }
+      cerr << "[INFO]   * #Record: " << n_stocks << "\n";
+      cerr << "[INFO]   * Total size: " << (double(stock_total_sz) / (1 << 20)) << " MB\n";
     }
   }
 
@@ -700,8 +722,17 @@ public:
       : bench_loader(seed, db, open_tables),
         tpcc_worker_mixin(partitions) {}
 
+  double avg_district_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("District");
+    avg_lengths.push_back(avg_district_sz);
+  }
+
 protected:
   virtual void load() {
+    if (verbose) { cerr << "[INFO] Start Loading District\n"; }
+
     string obj_buf;
 
     const ssize_t bsize = db->txn_max_batch_size();
@@ -743,10 +774,12 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
+
+    avg_district_sz = double(district_total_sz) / double(n_districts);
+
     if (verbose) {
-      cerr << "[INFO] finished loading district" << endl;
-      cerr << "[INFO]   * average district record length: " << (double(district_total_sz) / double(n_districts))
-           << " bytes" << endl;
+      cerr << "[INFO]   * #Record: " << n_districts << "\n";
+      cerr << "[INFO]   * Total size: " << (double(district_total_sz) / (1 << 20)) << " MB\n";
     }
   }
 };
@@ -761,8 +794,17 @@ public:
     ALWAYS_ASSERT(warehouse_id == -1 || (warehouse_id >= 1 && static_cast<size_t>(warehouse_id) <= NumWarehouses()));
   }
 
+  double avg_customer_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Customer");
+    avg_lengths.push_back(avg_customer_sz);
+  }
+
 protected:
   virtual void load() {
+    if (verbose) { cerr << "[INFO] Start Loading Customer\n"; }
+
     string obj_buf;
 
     const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
@@ -858,14 +900,9 @@ protected:
     }
 
     if (verbose) {
-      if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading customer" << endl;
-        cerr << "[INFO]   * average customer record length: "
-             << (double(total_sz) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict()))
-             << " bytes " << endl;
-      } else {
-        cerr << "[INFO] finished loading customer (w=" << warehouse_id << ")" << endl;
-      }
+      cerr << "[INFO]   * #Record: " << NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict()
+           << "\n";
+      cerr << "[INFO]   * Total size: " << (double(total_sz) / (1 << 20)) << " MB\n";
     }
   }
 
@@ -883,8 +920,21 @@ public:
     ALWAYS_ASSERT(warehouse_id == -1 || (warehouse_id >= 1 && static_cast<size_t>(warehouse_id) <= NumWarehouses()));
   }
 
+  double avg_order_sz = 0, avg_new_order_sz = 0, avg_order_line_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Order");
+    avg_lengths.push_back(avg_order_sz);
+    names.push_back("NewOrder");
+    avg_lengths.push_back(avg_new_order_sz);
+    names.push_back("OrderLine");
+    avg_lengths.push_back(avg_order_line_sz);
+  }
+
 protected:
   virtual void load() {
+    if (verbose) { cerr << "[INFO] Start Loading Order, New Order, Order Line\n"; }
+
     string obj_buf;
 
     uint64_t order_line_total_sz = 0, n_order_lines = 0;
@@ -982,18 +1032,17 @@ protected:
       }
     }
 
+    avg_order_line_sz = (double)(order_line_total_sz) / double(n_order_lines);
+    avg_new_order_sz = double(new_order_total_sz) / double(n_new_orders);
+    avg_order_sz = double(oorder_total_sz) / double(n_oorders);
+
     if (verbose) {
-      if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading order" << endl;
-        cerr << "[INFO]   * average order_line record length: " << (double(order_line_total_sz) / double(n_order_lines))
-             << " bytes" << endl;
-        cerr << "[INFO]   * average oorder record length: " << (double(oorder_total_sz) / double(n_oorders)) << " bytes"
-             << endl;
-        cerr << "[INFO]   * average new_order record length: " << (double(new_order_total_sz) / double(n_new_orders))
-             << " bytes" << endl;
-      } else {
-        cerr << "[INFO] finished loading order (w=" << warehouse_id << ")" << endl;
-      }
+      cerr << "[INFO]   * #Order Line: " << n_order_lines << "\t"
+           << "#OOrder: " << n_oorders << "\t"
+           << "#New Order: " << n_new_orders << "\n";
+      cerr << "[INFO]   * Order Line Total Size: " << (double(order_line_total_sz) / (1 << 20)) << " MB\t"
+           << "OOrder Total Size: " << (double(oorder_total_sz) / (1 << 20)) << " MB\t"
+           << "New Order Total Size: " << (double(new_order_total_sz) / (1 << 20)) << " MB\n";
     }
   }
 
