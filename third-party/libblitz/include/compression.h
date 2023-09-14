@@ -38,6 +38,15 @@ class RelationCompressor {
                      int block_size);
 
   /**
+   * Create a new Compressor from a model file.
+   *
+   * @param compressed_file_name address of compressed file, it is user specified
+   * @param schema attributes types and ordering are recorded in schema
+   * @param block_size once probability intervals number is larger than block
+   */
+  RelationCompressor(const char *compressed_file_name, const Schema &schema, int block_size);
+
+  /**
    * Once the structure of attributes are learned, or enter compression stage, a
    * full dataset scan is necessary.
    *

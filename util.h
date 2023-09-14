@@ -400,7 +400,7 @@ namespace util {
     ~scoped_timer() {
       if (enabled) {
         const double x = t.lap() / 1000.0;// ms
-        std::cerr << "timed region " << region << " took " << x << " ms" << std::endl;
+        std::cerr << "[Timed Region] " << region << " took " << x << " ms" << std::endl;
       }
     }
   };

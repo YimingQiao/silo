@@ -1331,10 +1331,10 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
       const stock::key k_s(ol_supply_w_id, ol_i_id);
       ALWAYS_ASSERT(tbl_stock(ol_supply_w_id)->get(txn, Encode(obj_key0, k_s), obj_v));
       BlitzDpr(stock_blitz, obj_v, stock_buffer, 4);
-      const stock::value *v_s = ToStock(stock_buffer);
-      checker::SanityCheckStock(&k_s, v_s);
+      const stock::value v_s = ToStock(stock_buffer);
+      checker::SanityCheckStock(&k_s, &v_s);
 
-      stock::value v_s_new(*v_s);
+      stock::value v_s_new(std::move(v_s));
       if (v_s_new.s_quantity - ol_quantity >= 10) v_s_new.s_quantity -= ol_quantity;
       else
         v_s_new.s_quantity += -int32_t(ol_quantity) + 91;
@@ -1345,15 +1345,13 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
       tbl_stock(ol_supply_w_id)->put(txn, Encode(str(), k_s), v_s_codes);
 
       const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
-      order_line::value v_ol;
-      v_ol.ol_i_id = int32_t(ol_i_id);
-      v_ol.ol_amount = float(ol_quantity) * v_i->i_price;
-      v_ol.ol_supply_w_id = int32_t(ol_supply_w_id);
-      v_ol.ol_quantity = int8_t(ol_quantity);
-      v_ol.ol_delivery_d = 0;// not delivered yet
+      order_line_buffer.attr_[0].value_ = int(ol_i_id);
+      order_line_buffer.attr_[1].value_ = double(ol_quantity) * v_i->i_price;
+      order_line_buffer.attr_[2].value_ = int(ol_supply_w_id);
+      order_line_buffer.attr_[3].value_ = int(ol_quantity);
+      order_line_buffer.attr_[4].value_ = 0;// not delivered yet
 
-      db_compress::AttrVector &v_ol_attr = ToAttrVector(v_ol);
-      std::string v_codes = BlitzCpr(order_line_blitz, v_ol_attr, 4);
+      std::string v_codes = BlitzCpr(order_line_blitz, order_line_buffer, 4);
       tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), v_codes);
       ret += v_codes.size();
     }
@@ -2016,11 +2014,11 @@ protected:
     }
 
     for (auto worker: workers) {
-      ((tpcc_worker *) worker)->stock_blitz = stock_blitz;
-      ((tpcc_worker *) worker)->stock_data_blitz = stock_data_blitz;
-      ((tpcc_worker *) worker)->order_line_blitz = order_line_blitz;
-      ((tpcc_worker *) worker)->customer_blitz = customer_blitz;
-      ((tpcc_worker *) worker)->customer_data_blitz = customer_data_blitz;
+      ((tpcc_worker *) worker)->stock_blitz = stock_blitz->Copy();
+      ((tpcc_worker *) worker)->stock_data_blitz = stock_data_blitz->Copy();
+      ((tpcc_worker *) worker)->order_line_blitz = order_line_blitz->Copy();
+      ((tpcc_worker *) worker)->customer_blitz = customer_blitz->Copy();
+      ((tpcc_worker *) worker)->customer_data_blitz = customer_data_blitz->Copy();
     }
 
     return workers;

@@ -13,6 +13,12 @@
 #include "utility.h"
 
 namespace db_compress {
+  namespace {
+    SquIDModel *GetModelFromDescription(ByteReader *byte_reader, const Schema &schema, size_t index) {
+      return GetAttrModel(schema.attr_type_[index])->ReadModel(byte_reader, schema, index);
+    }
+  }// anonymous namespace
+
   void RelationCompressor::WriteProbInterval() {
     DelayedCoding(prob_intervals_, prob_intervals_index_, &bit_string_, is_virtual_);
     bit_string_.Finish(byte_writer_.get());
@@ -32,6 +38,30 @@ namespace db_compress {
         prob_intervals_index_(0) {
     prob_intervals_.resize((block_size << 8) + kIntervalSize);
     is_virtual_.resize((block_size << 8) + kIntervalSize);
+  }
+
+  RelationCompressor::RelationCompressor(const char *compressed_file_name, const Schema& schema, int block_size)
+      : schema_(schema),
+        kBlockSizeThreshold_(block_size),
+        compressor_stage_(2),
+        bit_string_((block_size << 8) + kIntervalSize),
+        prob_intervals_index_(0) {
+    prob_intervals_.resize((block_size << 8) + kIntervalSize);
+    is_virtual_.resize((block_size << 8) + kIntervalSize);
+
+    ByteReader byte_reader_(compressed_file_name);
+    // Number of tuples
+    num_tuples_ = byte_reader_.Read32Bit();
+    // Ordering of attributes
+    for (size_t i = 0; i < schema_.attr_type_.size(); ++i) { attr_order_.push_back(byte_reader_.Read16Bit()); }
+    // Load models
+    model_.resize(schema_.attr_type_.size());
+    for (size_t i = 0; i < schema_.attr_type_.size(); ++i) {
+      std::unique_ptr<SquIDModel> model(GetModelFromDescription(&byte_reader_, schema_, i));
+      model_[i] = std::move(model);
+    }
+
+    byte_writer_ = nullptr;
   }
 
   void RelationCompressor::EndOfLearning() {

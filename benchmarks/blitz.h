@@ -7,6 +7,7 @@
 #include "../third-party/libblitz/include/model_learner.h"
 #include "../util.h"
 #include "abstract_ordered_index.h"
+#include "bench.h"
 #include "tpcc.h"
 
 #define kEnum 0
@@ -15,20 +16,7 @@
 #define kString 3
 
 namespace {
-  static db_compress::AttrVector customer_buffer(4);
-  customer::value customer_value;
-
-  static db_compress::AttrVector customer_data_buffer(14);
-  customer_data::value customer_data_value;
-
-  static db_compress::AttrVector order_line_buffer(6);
-  order_line::value order_line_value;
-
   static db_compress::AttrVector stock_buffer(4);
-  stock::value stock_value;
-
-  static db_compress::AttrVector stock_data_buffer(11);
-  stock_data::value stock_data_value;
 
   // ------------------------ Enum Handle ------------------------------
   std::vector<db_compress::BiMap> enum_map;
@@ -248,17 +236,36 @@ public:
   }
 
   void Train(BlitzTable &table) {
-    cpr_ = new db_compress::RelationCompressor(name_.c_str(), table.Schema(), table.CompressionConfig(), kBlockSize);
-    BlitzLearning(table, *cpr_);
-    dpr_ = new db_compress::RelationDecompressor(name_.c_str(), table.Schema(), kBlockSize);
+    schema_ = table.Schema();
+    config_ = table.CompressionConfig();
+
+    cpr_ = new db_compress::RelationCompressor(name_.c_str(), schema_, config_, kBlockSize);
+    {
+      util::scoped_timer t(name_, verbose);
+      BlitzLearning(table, *cpr_);
+    }
+    dpr_ = new db_compress::RelationDecompressor(name_.c_str(), schema_, kBlockSize);
     dpr_->InitWithoutIndex();
 
     size_t model_size = filesize(name_.c_str());
-    std::cerr << "[INFO]   * Compressor for " << name_ << " trained, Size: " << ((double) model_size) / (1 << 20) << " MB\n";
+    std::cerr << "[INFO]   * Compressor for " << name_ << " trained, Size: " << ((double) model_size) / (1 << 20)
+              << " MB\n";
+  }
+
+  // copy blitzcrank, this function is only called after training
+  Blitzcrank *Copy() {
+    Blitzcrank *ret = new Blitzcrank(name_);
+    ret->schema_ = schema_;
+    ret->cpr_ = new db_compress::RelationCompressor(name_.c_str(), schema_, kBlockSize);
+    ret->dpr_ = new db_compress::RelationDecompressor(name_.c_str(), schema_, kBlockSize);
+    ret->dpr_->InitWithoutIndex();
+    return ret;
   }
 
 private:
   std::string name_;
+  db_compress::Schema schema_;
+  db_compress::CompressionConfig config_;
 
   static void BlitzLearning(BlitzTable &table, db_compress::RelationCompressor &compressor);
 
@@ -277,75 +284,14 @@ static inline ALWAYS_INLINE db_compress::AttrVector &ToAttrVector(stock::value &
   return stock_buffer;
 }
 
-static inline ALWAYS_INLINE db_compress::AttrVector &ToAttrVector(stock_data::value &stock_data) {
-  stock_data_buffer.attr_[0].value_ = stock_data.s_data.str();
-  stock_data_buffer.attr_[1].value_ = stock_data.s_dist_01.str();
-  stock_data_buffer.attr_[2].value_ = stock_data.s_dist_02.str();
-  stock_data_buffer.attr_[3].value_ = stock_data.s_dist_03.str();
-  stock_data_buffer.attr_[4].value_ = stock_data.s_dist_04.str();
-  stock_data_buffer.attr_[5].value_ = stock_data.s_dist_05.str();
-  stock_data_buffer.attr_[6].value_ = stock_data.s_dist_06.str();
-  stock_data_buffer.attr_[7].value_ = stock_data.s_dist_07.str();
-  stock_data_buffer.attr_[8].value_ = stock_data.s_dist_08.str();
-  stock_data_buffer.attr_[9].value_ = stock_data.s_dist_09.str();
-  stock_data_buffer.attr_[10].value_ = stock_data.s_dist_10.str();
-  return stock_data_buffer;
-}
-
-static inline ALWAYS_INLINE db_compress::AttrVector &ToAttrVector(order_line::value &order_line) {
-  order_line_buffer.attr_[0].value_ = (int) order_line.ol_i_id;
-  order_line_buffer.attr_[1].value_ = (double) order_line.ol_amount;
-  order_line_buffer.attr_[2].value_ = (int) order_line.ol_supply_w_id;
-  order_line_buffer.attr_[3].value_ = (int) order_line.ol_quantity;
-  order_line_buffer.attr_[4].value_ = (int) order_line.ol_delivery_d;
-  order_line_buffer.attr_[5].value_ = order_line.ol_dist_info.str();
-
-  return order_line_buffer;
-}
-
 // ----------------------------------- AttrVector to Value -----------------------------------
-
-static inline ALWAYS_INLINE stock::value *ToStock(db_compress::AttrVector &attr_vector) {
-  stock::value &stock = stock_value;
+static inline ALWAYS_INLINE stock::value ToStock(db_compress::AttrVector &attr_vector) {
+  stock::value stock;
   stock.s_quantity = attr_vector.attr_[0].Int();
   stock.s_ytd = attr_vector.attr_[1].Int();
   stock.s_order_cnt = attr_vector.attr_[2].Int();
   stock.s_remote_cnt = attr_vector.attr_[3].Int();
-  return &stock;
-}
-
-static inline ALWAYS_INLINE stock_data::value *ToStockData(db_compress::AttrVector &attr_vector) {
-  stock_data::value &stock_data = stock_data_value;
-  stock_data.s_data = attr_vector.attr_[0].String();
-  stock_data.s_dist_01 = attr_vector.attr_[1].String();
-  stock_data.s_dist_02 = attr_vector.attr_[2].String();
-  stock_data.s_dist_03 = attr_vector.attr_[3].String();
-  stock_data.s_dist_04 = attr_vector.attr_[4].String();
-  stock_data.s_dist_05 = attr_vector.attr_[5].String();
-  stock_data.s_dist_06 = attr_vector.attr_[6].String();
-  stock_data.s_dist_07 = attr_vector.attr_[7].String();
-  stock_data.s_dist_08 = attr_vector.attr_[8].String();
-  stock_data.s_dist_09 = attr_vector.attr_[9].String();
-  stock_data.s_dist_10 = attr_vector.attr_[10].String();
-  return &stock_data;
-}
-
-static inline ALWAYS_INLINE order_line::value *ToOrderLine(db_compress::AttrVector &attr_vector) {
-  order_line_value.ol_i_id = attr_vector.attr_[0].Int();
-  order_line_value.ol_amount = attr_vector.attr_[1].Double();
-  order_line_value.ol_supply_w_id = attr_vector.attr_[2].Int();
-  order_line_value.ol_quantity = attr_vector.attr_[3].Int();
-  order_line_value.ol_delivery_d = attr_vector.attr_[4].Int();
-  order_line_value.ol_dist_info = attr_vector.attr_[5].String();
-
-  return &order_line_value;
-}
-
-// ---------------------------------- AttrVector Buffer --------------------------------------
-
-static inline ALWAYS_INLINE db_compress::AttrVector &CustomerDataBuffer() {
-  customer_data_buffer.attr_[0].value_ = "";
-  return customer_data_buffer;
+  return std::move(stock);
 }
 
 // -------------------------------------- Insert & Read ---------------------------------------------

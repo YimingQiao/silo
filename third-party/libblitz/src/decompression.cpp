@@ -13,7 +13,7 @@ namespace db_compress {
   }// anonymous namespace
 
   RelationDecompressor::RelationDecompressor(const char *compressed_file_name, Schema schema, int block_size)
-      : schema_(std::move(schema)),
+      : schema_(schema),
         index_reader_(),
         num_converted_tuples_(0),
         kBlockSizeThreshold(block_size),
