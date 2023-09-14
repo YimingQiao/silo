@@ -25,7 +25,6 @@ std::string TPCCRandomGenerator::CustomerData(int upper_length, bool bad_credit)
     std::string &word = stock_data_corpus_[word_idx[i]];
     s += word;
 
-    s += word.size();
     if (i != word_num - 1) { s += " "; }
   }
 

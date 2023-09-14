@@ -33,8 +33,7 @@ void BlitzTable::RegisterAttrInterpreter() {
 
 void Blitzcrank::BlitzLearning(BlitzTable &table, db_compress::RelationCompressor &compressor) {
   // random number
-  std::random_device random_device;
-  std::mt19937 mt19937(0);
+  std::mt19937 mt19937(42);
   std::uniform_int_distribution<uint32_t> dist(0, table.RowsNum() - 1);
   bool tuning = false;
 
@@ -95,7 +94,7 @@ std::string &EnumIdToStr(int32_t id, int32_t attr, const std::string &table_name
   else if (table_name == "stock")
     map_idx = OrderLineBlitz::kNumAttrs + attr;
   else if (table_name == "customer")
-    map_idx = OrderLineBlitz::kNumAttrs + StockBlitz::kNumAttrs + attr;
+    map_idx = OrderLineBlitz::kNumAttrs + StockBlitz::kNumAttrs + StockDataBlitz::kNumAttrs + attr;
   else
     printf("Unknown table name.\n");
 

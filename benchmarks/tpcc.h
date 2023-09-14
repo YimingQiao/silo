@@ -6,14 +6,18 @@
 #include "../record/inline_str.h"
 
 #define CUSTOMER_KEY_FIELDS(x, y) x(int32_t, c_w_id) y(int32_t, c_d_id) y(int32_t, c_id)
-#define CUSTOMER_VALUE_FIELDS(x, y)                                                                              \
-  x(float, c_discount) y(inline_str_fixed<2>, c_credit) y(inline_str_8<16>, c_last) y(inline_str_8<16>, c_first) \
-      y(float, c_credit_lim) y(float, c_balance) y(float, c_ytd_payment) y(int32_t, c_payment_cnt)               \
-          y(int32_t, c_delivery_cnt) y(inline_str_8<20>, c_street_1) y(inline_str_8<20>, c_street_2)             \
-              y(inline_str_8<20>, c_city) y(inline_str_fixed<2>, c_state) y(inline_str_fixed<9>, c_zip)          \
-                  y(inline_str_fixed<16>, c_phone) y(uint32_t, c_since) y(inline_str_fixed<2>, c_middle)         \
-                      y(inline_str_16<500>, c_data)
+#define CUSTOMER_VALUE_FIELDS(x, y) \
+  x(inline_str_fixed<2>, c_credit) y(float, c_balance) y(float, c_ytd_payment) y(int32_t, c_payment_cnt)
 DO_STRUCT(customer, CUSTOMER_KEY_FIELDS, CUSTOMER_VALUE_FIELDS)
+
+#define CUSTOMER_KEY_STR_FIELDS(x, y) x(int32_t, c_w_id) y(int32_t, c_d_id) y(int32_t, c_id)
+#define CUSTOMER_VALUE_STR_FIELDS(x, y)                                                                       \
+  x(inline_str_16<500>, c_data) y(inline_str_8<16>, c_last) y(inline_str_8<16>, c_first) y(float, c_discount) \
+      y(float, c_credit_lim) y(int32_t, c_delivery_cnt) y(inline_str_8<20>, c_street_1)                       \
+          y(inline_str_8<20>, c_street_2) y(inline_str_8<20>, c_city) y(inline_str_fixed<2>, c_state)         \
+              y(inline_str_fixed<9>, c_zip) y(inline_str_fixed<16>, c_phone) y(uint32_t, c_since)             \
+                  y(inline_str_fixed<2>, c_middle)
+DO_STRUCT(customer_data, CUSTOMER_KEY_STR_FIELDS, CUSTOMER_VALUE_STR_FIELDS)
 
 #define CUSTOMER_NAME_IDX_KEY_FIELDS(x, y) \
   x(int32_t, c_w_id) y(int32_t, c_d_id) y(inline_str_fixed<16>, c_last) y(inline_str_fixed<16>, c_first)

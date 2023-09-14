@@ -81,12 +81,14 @@ public:
     {                     // XXX(stephentu): this is a hack
       scoped_rcu_region r;// register this thread in rcu region
     }
-    ALWAYS_ASSERT(b);
-    b->count_down();
-    b->wait_for();
+    //    ALWAYS_ASSERT(b);
+    //    b->count_down();
+    //    b->wait_for();
     scoped_db_thread_ctx ctx(db, true);
     load();
   }
+
+  virtual void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) {}
 
 protected:
   inline void *txn_buf() { return (void *) txn_obj_buf.data(); }

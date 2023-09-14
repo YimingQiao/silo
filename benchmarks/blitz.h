@@ -6,6 +6,7 @@
 #include "../third-party/libblitz/include/model.h"
 #include "../third-party/libblitz/include/model_learner.h"
 #include "../util.h"
+#include "abstract_ordered_index.h"
 #include "tpcc.h"
 
 #define kEnum 0
@@ -14,8 +15,11 @@
 #define kString 3
 
 namespace {
-  static db_compress::AttrVector customer_buffer(18);
-  stock_data::value customer_value;
+  static db_compress::AttrVector customer_buffer(4);
+  customer::value customer_value;
+
+  static db_compress::AttrVector customer_data_buffer(14);
+  customer_data::value customer_data_value;
 
   static db_compress::AttrVector order_line_buffer(6);
   order_line::value order_line_value;
@@ -25,6 +29,9 @@ namespace {
 
   static db_compress::AttrVector stock_data_buffer(11);
   stock_data::value stock_data_value;
+
+  // ------------------------ Enum Handle ------------------------------
+  std::vector<db_compress::BiMap> enum_map;
 }// namespace
 
 int EnumStrToId(const std::string &str, int32_t attr, const std::string &table_name);
@@ -85,14 +92,14 @@ protected:
 
 class CustomerBlitz : public BlitzTable {
 public:
-  static const int kNumAttrs = 18;
+  static const int kNumAttrs = 4;
 
   CustomerBlitz() : BlitzTable(kNumAttrs) {
     config_ = {
-        {kEnum, 2, 0},      {kDouble, 0, 0.0025},   {kDouble, 0, 0.0025}, {kEnum, 200, 0}, {kString, 0, 0},
-        {kString, 0, 0},    {kDouble, 0, 0.000025}, {kEnum, 1, 0},        {kEnum, 200, 0}, {kString, 0, 0},
-        {kString, 0, 0},    {kString, 0, 0},        {kEnum, 50, 0},       {kString, 0, 0}, {kString, 0, 0},
-        {kInteger, 0, 0.5}, {kEnum, 1, 0},          {kString, 0, 0},
+        {kEnum, 2, 0},
+        {kDouble, 0, 0.0025},
+        {kDouble, 0, 0.0025},
+        {kEnum, 200, 0},
     };
     RegisterAttrInterpreter();
   }
@@ -103,21 +110,40 @@ public:
     buffer_.attr_[2].value_ = (double) customer.c_ytd_payment;
     buffer_.attr_[3].value_ = (int) customer.c_payment_cnt;
 
-    buffer_.attr_[4].value_ = customer.c_last.str();
-    buffer_.attr_[5].value_ = customer.c_first.str();
+    table_.push_back(buffer_);
+    return true;
+  }
+};
 
-    buffer_.attr_[6].value_ = (double) customer.c_discount;
-    buffer_.attr_[7].value_ = EnumStrToId(std::to_string(customer.c_credit_lim), 7, "customer");
-    buffer_.attr_[8].value_ = (int) customer.c_delivery_cnt;
-    buffer_.attr_[9].value_ = customer.c_street_1.str();
-    buffer_.attr_[10].value_ = customer.c_street_2.str();
-    buffer_.attr_[11].value_ = customer.c_city.str();
-    buffer_.attr_[12].value_ = EnumStrToId(customer.c_state.str(), 12, "customer");
-    buffer_.attr_[13].value_ = customer.c_zip.str();
-    buffer_.attr_[14].value_ = customer.c_phone.str();
-    buffer_.attr_[15].value_ = (int) customer.c_since;
-    buffer_.attr_[16].value_ = EnumStrToId(customer.c_middle.str(), 16, "customer");
-    buffer_.attr_[17].value_ = customer.c_data.str();
+class CustomerDataBlitz : public BlitzTable {
+public:
+  static const int kNumAttrs = 14;
+
+  CustomerDataBlitz() : BlitzTable(kNumAttrs) {
+    config_ = {
+        {kString, 0, 0}, {kString, 0, 0}, {kString, 0, 0},    {kDouble, 0, 0.000025}, {kEnum, 1, 0},
+        {kEnum, 200, 0}, {kString, 0, 0}, {kString, 0, 0},    {kString, 0, 0},        {kEnum, 50, 0},
+        {kString, 0, 0}, {kString, 0, 0}, {kInteger, 0, 0.5}, {kEnum, 1, 0},
+    };
+    RegisterAttrInterpreter();
+  }
+
+  bool PushTuple(customer_data::value &customer) {
+    buffer_.attr_[0].value_ = customer.c_data.str();
+    buffer_.attr_[1].value_ = customer.c_last.str();
+    buffer_.attr_[2].value_ = customer.c_first.str();
+
+    buffer_.attr_[3].value_ = (double) customer.c_discount;
+    buffer_.attr_[4].value_ = EnumStrToId(std::to_string(customer.c_credit_lim), 7, "customer");
+    buffer_.attr_[5].value_ = (int) customer.c_delivery_cnt;
+    buffer_.attr_[6].value_ = customer.c_street_1.str();
+    buffer_.attr_[7].value_ = customer.c_street_2.str();
+    buffer_.attr_[8].value_ = customer.c_city.str();
+    buffer_.attr_[9].value_ = EnumStrToId(customer.c_state.str(), 12, "customer");
+    buffer_.attr_[10].value_ = customer.c_zip.str();
+    buffer_.attr_[11].value_ = customer.c_phone.str();
+    buffer_.attr_[12].value_ = (int) customer.c_since;
+    buffer_.attr_[13].value_ = EnumStrToId(customer.c_middle.str(), 16, "customer");
 
     table_.push_back(buffer_);
     return true;
@@ -227,13 +253,19 @@ public:
     dpr_ = new db_compress::RelationDecompressor(name_.c_str(), table.Schema(), kBlockSize);
     dpr_->InitWithoutIndex();
 
-    std::cerr << "[INFO][Blitzcrank] Compressor for " << name_ << " trained." << std::endl;
+    size_t model_size = filesize(name_.c_str());
+    std::cerr << "[INFO]   * Compressor for " << name_ << " trained, Size: " << ((double) model_size) / (1 << 20) << " MB\n";
   }
 
 private:
   std::string name_;
 
   static void BlitzLearning(BlitzTable &table, db_compress::RelationCompressor &compressor);
+
+  std::ifstream::pos_type filesize(const char *filename) {
+    std::ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
+    return in.tellg();
+  }
 };
 
 // ----------------------------------- Value to AttrVector -----------------------------------
@@ -311,13 +343,18 @@ static inline ALWAYS_INLINE order_line::value *ToOrderLine(db_compress::AttrVect
 
 // ---------------------------------- AttrVector Buffer --------------------------------------
 
-static inline ALWAYS_INLINE db_compress::AttrVector &StockBuffer() { return stock_buffer; }
+static inline ALWAYS_INLINE db_compress::AttrVector &CustomerDataBuffer() {
+  customer_data_buffer.attr_[0].value_ = "";
+  return customer_data_buffer;
+}
 
-static inline ALWAYS_INLINE db_compress::AttrVector &OrderLineBuffer() { return order_line_buffer; }
+// -------------------------------------- Insert & Read ---------------------------------------------
+static std::string BlitzCpr(Blitzcrank *blitz, db_compress::AttrVector &tuple, int32_t stop_idx) {
+  std::vector<uint8_t> codes = std::move(blitz->cpr_->TransformTupleToBits(tuple, stop_idx));
+  return std::move(std::string(codes.begin(), codes.end()));
+}
 
-static inline ALWAYS_INLINE db_compress::AttrVector &CustomerBuffer() { return customer_buffer; }
-
-namespace {
-  // ------------------------ Enum Handle ------------------------------
-  std::vector<db_compress::BiMap> enum_map;
-}// namespace
+static void BlitzDpr(Blitzcrank *blitz, const std::string &bytes, db_compress::AttrVector &tuple, int32_t stop_idx) {
+  std::vector<uint8_t> codes(bytes.begin(), bytes.end());
+  blitz->dpr_->TransformBytesToTuple(&codes, &tuple, stop_idx);
+}

@@ -115,10 +115,7 @@ class ByteReader {
    * @return return a unsigned char of 8 bits
    */
   inline uint8_t ReadByte() {
-    if (byte_pos_ >= stream_->size()) {
-      std::cout << "Byte reader reads out of range.\n";
-      exit(1);
-    }
+    assert(byte_pos_ < stream_->size());
     return (*stream_)[byte_pos_++];
   }
 

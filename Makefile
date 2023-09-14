@@ -80,7 +80,7 @@ CXXFLAGS += -MD -Ithird-party/lz4 -DCONFIG_H=\"$(CONFIG_H)\"
 ifeq ($(DEBUG_S),1)
         CXXFLAGS += -fno-omit-frame-pointer -DDEBUG
 else
-        CXXFLAGS += -w -O3 -funroll-loops -fno-omit-frame-pointer
+        CXXFLAGS += -w -O2 -funroll-loops -fno-omit-frame-pointer
 endif
 ifeq ($(CHECK_INVARIANTS_S),1)
 	CXXFLAGS += -DCHECK_INVARIANTS
@@ -204,7 +204,7 @@ $(MASSTREE_OBJFILES) : $(O)/%.o: masstree/%.cc masstree/config.h
 third-party/lz4/liblz4.so:
 	make -C third-party/lz4 library
 
-third-party/libblitz/build/libdb_compress.so:
+third-party/libblitz/build/libdb_compress.a:
 	@mkdir -p third-party/libblitz/build && cd third-party/libblitz/build && cmake .. && make
 
 .PHONY: test
@@ -236,7 +236,7 @@ masstree/configure masstree/config.h.in: masstree/configure.ac
 .PHONY: dbtest
 dbtest: $(O)/benchmarks/dbtest
 
-$(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES) third-party/lz4/liblz4.so third-party/libblitz/build/libdb_compress.so
+$(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES) third-party/lz4/liblz4.so third-party/libblitz/build/libdb_compress.a
 	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) ${BlitzLDFLAGS}
 
 .PHONY: kvtest

@@ -28,9 +28,9 @@
 using namespace std;
 using namespace util;
 
-#define TPCC_TABLE_LIST(x)                                                                                  \
-  x(customer) x(customer_name_idx) x(district) x(history) x(item) x(new_order) x(oorder) x(oorder_c_id_idx) \
-      x(order_line) x(stock) x(stock_data) x(warehouse)
+#define TPCC_TABLE_LIST(x)                                                                                \
+  x(customer) x(customer_data) x(customer_name_idx) x(district) x(history) x(item) x(new_order) x(oorder) \
+      x(oorder_c_id_idx) x(order_line) x(stock) x(stock_data) x(warehouse)
 
 static inline ALWAYS_INLINE size_t NumWarehouses() { return (size_t) scale_factor; }
 
@@ -241,14 +241,14 @@ protected:                                                                    \
 
 public:
   static inline uint32_t GetCurrentTimeMillis() {
-    // struct timeval tv;
-    // ALWAYS_ASSERT(gettimeofday(&tv, 0) == 0);
-    // return tv.tv_sec * 1000;
+    //     struct timeval tv;
+    //     ALWAYS_ASSERT(gettimeofday(&tv, 0) == 0);
+    //     return tv.tv_sec * 1000;
 
     // XXX(stephentu): implement a scalable GetCurrentTimeMillis()
     // for now, we just give each core an increasing number
-
     static __thread uint32_t tl_hack = 0;
+    if (tl_hack > 100) tl_hack = 0;
     return tl_hack++;
   }
 
@@ -371,7 +371,11 @@ STATIC_COUNTER_DECL(scopedperf::tsc_ctr, tpcc_txn, tpcc_txn_cg)
 class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
 public:
   // Blitzcrank
-  Blitzcrank *stock_blitz, *stock_data_blitz, *order_line_blitz, *customer_blitz;
+  Blitzcrank *stock_blitz, *stock_data_blitz;
+  Blitzcrank *order_line_blitz;
+  Blitzcrank *customer_blitz, *customer_data_blitz;
+
+  db_compress::AttrVector customer_buffer, customer_data_buffer, order_line_buffer, stock_buffer, stock_data_buffer;
 
   // resp for [warehouse_id_start, warehouse_id_end)
   tpcc_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
@@ -381,7 +385,12 @@ public:
       : bench_worker(worker_id, true, seed, db, open_tables, barrier_a, barrier_b),
         tpcc_worker_mixin(partitions),
         warehouse_id_start(warehouse_id_start),
-        warehouse_id_end(warehouse_id_end) {
+        warehouse_id_end(warehouse_id_end),
+        customer_buffer(4),
+        customer_data_buffer(14),
+        order_line_buffer(6),
+        stock_buffer(4),
+        stock_data_buffer(11) {
     INVARIANT(warehouse_id_start >= 1);
     INVARIANT(warehouse_id_start <= NumWarehouses());
     INVARIANT(warehouse_id_end > warehouse_id_start);
@@ -394,6 +403,8 @@ public:
     obj_key0.reserve(str_arena::MinStrReserveLength);
     obj_key1.reserve(str_arena::MinStrReserveLength);
     obj_v.reserve(str_arena::MinStrReserveLength);
+
+    customer_data_buffer.attr_[0].value_ = "";
   }
 
   // XXX(stephentu): tune this
@@ -487,8 +498,17 @@ public:
       : bench_loader(seed, db, open_tables),
         tpcc_worker_mixin(partitions) {}
 
+  double avg_warehouse_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Warehouse");
+    avg_lengths.push_back(avg_warehouse_sz);
+  }
+
 protected:
   void load() override {
+    if (verbose) { cerr << "[INFO] Start Loading Warehouse\n"; }
+
     string obj_buf;
     void *txn = db->new_txn(txn_flags, arena, txn_buf());
     uint64_t warehouse_total_sz = 0, n_warehouses = 0;
@@ -541,10 +561,12 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
+
+    avg_warehouse_sz = double(warehouse_total_sz) / double(n_warehouses);
+
     if (verbose) {
-      cerr << "[INFO] finished loading warehouse" << endl;
-      cerr << "[INFO]   * average warehouse record length: " << (double(warehouse_total_sz) / double(n_warehouses))
-           << " bytes" << endl;
+      cerr << "[INFO]   * #Record: " << n_warehouses << "\n";
+      cerr << "[INFO]   * Total size: " << (double(warehouse_total_sz) / (1 << 20)) << " MB\n";
     }
   }
 };
@@ -556,8 +578,17 @@ public:
       : bench_loader(seed, db, open_tables),
         tpcc_worker_mixin(partitions) {}
 
+  double avg_item_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Item");
+    avg_lengths.push_back(avg_item_sz);
+  }
+
 protected:
   virtual void load() {
+    if (verbose) { cerr << "[INFO] Start Loading Item\n"; }
+
     string obj_buf;
     const ssize_t bsize = db->txn_max_batch_size();
     void *txn = db->new_txn(txn_flags, arena, txn_buf());
@@ -598,9 +629,12 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
+
+    avg_item_sz = double(total_sz) / double(NumItems());
+
     if (verbose) {
-      cerr << "[INFO] finished loading item" << endl;
-      cerr << "[INFO]   * average item record length: " << (double(total_sz) / double(NumItems())) << " bytes" << endl;
+      cerr << "[INFO]   * #Record: " << NumItems() << "\n";
+      cerr << "[INFO]   * Total size: " << (double(total_sz) / (1 << 20)) << " MB\n";
     }
   }
 };
@@ -620,8 +654,17 @@ public:
   Blitzcrank *stock_blitz;
   Blitzcrank *stock_data_blitz;
 
+  double avg_stock_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Stock");
+    avg_lengths.push_back(avg_stock_sz);
+  }
+
 protected:
   void BlitzTraining() {
+    if (verbose) { cerr << "[INFO] Start Loading Stock\n"; }
+
     uint64_t stock_total_sz = 0, n_stocks = 0;
     const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
     const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
@@ -669,13 +712,8 @@ protected:
     stock_data_blitz->Train(tmp_db_stock_data_);
 
     if (verbose) {
-      if (warehouse_id == -1) {
-        cerr << "[INFO] finished Learning stock" << endl;
-        cerr << "[INFO]   * average stock record length: " << (double(stock_total_sz) / double(n_stocks)) << " bytes"
-             << endl;
-      } else {
-        cerr << "[INFO] Blitzcrank must be training with single thread" << endl;
-      }
+      cerr << "[INFO]   * #stock: " << n_stocks << "\n";
+      cerr << "[INFO]   * Total Size: " << (double(stock_total_sz) / (1 << 20)) << " MB\n";
     }
   }
 
@@ -700,25 +738,18 @@ protected:
         for (uint i = 1; i <= NumItems(); i++) {
           const stock::key k(w, i);
           const stock_data::key k_data(w, i);
-
           auto &v = tmp_db_stock_.GetTuple((w - w_start) * NumItems() + i - 1);
           auto &v_data = tmp_db_stock_data_.GetTuple((w - w_start) * NumItems() + i - 1);
-
-          vector<uint8_t> v_codes = std::move(stock_blitz->cpr_->TransformTupleToBits(v, 4));
-          vector<uint8_t> v_data_codes = std::move(stock_data_blitz->cpr_->TransformTupleToBits(v_data, 11));
-          std::string v_str(v_codes.begin(), v_codes.end());
-          std::string v_data_str(v_data_codes.begin(), v_data_codes.end());
-
-          stock_total_sz += v_str.size();
-          stock_total_sz += v_data_str.size();
+          std::string v_codes = BlitzCpr(stock_blitz, v, v.attr_.size());
+          std::string v_data_codes = BlitzCpr(stock_data_blitz, v_data, v_data.attr_.size());
+          tbl_stock(w)->insert(txn, Encode(k), v_codes);
+          tbl_stock_data(w)->insert(txn, Encode(k_data), v_data_codes);
+          stock_total_sz += v_codes.size() + v_data_codes.size();
           n_stocks++;
-
-          // tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, ToStock(v)));
-          tbl_stock(w)->insert(txn, Encode(k), v_str);
-          tbl_stock_data(w)->insert(txn, Encode(k_data), v_data_str);
         }
+
         if (db->commit_txn(txn)) {
-          b++;
+          // b++;
         } else {
           db->abort_txn(txn);
           if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
@@ -730,16 +761,9 @@ protected:
       }
     }
 
+    avg_stock_sz = double(stock_total_sz) / double(n_stocks);
 
-    if (verbose) {
-      if (warehouse_id == -1) {
-        cerr << "[INFO] finished Compressing stock" << endl;
-        cerr << "[INFO]   * average stock record length: " << (double(stock_total_sz) / double(n_stocks)) << " bytes"
-             << endl;
-      } else {
-        cerr << "[INFO] finished loading stock (w=" << warehouse_id << ")" << endl;
-      }
-    }
+    if (verbose) { cerr << "[INFO]   * Compressed Total Size: " << (double(stock_total_sz) / (1 << 20)) << " MB\n"; }
 
     // delete the training data
     tmp_db_stock_.Clear();
@@ -760,8 +784,17 @@ public:
       : bench_loader(seed, db, open_tables),
         tpcc_worker_mixin(partitions) {}
 
+  double avg_district_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("District");
+    avg_lengths.push_back(avg_district_sz);
+  }
+
 protected:
   virtual void load() {
+    if (verbose) { cerr << "[INFO] Start Loading District\n"; }
+
     string obj_buf;
 
     const ssize_t bsize = db->txn_max_batch_size();
@@ -803,10 +836,12 @@ protected:
       // shouldn't abort on loading!
       ALWAYS_ASSERT(false);
     }
+
+    avg_district_sz = double(district_total_sz) / double(n_districts);
+
     if (verbose) {
-      cerr << "[INFO] finished loading district" << endl;
-      cerr << "[INFO]   * average district record length: " << (double(district_total_sz) / double(n_districts))
-           << " bytes" << endl;
+      cerr << "[INFO]   * #Record: " << n_districts << "\n";
+      cerr << "[INFO]   * Total size: " << (double(district_total_sz) / (1 << 20)) << " MB\n";
     }
   }
 };
@@ -818,14 +853,24 @@ public:
       : bench_loader(seed, db, open_tables),
         tpcc_worker_mixin(partitions),
         warehouse_id(warehouse_id),
-        customer_blitz(new Blitzcrank("customer")) {
+        customer_blitz(new Blitzcrank("customer")),
+        customer_data_blitz(new Blitzcrank("customer_data")) {
     ALWAYS_ASSERT(warehouse_id == -1 || (warehouse_id >= 1 && static_cast<size_t>(warehouse_id) <= NumWarehouses()));
   }
 
-  Blitzcrank *customer_blitz;
+  Blitzcrank *customer_blitz, *customer_data_blitz;
+
+  double avg_customer_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Customer");
+    avg_lengths.push_back(avg_customer_sz);
+  }
 
 protected:
   void BlitzTraining() {
+    if (verbose) { cerr << "[INFO] Start Loading Customer\n"; }
+
     string obj_buf;
 
     uint64_t total_sz = 0;
@@ -840,41 +885,40 @@ protected:
             const customer::key k(w, d, c);
 
             customer::value v;
-            v.c_discount = (float) (RandomNumber(r, 1, 5000) / 10000.0);
             bool bad_credit = RandomNumber(r, 1, 100) <= 10;
             if (bad_credit) v.c_credit.assign("BC");
             else
               v.c_credit.assign("GC");
-
-            if (c <= 1000) v.c_last.assign(GetCustomerLastName(r, c - 1));
-            else
-              v.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
-
-            v.c_first.assign(blitz_generator.CustomerString(16, "first_name"));
-            v.c_credit_lim = 50000;
-
             v.c_balance = blitz_generator.CustomerFloatDist("balance");
             v.c_ytd_payment = blitz_generator.CustomerFloatDist("ytd_payment");
             v.c_payment_cnt = blitz_generator.CustomerIntDist("payment_cnt");
-            v.c_delivery_cnt = blitz_generator.CustomerIntDist("delivery_cnt");
 
-            v.c_street_1.assign(blitz_generator.CustomerString(20, "street"));
-            v.c_street_2.assign(blitz_generator.DepartmentData(20));
-            v.c_city.assign(blitz_generator.CustomerString(20, "city"));
-            v.c_state.assign(blitz_generator.CustomerString(2, "state"));
-            v.c_zip.assign(blitz_generator.CustomerString(5, "zip") + "1111");
-            v.c_phone.assign(blitz_generator.PhoneData(16));
-            v.c_since = GetCurrentTimeMillis();
-            v.c_middle.assign("OE");
-            v.c_data.assign(blitz_generator.CustomerData(500, bad_credit));
+            customer_data::value v_data;
+            v_data.c_discount = (float) (RandomNumber(r, 1, 5000) / 10000.0);
+            if (c <= 1000) v_data.c_last.assign(GetCustomerLastName(r, c - 1));
+            else
+              v_data.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
+            v_data.c_first.assign(blitz_generator.CustomerString(16, "first_name"));
+            v_data.c_credit_lim = 50000;
+            v_data.c_delivery_cnt = blitz_generator.CustomerIntDist("delivery_cnt");
+            v_data.c_street_1.assign(blitz_generator.CustomerString(20, "street"));
+            v_data.c_street_2.assign(blitz_generator.DepartmentData(20));
+            v_data.c_city.assign(blitz_generator.CustomerString(20, "city"));
+            v_data.c_state.assign(blitz_generator.CustomerString(2, "state"));
+            v_data.c_zip.assign(blitz_generator.CustomerString(5, "zip") + "1111");
+            v_data.c_phone.assign(blitz_generator.PhoneData(16));
+            v_data.c_since = GetCurrentTimeMillis();
+            v_data.c_middle.assign("OE");
+            v_data.c_data.assign(blitz_generator.CustomerData(500, bad_credit));
 
-            checker::SanityCheckCustomer(&k, &v);
-            const size_t sz = Size(v);
+            const size_t sz = Size(v) + Size(v_data);
             total_sz += sz;
             customer_keys.push_back(k);
             tmp_db_customer_.PushTuple(v);
+            tmp_db_customer_data_.PushTuple(v_data);
+
             // customer name index
-            const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
+            const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v_data.c_last.str(true), v_data.c_first.str(true));
             const customer_name_idx::value v_idx(k.c_id);
 
             // index structure is:
@@ -908,16 +952,12 @@ protected:
     }
 
     customer_blitz->Train(tmp_db_customer_);
+    customer_data_blitz->Train(tmp_db_customer_data_);
 
     if (verbose) {
-      if (warehouse_id == -1) {
-        cerr << "[INFO] finished Learning customer" << endl;
-        cerr << "[INFO]   * average customer record length: "
-             << (double(total_sz) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict()))
-             << " bytes " << endl;
-      } else {
-        cerr << "[INFO] finished loading customer (w=" << warehouse_id << ")" << endl;
-      }
+      cerr << "[INFO]   * #Record: " << NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict()
+           << "\n";
+      cerr << "[INFO]   * Total size: " << (double(total_sz) / (1 << 20)) << " MB\n";
     }
   }
 
@@ -933,14 +973,15 @@ protected:
       for (size_t i = 0; i < customer_keys.size(); ++i) {
         customer::key &k = customer_keys[i];
         auto &v = tmp_db_customer_.GetTuple(i);
-        std::vector<uint8_t> v_codes = std::move(customer_blitz->cpr_->TransformTupleToBits(v, 18));
-        std::string v_str(v_codes.begin(), v_codes.end());
-        tbl_customer(k.c_w_id)->insert(txn, Encode(k), v_str);
-
-        total_sz += v_str.size();
+        auto &v_data = tmp_db_customer_data_.GetTuple(i);
+        std::string v_codes = BlitzCpr(customer_blitz, v, v.attr_.size());
+        std::string v_data_codes = BlitzCpr(customer_data_blitz, v_data, v_data.attr_.size());
+        tbl_customer(k.c_w_id)->insert(txn, Encode(k), v_codes);
+        tbl_customer_data(k.c_w_id)->insert(txn, Encode(k), v_data_codes);
+        total_sz += v_codes.size() + v_data_codes.size();
       }
       if (db->commit_txn(txn)) {
-        b++;
+        // b++;
       } else {
         db->abort_txn(txn);
         if (verbose) cerr << "[WARNING] customer loader loading abort" << endl;
@@ -950,23 +991,19 @@ protected:
       if (verbose) cerr << "[WARNING] customer loader Compression abort" << endl;
     }
 
-    if (verbose) {
-      if (warehouse_id == -1) {
-        cerr << "[INFO] finished Compressing customer" << endl;
-        cerr << "[INFO]   * average customer record length: "
-             << (double(total_sz) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict()))
-             << " bytes " << endl;
-      } else {
-        cerr << "[INFO] finished loading customer (w=" << warehouse_id << ")" << endl;
-      }
-    }
+    avg_customer_sz =
+        double(total_sz) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict());
+
+    if (verbose) { cerr << "[INFO]   * Compressed Total size: " << (double(total_sz) / (1 << 20)) << " MB\n"; }
 
     tmp_db_customer_.Clear();
+    tmp_db_customer_data_.Clear();
   }
 
 private:
   ssize_t warehouse_id;
   CustomerBlitz tmp_db_customer_;
+  CustomerDataBlitz tmp_db_customer_data_;
   std::vector<customer::key> customer_keys;
 };
 
@@ -983,8 +1020,21 @@ public:
 
   Blitzcrank *order_line_blitz;
 
+  double avg_order_sz = 0, avg_new_order_sz = 0, avg_order_line_sz = 0;
+
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Order");
+    avg_lengths.push_back(avg_order_sz);
+    names.push_back("NewOrder");
+    avg_lengths.push_back(avg_new_order_sz);
+    names.push_back("OrderLine");
+    avg_lengths.push_back(avg_order_line_sz);
+  }
+
 protected:
   void BlitzTraining() {
+    if (verbose) { cerr << "[INFO] Start Loading Order, New Order, Order Line\n"; }
+
     string obj_buf;
 
     uint64_t order_line_total_sz = 0, n_order_lines = 0;
@@ -1086,18 +1136,16 @@ protected:
 
     order_line_blitz->Train(tmp_db_order_line_);
 
+    avg_new_order_sz = double(new_order_total_sz) / double(n_new_orders);
+    avg_order_sz = double(oorder_total_sz) / double(n_oorders);
+
     if (verbose) {
-      if (warehouse_id == -1) {
-        cerr << "[INFO] finished loading order, new order, order line" << endl;
-        cerr << "[INFO]   * average order_line record length: " << (double(order_line_total_sz) / double(n_order_lines))
-             << " bytes" << endl;
-        cerr << "[INFO]   * average oorder record length: " << (double(oorder_total_sz) / double(n_oorders)) << " bytes"
-             << endl;
-        cerr << "[INFO]   * average new_order record length: " << (double(new_order_total_sz) / double(n_new_orders))
-             << " bytes" << endl;
-      } else {
-        cerr << "[INFO] finished loading order (w=" << warehouse_id << ")" << endl;
-      }
+      cerr << "[INFO]   * #Order Line: " << n_order_lines << "\t"
+           << "#OOrder: " << n_oorders << "\t"
+           << "#New Order: " << n_new_orders << "\n";
+      cerr << "[INFO]   * Order Line Total Size: " << (double(order_line_total_sz) / (1 << 20)) << " MB\t"
+           << "OOrder Total Size: " << (double(oorder_total_sz) / (1 << 20)) << " MB\t"
+           << "New Order Total Size: " << (double(new_order_total_sz) / (1 << 20)) << " MB\n";
     }
   }
 
@@ -1115,16 +1163,14 @@ protected:
         order_line::key &k_ol = order_line_keys[i];
         db_compress::AttrVector &v_ol_attr = tmp_db_order_line_.GetTuple(i);
 
-        vector<uint8_t> v_codes = std::move(order_line_blitz->cpr_->TransformTupleToBits(v_ol_attr, 6));
-        std::string v_str(v_codes.begin(), v_codes.end());
-
+        // std::cerr << v_ol_attr.attr_[1].Double() << "\t";
+        std::string v_codes = BlitzCpr(order_line_blitz, v_ol_attr, 4);
+        tbl_order_line(k_ol.ol_w_id)->insert(txn, Encode(k_ol), v_codes);
         order_line_total_sz += v_codes.size();
         n_order_lines++;
-
-        tbl_order_line(k_ol.ol_w_id)->insert(txn, Encode(k_ol), v_str);
       }
       if (db->commit_txn(txn)) {
-        b++;
+        // b++;
       } else {
         db->abort_txn(txn);
         ALWAYS_ASSERT(warehouse_id != -1);
@@ -1136,14 +1182,10 @@ protected:
       if (verbose) cerr << "[WARNING] order line loader loading abort" << endl;
     }
 
+    avg_order_line_sz = double(order_line_total_sz) / double(n_order_lines);
+
     if (verbose) {
-      if (warehouse_id == -1) {
-        cerr << "[INFO] finished Compressing order line" << endl;
-        cerr << "[INFO]   * average order_line record length: " << (double(order_line_total_sz) / double(n_order_lines))
-             << " bytes" << endl;
-      } else {
-        cerr << "[INFO] finished loading order (w=" << warehouse_id << ")" << endl;
-      }
+      cerr << "[INFO]   * Order Line Total Size: " << (double(order_line_total_sz) / (1 << 20)) << " MB\n";
     }
 
     tmp_db_order_line_.Clear();
@@ -1229,7 +1271,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
     ssize_t ret = 0;
     const customer::key k_c(warehouse_id, districtID, customerID);
     ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-    customer::value v_c_temp;
+    BlitzDpr(customer_blitz, obj_v, customer_buffer, 4);
 
     const warehouse::key k_w(warehouse_id);
     ALWAYS_ASSERT(tbl_warehouse(warehouse_id)->get(txn, Encode(obj_key0, k_w), obj_v));
@@ -1288,13 +1330,8 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
 
       const stock::key k_s(ol_supply_w_id, ol_i_id);
       ALWAYS_ASSERT(tbl_stock(ol_supply_w_id)->get(txn, Encode(obj_key0, k_s), obj_v));
-      //      stock::value v_s_temp;
-      //      const stock::value *v_s = Decode(obj_v, v_s_temp);
-      //      checker::SanityCheckStock(&k_s, v_s);
-      vector<uint8_t> obj_v_vector(obj_v.begin(), obj_v.end());
-      db_compress::AttrVector &v_s_vector = StockBuffer();
-      stock_blitz->dpr_->TransformBytesToTuple(&obj_v_vector, &v_s_vector, 4);
-      const stock::value *v_s = ToStock(v_s_vector);
+      BlitzDpr(stock_blitz, obj_v, stock_buffer, 4);
+      const stock::value *v_s = ToStock(stock_buffer);
       checker::SanityCheckStock(&k_s, v_s);
 
       stock::value v_s_new(*v_s);
@@ -1303,6 +1340,9 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
         v_s_new.s_quantity += -int32_t(ol_quantity) + 91;
       v_s_new.s_ytd += ol_quantity;
       v_s_new.s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
+      db_compress::AttrVector &v_s_new_attr = ToAttrVector(v_s_new);
+      std::string v_s_codes = BlitzCpr(stock_blitz, stock_buffer, 4);
+      tbl_stock(ol_supply_w_id)->put(txn, Encode(str(), k_s), v_s_codes);
 
       const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
       order_line::value v_ol;
@@ -1313,10 +1353,9 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
       v_ol.ol_delivery_d = 0;// not delivered yet
 
       db_compress::AttrVector &v_ol_attr = ToAttrVector(v_ol);
-      vector<uint8_t> v_codes = std::move(order_line_blitz->cpr_->TransformTupleToBits(v_ol_attr, 4));
-      std::string v_str(v_codes.begin(), v_codes.end());
-      tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), v_str);
-      ret += v_str.size();
+      std::string v_codes = BlitzCpr(order_line_blitz, v_ol_attr, 4);
+      tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), v_codes);
+      ret += v_codes.size();
     }
 
     measure_txn_counters(txn, "txn_new_order");
@@ -1413,19 +1452,12 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
       for (size_t i = 0; i < c.size(); i++) {
         std::string str = *c.values[i].second;
         vector<uint8_t> v_codes(str.begin(), str.end());
-        db_compress::AttrVector &v_ol_attr = OrderLineBuffer();
-        order_line_blitz->dpr_->TransformBytesToTuple(&v_codes, &v_ol_attr, 2);
 
-#ifdef CHECK_INVARIANTS
-        order_line::key k_ol_temp;
-        const order_line::key *k_ol = Decode(*c.values[i].first, k_ol_temp);
-        checker::SanityCheckOrderLine(k_ol, v_ol);
-#endif
-
-        sum += v_ol_attr.attr_[1].Double();  // sum += v_ol->ol_amount;
-        v_ol_attr.attr_[5].value_ = (int) ts;// v_ol->ol_delivery_d = ts;
-        INVARIANT(s_arena.get()->manages(c.values[i].first));
-        vector<uint8_t> v_codes_new = std::move(order_line_blitz->cpr_->TransformTupleToBits(v_ol_attr, 2));
+        BlitzDpr(order_line_blitz, str, order_line_buffer, 5);
+        sum += order_line_buffer.attr_[1].Double();  // sum += v_ol->ol_amount;
+        order_line_buffer.attr_[4].value_ = (int) ts;// v_ol->ol_delivery_d = ts;
+        std::string v_ol_codes = BlitzCpr(order_line_blitz, order_line_buffer, 5);
+        tbl_order_line(warehouse_id)->put(txn, *c.values[i].first, v_ol_codes);
       }
 
       // delete new order
@@ -1443,12 +1475,10 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
       // update customer
       const customer::key k_c(warehouse_id, d, c_id);
       ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-      db_compress::AttrVector &v_c_attr = CustomerBuffer();
-      vector<uint8_t> v_vector(obj_v.begin(), obj_v.end());
-      customer_blitz->dpr_->TransformBytesToTuple(&v_vector, &v_c_attr, 2);
-      v_c_attr.attr_[1].value_ = v_c_attr.attr_[1].Double() + ol_total;// v_c->c_balance += ol_total;
-      customer_blitz->cpr_->TransformTupleToBits(v_c_attr, 2);
-      // tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), Encode(str(), v_c_new));
+      BlitzDpr(customer_blitz, obj_v, customer_buffer, 4);
+      customer_buffer.attr_[1].value_ = customer_buffer.attr_[1].Double() + ol_total;// v_c->c_balance += ol_total;
+      std::string v_codes = BlitzCpr(customer_blitz, customer_buffer, 4);
+      tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), v_codes);
     }
     measure_txn_counters(txn, "txn_delivery");
     if (likely(db->commit_txn(txn))) return txn_result(true, ret);
@@ -1552,7 +1582,6 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
       k_c.c_d_id = customerDistrictID;
       k_c.c_id = v_c_idx->c_id;
       ALWAYS_ASSERT(tbl_customer(customerWarehouseID)->get(txn, Encode(obj_key0, k_c), obj_v));
-
     } else {
       // cust by ID
       const uint customerID = GetCustomerId(r);
@@ -1561,16 +1590,21 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
       k_c.c_id = customerID;
       ALWAYS_ASSERT(tbl_customer(customerWarehouseID)->get(txn, Encode(obj_key0, k_c), obj_v));
     }
-    db_compress::AttrVector &v_c_attr = CustomerBuffer();
-    vector<uint8_t> v_vector(obj_v.begin(), obj_v.end());
-    customer_blitz->dpr_->TransformBytesToTuple(&v_vector, &v_c_attr, 18);
 
+    BlitzDpr(customer_blitz, obj_v, customer_buffer, 4);
+    db_compress::AttrVector v_c_attr = customer_buffer;
     v_c_attr.attr_[1].value_ = v_c_attr.attr_[1].Double() - paymentAmount;// v_c.c_balance -= paymentAmount;
     v_c_attr.attr_[2].value_ = v_c_attr.attr_[2].Double() + paymentAmount;// v_c.c_ytd_payment += paymentAmount;
     v_c_attr.attr_[3].value_ = v_c_attr.attr_[3].Int() + 1;               // v_c.c_payment_cnt++;
+    std::string v_c_codes = BlitzCpr(customer_blitz, customer_buffer, 4);
 
     // 0: "BC", 1: "GC"
-    if (v_c_attr.attr_[0].Int() == 1) {
+    if (customer_buffer.attr_[0].Int() == 1) {
+      tbl_customer_data(customerWarehouseID)->get(txn, Encode(obj_key0, k_c), obj_v);
+      BlitzDpr(customer_data_blitz, obj_v, customer_data_buffer, 1);
+      db_compress::AttrVector v_c_attr = customer_data_buffer;
+      std::string &data = v_c_attr.attr_[0].String();
+
       // Bad credit: insert history into c_data
       static const int HISTORY_SIZE = 500;
       char history[HISTORY_SIZE];
@@ -1578,14 +1612,14 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
                                 k_c.c_w_id, districtID, warehouse_id, int(paymentAmount));
 
       // Perform the insert with a move and copy
-      int current_keep = static_cast<int>(v_c_attr.attr_[17].String().size());
-      if (current_keep + characters > 500) { current_keep = 500 - characters; }
-      v_c_attr.attr_[17].value_ = v_c_attr.attr_[17].String() + history;
-      customer_blitz->cpr_->TransformTupleToBits(v_c_attr, 17);
+      int current_keep = static_cast<int>(data.size());
+      if (current_keep + characters < 500) {
+        data += history;
+        std::string v_c_codes = BlitzCpr(customer_data_blitz, customer_data_buffer, 1);
+      }
     }
-
-    customer_blitz->cpr_->TransformTupleToBits(v_c_attr, 4);
-    // tbl_customer(customerWarehouseID)->put(txn, Encode(str(), k_c), Encode(str(), v_c_new));
+    // customer update
+    tbl_customer(customerWarehouseID)->put(txn, Encode(str(), k_c), v_c_codes);
 
     const history::key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, districtID, warehouse_id, ts);
     history::value v_h;
@@ -1644,7 +1678,6 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
   // NB: since txn_order_status() is a RO txn, we assume that
   // locking is un-necessary (since we can just read from some old snapshot)
   try {
-
     customer::key k_c;
     customer::value v_c;
     if (RandomNumber(r, 1, 100) <= 60) {
@@ -1693,9 +1726,7 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
       k_c.c_id = customerID;
       ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
     }
-    db_compress::AttrVector &v_c_attr = CustomerBuffer();
-    vector<uint8_t> v_vector(obj_v.begin(), obj_v.end());
-    customer_blitz->dpr_->TransformBytesToTuple(&v_vector, &v_c_attr, 1);
+    BlitzDpr(customer_blitz, obj_v, customer_buffer, 4);
 
     string *newest_o_c_id = s_arena.get()->next();
     if (g_order_status_scan_hack) {
@@ -1743,15 +1774,12 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
 
 class order_line_scan_callback : public abstract_ordered_index::scan_callback {
 public:
-  order_line_scan_callback() : n(0) {}
+  order_line_scan_callback() : n(0), order_line_buffer(1) {}
 
   virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
     INVARIANT(keylen == sizeof(order_line::key));
-    order_line::value v_ol_temp;
-    db_compress::AttrVector &v_ol_attr = OrderLineBuffer();
-    std::vector<uint8_t> v_ol_vector(value.begin(), value.end());
-    order_line_blitz->dpr_->TransformBytesToTuple(&v_ol_vector, &v_ol_attr, 1);
-    int ol_i_id = v_ol_attr.attr_[0].Int();
+    BlitzDpr(order_line_blitz, value, order_line_buffer, 1);
+    int ol_i_id = order_line_buffer.attr_[0].Int();
 
 #ifdef CHECK_INVARIANTS
     order_line::key k_ol_temp;
@@ -1767,6 +1795,7 @@ public:
   size_t n;
   small_unordered_map<uint, bool, 512> s_i_ids;
   Blitzcrank *order_line_blitz;
+  db_compress::AttrVector order_line_buffer;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe0_tod, stock_level_probe0_cg)
@@ -1951,6 +1980,7 @@ protected:
       auto loader = new tpcc_customer_loader(92358785, db, open_tables, partitions, -1);
       loaders.push_back(loader);
       customer_blitz = loader->customer_blitz;
+      customer_data_blitz = loader->customer_data_blitz;
     }
 
     // order, new order, and orderline
@@ -1990,6 +2020,7 @@ protected:
       ((tpcc_worker *) worker)->stock_data_blitz = stock_data_blitz;
       ((tpcc_worker *) worker)->order_line_blitz = order_line_blitz;
       ((tpcc_worker *) worker)->customer_blitz = customer_blitz;
+      ((tpcc_worker *) worker)->customer_data_blitz = customer_data_blitz;
     }
 
     return workers;
@@ -1998,7 +2029,9 @@ protected:
 private:
   map<string, vector<abstract_ordered_index *>> partitions;
 
-  Blitzcrank *stock_blitz, *stock_data_blitz, *order_line_blitz, *customer_blitz;
+  Blitzcrank *stock_blitz, *stock_data_blitz;
+  Blitzcrank *order_line_blitz;
+  Blitzcrank *customer_blitz, *customer_data_blitz;
 };
 
 void tpcc_do_test(abstract_db *db, int argc, char **argv) {
