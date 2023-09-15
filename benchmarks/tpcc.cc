@@ -1369,11 +1369,6 @@ public:
   virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
     INVARIANT(keylen == sizeof(new_order::key));
     INVARIANT(value.size() == sizeof(new_order::value));
-#ifdef CHECK_INVARIANTS
-    new_order::value v_no_temp;
-    const new_order::value *v_no = Decode(value, v_no_temp);
-    checker::SanityCheckNewOrder(k_no, v_no);
-#endif
     return false;
   }
 
@@ -1643,11 +1638,6 @@ public:
 
   virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
     INVARIANT(keylen == sizeof(order_line::key));
-#ifdef CHECK_INVARIANTS
-    order_line::key k_ol_temp;
-    const order_line::key *k_ol = Decode(keyp, k_ol_temp);
-    checker::SanityCheckOrderLine(k_ol, v_ol);
-#endif
     ++n;
     return true;
   }
@@ -1778,13 +1768,6 @@ public:
     INVARIANT(keylen == sizeof(order_line::key));
     BlitzDpr(order_line_blitz, value, order_line_buffer, 1);
     int ol_i_id = order_line_buffer.attr_[0].Int();
-
-#ifdef CHECK_INVARIANTS
-    order_line::key k_ol_temp;
-    const order_line::key *k_ol = Decode(keyp, k_ol_temp);
-    checker::SanityCheckOrderLine(k_ol, v_ol);
-#endif
-
     s_i_ids[ol_i_id] = 1;
     n++;
     return true;
