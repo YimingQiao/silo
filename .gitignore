@@ -9,3 +9,7 @@ out-*
 
 # clion setting
 .idea
+
+# blitz model
+.blitz
+.index

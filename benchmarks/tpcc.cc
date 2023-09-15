@@ -1760,55 +1760,70 @@ public:
 
 protected:
   virtual vector<bench_loader *> make_loaders() {
-    vector<bench_loader *> ret;
-    ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions));
-    ret.push_back(new tpcc_item_loader(235443, db, open_tables, partitions));
+    vector<bench_loader *> loaders;
+
+    // warehouse
+    loaders.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions));
+
+    // item
+    loaders.push_back(new tpcc_item_loader(235443, db, open_tables, partitions));
+
+    // stock
     if (enable_parallel_loading) {
       fast_random r(89785943);
       for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_stock_loader(r.next(), db, open_tables, partitions, i));
+        loaders.push_back(new tpcc_stock_loader(r.next(), db, open_tables, partitions, i));
     } else {
-      ret.push_back(new tpcc_stock_loader(89785943, db, open_tables, partitions, -1));
+      auto loader = new tpcc_stock_loader(89785943, db, open_tables, partitions, -1);
+      loaders.push_back(loader);
     }
-    ret.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions));
+
+    // district
+    loaders.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions));
+
+    // customer
     if (enable_parallel_loading) {
       fast_random r(923587856425);
       for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_customer_loader(r.next(), db, open_tables, partitions, i));
+        loaders.push_back(new tpcc_customer_loader(r.next(), db, open_tables, partitions, i));
     } else {
-      ret.push_back(new tpcc_customer_loader(923587856425, db, open_tables, partitions, -1));
+      loaders.push_back(new tpcc_customer_loader(923587856425, db, open_tables, partitions, -1));
     }
+
+    // order, new order, and orderline
     if (enable_parallel_loading) {
       fast_random r(2343352);
       for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_order_loader(r.next(), db, open_tables, partitions, i));
+        loaders.push_back(new tpcc_order_loader(r.next(), db, open_tables, partitions, i));
     } else {
-      ret.push_back(new tpcc_order_loader(2343352, db, open_tables, partitions, -1));
+      loaders.push_back(new tpcc_order_loader(2343352, db, open_tables, partitions, -1));
     }
-    return ret;
+
+    return loaders;
   }
 
-  virtual vector<bench_worker *> make_workers() {
+  vector<bench_worker *> make_workers() override {
     const unsigned alignment = coreid::num_cpus_online();
     const int blockstart = coreid::allocate_contiguous_aligned_block(nthreads, alignment);
     ALWAYS_ASSERT(blockstart >= 0);
     ALWAYS_ASSERT((blockstart % alignment) == 0);
     fast_random r(23984543);
-    vector<bench_worker *> ret;
+    vector<bench_worker *> workers;
     if (NumWarehouses() <= nthreads) {
       for (size_t i = 0; i < nthreads; i++)
-        ret.push_back(new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
-                                      (i % NumWarehouses()) + 1, (i % NumWarehouses()) + 2));
+        workers.push_back(new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
+                                          (i % NumWarehouses()) + 1, (i % NumWarehouses()) + 2));
+
     } else {
       const unsigned nwhse_per_partition = NumWarehouses() / nthreads;
       for (size_t i = 0; i < nthreads; i++) {
         const unsigned wstart = i * nwhse_per_partition;
         const unsigned wend = (i + 1 == nthreads) ? NumWarehouses() : (i + 1) * nwhse_per_partition;
-        ret.push_back(new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
-                                      wstart + 1, wend + 1));
+        workers.push_back(new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
+                                          wstart + 1, wend + 1));
       }
     }
-    return ret;
+    return workers;
   }
 
 private:
