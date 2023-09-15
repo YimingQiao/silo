@@ -1764,39 +1764,27 @@ protected:
 
     // warehouse
     loaders.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions));
-
     // item
     loaders.push_back(new tpcc_item_loader(235443, db, open_tables, partitions));
+    // district
+    loaders.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions));
 
     // stock
-    if (enable_parallel_loading) {
-      fast_random r(89785943);
-      for (uint i = 1; i <= NumWarehouses(); i++)
-        loaders.push_back(new tpcc_stock_loader(r.next(), db, open_tables, partitions, i));
-    } else {
+    {
       auto loader = new tpcc_stock_loader(89785943, db, open_tables, partitions, -1);
       loaders.push_back(loader);
     }
 
-    // district
-    loaders.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions));
-
     // customer
-    if (enable_parallel_loading) {
-      fast_random r(923587856425);
-      for (uint i = 1; i <= NumWarehouses(); i++)
-        loaders.push_back(new tpcc_customer_loader(r.next(), db, open_tables, partitions, i));
-    } else {
-      loaders.push_back(new tpcc_customer_loader(923587856425, db, open_tables, partitions, -1));
+    {
+      auto loader = new tpcc_customer_loader(92358785, db, open_tables, partitions, -1);
+      loaders.push_back(loader);
     }
 
     // order, new order, and orderline
-    if (enable_parallel_loading) {
-      fast_random r(2343352);
-      for (uint i = 1; i <= NumWarehouses(); i++)
-        loaders.push_back(new tpcc_order_loader(r.next(), db, open_tables, partitions, i));
-    } else {
-      loaders.push_back(new tpcc_order_loader(2343352, db, open_tables, partitions, -1));
+    {
+      auto loader = new tpcc_order_loader(2343352, db, open_tables, partitions, -1);
+      loaders.push_back(loader);
     }
 
     return loaders;
