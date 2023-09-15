@@ -59,7 +59,7 @@ DO_STRUCT(oorder_c_id_idx, OORDER_C_ID_IDX_KEY_FIELDS, OORDER_C_ID_IDX_VALUE_FIE
 DO_STRUCT(order_line, ORDER_LINE_KEY_FIELDS, ORDER_LINE_VALUE_FIELDS)
 
 #define STOCK_KEY_FIELDS(x, y) x(int32_t, s_w_id) y(int32_t, s_i_id)
-#define STOCK_VALUE_FIELDS(x, y) x(int16_t, s_quantity) y(float, s_ytd) y(int32_t, s_order_cnt) y(int32_t, s_remote_cnt)
+#define STOCK_VALUE_FIELDS(x, y) x(int16_t, s_quantity) y(int32_t, s_ytd) y(int32_t, s_order_cnt) y(int32_t, s_remote_cnt)
 DO_STRUCT(stock, STOCK_KEY_FIELDS, STOCK_VALUE_FIELDS)
 
 #define STOCK_DATA_KEY_FIELDS(x, y) x(int32_t, s_w_id) y(int32_t, s_i_id)

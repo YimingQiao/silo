@@ -19,7 +19,6 @@
 #include "../macros.h"
 #include "../scopedperf.hh"
 #include "../spinlock.h"
-#include "../third-party/libblitz/include/compression.h"
 #include "../txn.h"
 #include "bench.h"
 #include "tpcc_random_generator.h"
@@ -636,9 +635,15 @@ public:
 
   int avg_stock_sz;
 
+  void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
+    names.push_back("Stock");
+    avg_lengths.push_back(avg_stock_sz);
+  }
+
 protected:
   virtual void load() {
     if (verbose) { cerr << "[INFO] Start Loading Stock\n"; }
+    string obj_buf, obj_buf1;
 
     uint64_t stock_total_sz = 0, n_stocks = 0;
     const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
@@ -1032,7 +1037,7 @@ protected:
       }
     }
 
-    avg_order_line_sz = (double)(order_line_total_sz) / double(n_order_lines);
+    avg_order_line_sz = (double) (order_line_total_sz) / double(n_order_lines);
     avg_new_order_sz = double(new_order_total_sz) / double(n_new_orders);
     avg_order_sz = double(oorder_total_sz) / double(n_oorders);
 

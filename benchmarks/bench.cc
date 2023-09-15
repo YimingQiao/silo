@@ -188,7 +188,6 @@ void bench_runner::run() {
 
   map<string, size_t> table_sizes_before;
   if (verbose) {
-    size_t i = 0;
     double total_size = 0;
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin(); it != open_tables.end(); ++it) {
       scoped_rcu_region guard;
