@@ -816,7 +816,6 @@ protected:
     const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
     const size_t batchsize = (db->txn_max_batch_size() == -1) ? NumCustomersPerDistrict() : db->txn_max_batch_size();
     const size_t nbatches = (batchsize > NumCustomersPerDistrict()) ? 1 : (NumCustomersPerDistrict() / batchsize);
-    cerr << "num batches: " << nbatches << endl;
 
     uint64_t total_sz = 0;
 
@@ -1012,7 +1011,7 @@ protected:
               }
 
               v_ol.ol_supply_w_id = k_ol.ol_w_id;
-              v_ol.ol_quantity = 5;
+              v_ol.ol_quantity = RandomNumber(r, 1, 10);
               v_ol.ol_dist_info.assign(blitz_generator.DistInfo(d, w, v_ol.ol_i_id));
 
               checker::SanityCheckOrderLine(&k_ol, &v_ol);
