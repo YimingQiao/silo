@@ -188,7 +188,6 @@ void bench_runner::run() {
 
   map<string, size_t> table_sizes_before;
   if (verbose) {
-    size_t i = 0;
     double total_size = 0;
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin(); it != open_tables.end(); ++it) {
       scoped_rcu_region guard;
@@ -196,7 +195,10 @@ void bench_runner::run() {
       table_sizes_before[it->first] = s;
 
       const std::string &name = it->first;
-      if (table_index_map.count(name) == 0) continue;
+      if (table_index_map.count(name) == 0) {
+        std::cerr << name << "\n";
+        continue;
+      }
       size_t table_idx = table_index_map[name];
       double table_size = it->second->size() * table_avg_length[table_idx];
       std::cerr << "Table: " << name << "\tSize: " << (((double) table_size) / (1 << 20)) << " MB\n";

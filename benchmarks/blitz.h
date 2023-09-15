@@ -144,12 +144,12 @@ public:
 
   OrderLineBlitz() : BlitzTable(kNumAttrs) {
     config_ = {
-        {kInteger, 0, 0.5}, {kDouble, 0, 0.0025}, {kEnum, 5, 0}, {kEnum, 100, 0}, {kInteger, 0, 0.5}, {kString, 0, 0},
+        {kInteger, 0, 0.5}, {kDouble, 0, 0.0025}, {kEnum, 64, 0}, {kEnum, 10, 0}, {kInteger, 0, 0.5}, {kString, 0, 0},
     };
     RegisterAttrInterpreter();
   }
 
-  inline ALWAYS_INLINE bool pushTuple(order_line::value &order_line) {
+  inline ALWAYS_INLINE bool PushTuple(order_line::value &order_line) {
     buffer_.attr_[0].value_ = (int) order_line.ol_i_id;
     buffer_.attr_[1].value_ = (double) order_line.ol_amount;
     buffer_.attr_[2].value_ = (int) order_line.ol_supply_w_id;

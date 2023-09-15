@@ -954,6 +954,9 @@ protected:
     customer_blitz->Train(tmp_db_customer_);
     customer_data_blitz->Train(tmp_db_customer_data_);
 
+    avg_customer_sz =
+        (double(total_sz)) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict());
+
     if (verbose) {
       cerr << "[INFO]   * #Record: " << NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict()
            << "\n";
@@ -1107,7 +1110,7 @@ protected:
               }
 
               v_ol.ol_supply_w_id = k_ol.ol_w_id;
-              v_ol.ol_quantity = 5;
+              v_ol.ol_quantity = RandomNumber(r, 1, 10);
               v_ol.ol_dist_info.assign(blitz_generator.DistInfo(d, w, v_ol.ol_i_id));
 
               checker::SanityCheckOrderLine(&k_ol, &v_ol);
@@ -1116,7 +1119,7 @@ protected:
               n_order_lines++;
 
               order_line_keys.push_back(k_ol);
-              tmp_db_order_line_.pushTuple(v_ol);
+              tmp_db_order_line_.PushTuple(v_ol);
             }
             if (db->commit_txn(txn)) {
               c++;
