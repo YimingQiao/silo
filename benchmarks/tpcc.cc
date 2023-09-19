@@ -22,6 +22,7 @@
 #include "../txn.h"
 #include "bench.h"
 #include "tpcc_random_generator.h"
+#include "tpcc_zstd.h"
 
 using namespace std;
 using namespace util;
@@ -378,6 +379,14 @@ STATIC_COUNTER_DECL(scopedperf::tsc_ctr, tpcc_txn, tpcc_txn_cg)
 
 class tpcc_worker : public bench_worker, public tpcc_worker_mixin {
 public:
+    // ZSTD
+    ZSTD<stock::value> *stock_zstd;
+    ZSTD<stock_data::value> *stock_data_zstd;
+    ZSTD<order_line::value> *order_line_zstd;
+    ZSTD<oorder::value> *order_zstd;
+    ZSTD<customer::value> *customer_zstd;
+
+
     // resp for [warehouse_id_start, warehouse_id_end)
     tpcc_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
                 const map<string, abstract_ordered_index *> &open_tables,
@@ -642,12 +651,18 @@ public:
                       const map <string, vector<abstract_ordered_index *>> &partitions, ssize_t warehouse_id)
             : bench_loader(seed, db, open_tables),
               tpcc_worker_mixin(partitions),
-              warehouse_id(warehouse_id) {
+              warehouse_id(warehouse_id),
+              stock_zstd_(new ZSTD<stock::value>()),
+              stock_data_zstd_(new ZSTD<stock_data::value>()) {
         ALWAYS_ASSERT(
                 warehouse_id == -1 || (warehouse_id >= 1 && static_cast<size_t>(warehouse_id) <= NumWarehouses()));
     }
 
     int avg_stock_sz;
+    ZSTDTable<stock::value> tmp_db_stock_;
+    ZSTD<stock::value> *stock_zstd_;
+    ZSTDTable<stock_data::value> tmp_db_stock_data_;
+    ZSTD<stock_data::value> *stock_data_zstd_;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Stock");
@@ -655,8 +670,67 @@ public:
     }
 
 protected:
-    virtual void load() {
+    void BlitzTraining() {
         if (verbose) { cerr << "[INFO] Start Loading Stock\n"; }
+
+        uint64_t stock_total_sz = 0, n_stocks = 0;
+        const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
+        const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
+
+        for (uint w = w_start; w <= w_end; w++) {
+            if (pin_cpus) PinToWarehouseId(w);
+
+            for (uint i = 1; i <= NumItems(); ++i) {
+                const stock::key k(w, i);
+                const stock_data::key k_data(w, i);
+
+                stock::value v;
+                v.s_quantity = RandomNumber(r, 10, 100);
+                v.s_ytd = blitz_generator.StockIntDist("ytd");
+                v.s_order_cnt = blitz_generator.StockIntDist("order_cnt");
+                v.s_remote_cnt = blitz_generator.StockIntDist("remote_cnt");
+
+                stock_data::value v_data;
+                if (RandomNumber(r, 1, 100) > 10) {
+                    v_data.s_data.assign(blitz_generator.StockData(50, false));
+                } else {
+                    v_data.s_data.assign(blitz_generator.StockData(50, true));
+                }
+                v_data.s_dist_01.assign(TPCCRandomGenerator::DistInfo(1, w, i));
+                v_data.s_dist_02.assign(TPCCRandomGenerator::DistInfo(2, w, i));
+                v_data.s_dist_03.assign(TPCCRandomGenerator::DistInfo(3, w, i));
+                v_data.s_dist_04.assign(TPCCRandomGenerator::DistInfo(4, w, i));
+                v_data.s_dist_05.assign(TPCCRandomGenerator::DistInfo(5, w, i));
+                v_data.s_dist_06.assign(TPCCRandomGenerator::DistInfo(6, w, i));
+                v_data.s_dist_07.assign(TPCCRandomGenerator::DistInfo(7, w, i));
+                v_data.s_dist_08.assign(TPCCRandomGenerator::DistInfo(8, w, i));
+                v_data.s_dist_09.assign(TPCCRandomGenerator::DistInfo(9, w, i));
+                v_data.s_dist_10.assign(TPCCRandomGenerator::DistInfo(10, w, i));
+
+                stock_total_sz += Size(v);
+                stock_total_sz += Size(v_data);
+                n_stocks++;
+
+                tmp_db_stock_.PushTuple(v);
+                tmp_db_stock_data_.PushTuple(v_data);
+            }
+        }
+
+        stock_zstd_->Train(tmp_db_stock_);
+        stock_data_zstd_->Train(tmp_db_stock_data_);
+
+        if (verbose) {
+            cerr << "[INFO]   * #stock: " << n_stocks << "\n";
+            cerr << "[INFO]   * Total Size: " << (double(stock_total_sz) / (1 << 20)) << " MB\n";
+        }
+    }
+
+    void load() override {
+        // Training the Blitz-crank model
+        BlitzTraining();
+
+        // ----------------- Training Done, Load Compressed Value Into KV Store ----------------------- //
+
         string obj_buf, obj_buf1;
 
         uint64_t stock_total_sz = 0, n_stocks = 0;
@@ -664,70 +738,46 @@ protected:
         const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
 
         for (uint w = w_start; w <= w_end; w++) {
-            const size_t batchsize = (db->txn_max_batch_size() == -1) ? NumItems() : db->txn_max_batch_size();
-            const size_t nbatches = (batchsize > NumItems()) ? 1 : (NumItems() / batchsize);
-
             if (pin_cpus) PinToWarehouseId(w);
 
-            for (uint b = 0; b < nbatches;) {
-                scoped_str_arena s_arena(arena);
-                void *const txn = db->new_txn(txn_flags, arena, txn_buf());
-                try {
-                    const size_t iend = std::min((b + 1) * batchsize + 1, NumItems());
-                    for (uint i = (b * batchsize + 1); i <= iend; i++) {
-                        const stock::key k(w, i);
-                        const stock_data::key k_data(w, i);
+            scoped_str_arena s_arena(arena);
+            void *const txn = db->new_txn(txn_flags, arena, txn_buf());
+            try {
+                for (uint i = 1; i <= NumItems(); i++) {
+                    const stock::key k(w, i);
+                    const stock_data::key k_data(w, i);
+                    auto &v = tmp_db_stock_.GetTuple((w - w_start) * NumItems() + i - 1);
+                    auto &v_data = tmp_db_stock_data_.GetTuple((w - w_start) * NumItems() + i - 1);
+                    std::string v_codes = stock_zstd_->ZstdCompress(v);
+                    std::string v_data_codes = stock_data_zstd_->ZstdCompress(v_data);
+                    tbl_stock(w)->insert(txn, Encode(k), v_codes);
+                    tbl_stock_data(w)->insert(txn, Encode(k_data), v_data_codes);
+                    stock_total_sz += v_codes.size() + v_data_codes.size();
+                    n_stocks++;
+                }
 
-                        stock::value v;
-                        v.s_quantity = RandomNumber(r, 10, 100);
-                        v.s_ytd = blitz_generator.StockIntDist("ytd");
-                        v.s_order_cnt = blitz_generator.StockIntDist("order_cnt");
-                        v.s_remote_cnt = blitz_generator.StockIntDist("remote_cnt");
-
-                        stock_data::value v_data;
-                        if (RandomNumber(r, 1, 100) > 10) {
-                            v_data.s_data.assign(blitz_generator.StockData(50, false));
-                        } else {
-                            v_data.s_data.assign(blitz_generator.StockData(50, true));
-                        }
-                        v_data.s_dist_01.assign(TPCCRandomGenerator::DistInfo(1, w, i));
-                        v_data.s_dist_02.assign(TPCCRandomGenerator::DistInfo(2, w, i));
-                        v_data.s_dist_03.assign(TPCCRandomGenerator::DistInfo(3, w, i));
-                        v_data.s_dist_04.assign(TPCCRandomGenerator::DistInfo(4, w, i));
-                        v_data.s_dist_05.assign(TPCCRandomGenerator::DistInfo(5, w, i));
-                        v_data.s_dist_06.assign(TPCCRandomGenerator::DistInfo(6, w, i));
-                        v_data.s_dist_07.assign(TPCCRandomGenerator::DistInfo(7, w, i));
-                        v_data.s_dist_08.assign(TPCCRandomGenerator::DistInfo(8, w, i));
-                        v_data.s_dist_09.assign(TPCCRandomGenerator::DistInfo(9, w, i));
-                        v_data.s_dist_10.assign(TPCCRandomGenerator::DistInfo(10, w, i));
-
-                        checker::SanityCheckStock(&k, &v);
-                        stock_total_sz += Size(v);
-                        stock_total_sz += Size(v_data);
-                        n_stocks++;
-                        tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, v));
-                        tbl_stock_data(w)->insert(txn, Encode(k_data), Encode(obj_buf1, v_data));
-                    }
-                    if (db->commit_txn(txn)) {
-                        b++;
-                    } else {
-                        db->abort_txn(txn);
-                        if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
-                    }
-                } catch (abstract_db::abstract_abort_exception &ex) {
+                if (db->commit_txn(txn)) {
+                    // b++;
+                } else {
                     db->abort_txn(txn);
-                    ALWAYS_ASSERT(warehouse_id != -1);
                     if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
                 }
+            } catch (abstract_db::abstract_abort_exception &ex) {
+                db->abort_txn(txn);
+                ALWAYS_ASSERT(warehouse_id != -1);
+                if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
             }
         }
 
         avg_stock_sz = double(stock_total_sz) / double(n_stocks);
 
         if (verbose) {
-            cerr << "[INFO]   * #Record: " << n_stocks << "\n";
-            cerr << "[INFO]   * Total size: " << (double(stock_total_sz) / (1 << 20)) << " MB\n";
+            cerr << "[INFO]   * Compressed Total Size: " << (double(stock_total_sz) / (1 << 20)) << " MB\n";
         }
+
+        // delete the training data
+        tmp_db_stock_.Clear();
+        tmp_db_stock_data_.Clear();
     }
 
 private:
@@ -809,12 +859,16 @@ public:
                          const map <string, vector<abstract_ordered_index *>> &partitions, ssize_t warehouse_id)
             : bench_loader(seed, db, open_tables),
               tpcc_worker_mixin(partitions),
-              warehouse_id(warehouse_id) {
+              warehouse_id(warehouse_id),
+              customer_zstd_(new ZSTD<customer::value>()) {
         ALWAYS_ASSERT(
                 warehouse_id == -1 || (warehouse_id >= 1 && static_cast<size_t>(warehouse_id) <= NumWarehouses()));
     }
 
     double avg_customer_sz = 0;
+    ZSTDTable<customer::value> tmp_db_customer_;
+    ZSTD<customer::value> *customer_zstd_;
+    std::vector<customer::key> customer_keys;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Customer");
@@ -822,112 +876,134 @@ public:
     }
 
 protected:
-    virtual void load() {
+    void ZSTDTraining() {
         if (verbose) { cerr << "[INFO] Start Loading Customer\n"; }
 
         string obj_buf;
 
-        const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
-        const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
-        const size_t batchsize = (db->txn_max_batch_size() == -1) ? NumCustomersPerDistrict()
-                                                                  : db->txn_max_batch_size();
-        const size_t nbatches = (batchsize > NumCustomersPerDistrict()) ? 1 : (NumCustomersPerDistrict() / batchsize);
-
         uint64_t total_sz = 0;
-
-        for (uint w = w_start; w <= w_end; w++) {
+        for (uint w = 1; w <= NumWarehouses(); w++) {
             if (pin_cpus) PinToWarehouseId(w);
             for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
-                for (uint batch = 0; batch < nbatches;) {
-                    scoped_str_arena s_arena(arena);
-                    void *const txn = db->new_txn(txn_flags, arena, txn_buf());
-                    const size_t cstart = batch * batchsize;
-                    const size_t cend = std::min((batch + 1) * batchsize, NumCustomersPerDistrict());
-                    try {
-                        for (uint cidx0 = cstart; cidx0 < cend; cidx0++) {
-                            const uint c = cidx0 + 1;
-                            const customer::key k(w, d, c);
+                scoped_str_arena s_arena(arena);
+                void *const txn = db->new_txn(txn_flags, arena, txn_buf());
+                try {
+                    for (uint i = 0; i < NumCustomersPerDistrict(); i++) {
+                        const uint c = i + 1;
+                        const customer::key k(w, d, c);
 
-                            customer::value v;
-                            v.c_discount = (float) (RandomNumber(r, 1, 5000) / 10000.0);
-                            bool bad_credit = RandomNumber(r, 1, 100) <= 10;
-                            if (bad_credit) v.c_credit.assign("BC");
-                            else
-                                v.c_credit.assign("GC");
+                        customer::value v;
+                        bool bad_credit = RandomNumber(r, 1, 100) <= 10;
+                        if (bad_credit) v.c_credit.assign("BC");
+                        else
+                            v.c_credit.assign("GC");
+                        v.c_balance = blitz_generator.CustomerFloatDist("balance");
+                        v.c_ytd_payment = blitz_generator.CustomerFloatDist("ytd_payment");
+                        v.c_payment_cnt = blitz_generator.CustomerIntDist("payment_cnt");
 
-                            if (c <= 1000) v.c_last.assign(GetCustomerLastName(r, c - 1));
-                            else
-                                v.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
+                        v.c_discount = (float) (RandomNumber(r, 1, 5000) / 10000.0);
+                        if (c <= 1000) v.c_last.assign(GetCustomerLastName(r, c - 1));
+                        else
+                            v.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
+                        v.c_first.assign(blitz_generator.CustomerString(16, "first_name"));
+                        v.c_credit_lim = 50000;
+                        v.c_delivery_cnt = blitz_generator.CustomerIntDist("delivery_cnt");
+                        v.c_street_1.assign(blitz_generator.CustomerString(20, "street"));
+                        v.c_street_2.assign(blitz_generator.DepartmentData(20));
+                        v.c_city.assign(blitz_generator.CustomerString(20, "city"));
+                        v.c_state.assign(blitz_generator.CustomerString(2, "state"));
+                        v.c_zip.assign(blitz_generator.CustomerString(5, "zip") + "1111");
+                        v.c_phone.assign(blitz_generator.PhoneData(16));
+                        v.c_since = GetCurrentTimeMillis();
+                        v.c_middle.assign("OE");
+                        v.c_data.assign(blitz_generator.CustomerData(500, bad_credit));
 
-                            v.c_first.assign(blitz_generator.CustomerString(16, "first_name"));
-                            v.c_credit_lim = 50000;
+                        const size_t sz = Size(v);
+                        total_sz += sz;
+                        customer_keys.push_back(k);
+                        tmp_db_customer_.PushTuple(v);
 
-                            v.c_balance = blitz_generator.CustomerFloatDist("balance");
-                            v.c_ytd_payment = blitz_generator.CustomerFloatDist("ytd_payment");
-                            v.c_payment_cnt = blitz_generator.CustomerIntDist("payment_cnt");
-                            v.c_delivery_cnt = blitz_generator.CustomerIntDist("delivery_cnt");
+                        // customer name index
+                        const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true),
+                                                           v.c_first.str(true));
+                        const customer_name_idx::value v_idx(k.c_id);
 
-                            v.c_street_1.assign(blitz_generator.CustomerString(20, "street"));
-                            v.c_street_2.assign(blitz_generator.DepartmentData(20));
-                            v.c_city.assign(blitz_generator.CustomerString(20, "city"));
-                            v.c_state.assign(blitz_generator.CustomerString(2, "state"));
-                            v.c_zip.assign(blitz_generator.CustomerString(5, "zip") + "1111");
-                            v.c_phone.assign(blitz_generator.PhoneData(16));
-                            v.c_since = GetCurrentTimeMillis();
-                            v.c_middle.assign("OE");
-                            v.c_data.assign(blitz_generator.CustomerData(500, bad_credit));
+                        // index structure is:
+                        // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-                            checker::SanityCheckCustomer(&k, &v);
-                            const size_t sz = Size(v);
-                            total_sz += sz;
-                            tbl_customer(w)->insert(txn, Encode(k), Encode(obj_buf, v));
+                        tbl_customer_name_idx(w)->insert(txn, Encode(k_idx), Encode(obj_buf, v_idx));
 
-                            // customer name index
-                            const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true),
-                                                               v.c_first.str(true));
-                            const customer_name_idx::value v_idx(k.c_id);
+                        history::key k_hist;
+                        k_hist.h_c_id = c;
+                        k_hist.h_c_d_id = d;
+                        k_hist.h_c_w_id = w;
+                        k_hist.h_d_id = d;
+                        k_hist.h_w_id = w;
+                        k_hist.h_date = GetCurrentTimeMillis();
 
-                            // index structure is:
-                            // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
+                        history::value v_hist;
+                        v_hist.h_amount = 10;
+                        v_hist.h_data.assign(blitz_generator.HistoryData(24));
 
-                            tbl_customer_name_idx(w)->insert(txn, Encode(k_idx), Encode(obj_buf, v_idx));
-
-                            history::key k_hist;
-                            k_hist.h_c_id = c;
-                            k_hist.h_c_d_id = d;
-                            k_hist.h_c_w_id = w;
-                            k_hist.h_d_id = d;
-                            k_hist.h_w_id = w;
-                            k_hist.h_date = GetCurrentTimeMillis();
-
-                            history::value v_hist;
-                            v_hist.h_amount = 10;
-                            v_hist.h_data.assign(blitz_generator.HistoryData(24));
-
-                            tbl_history(w)->insert(txn, Encode(k_hist), Encode(obj_buf, v_hist));
-                        }
-                        if (db->commit_txn(txn)) {
-                            batch++;
-                        } else {
-                            db->abort_txn(txn);
-                            if (verbose) cerr << "[WARNING] customer loader loading abort" << endl;
-                        }
-                    } catch (abstract_db::abstract_abort_exception &ex) {
+                        tbl_history(w)->insert(txn, Encode(k_hist), Encode(obj_buf, v_hist));
+                    }
+                    if (!db->commit_txn(txn)) {
                         db->abort_txn(txn);
                         if (verbose) cerr << "[WARNING] customer loader loading abort" << endl;
                     }
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    db->abort_txn(txn);
+                    if (verbose) cerr << "[WARNING] customer loader loading abort" << endl;
                 }
             }
         }
 
+        customer_zstd_->Train(tmp_db_customer_);
+
         avg_customer_sz =
-                double(total_sz) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict());
+                (double(total_sz)) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict());
 
         if (verbose) {
             cerr << "[INFO]   * #Record: " << NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict()
                  << "\n";
             cerr << "[INFO]   * Total size: " << (double(total_sz) / (1 << 20)) << " MB\n";
         }
+    }
+
+    virtual void load() {
+        ZSTDTraining();
+
+        // ----------------------- Training Done, Load Compressed Value Into KV Store -------------------------------- //
+        uint64_t total_sz = 0;
+
+        scoped_str_arena s_arena(arena);
+        void *const txn = db->new_txn(txn_flags, arena, txn_buf());
+        try {
+            for (size_t i = 0; i < customer_keys.size(); ++i) {
+                customer::key &k = customer_keys[i];
+                auto &v = tmp_db_customer_.GetTuple(i);
+
+                std::string v_codes = customer_zstd_->ZstdCompress(v);
+                tbl_customer(k.c_w_id)->insert(txn, Encode(k), v_codes);
+                total_sz += v_codes.size();
+            }
+            if (db->commit_txn(txn)) {
+                // b++;
+            } else {
+                db->abort_txn(txn);
+                if (verbose) cerr << "[WARNING] customer loader loading abort" << endl;
+            }
+        } catch (abstract_db::abstract_abort_exception &ex) {
+            db->abort_txn(txn);
+            if (verbose) cerr << "[WARNING] customer loader Compression abort" << endl;
+        }
+
+        avg_customer_sz =
+                double(total_sz) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict());
+
+        if (verbose) { cerr << "[INFO]   * Compressed Total size: " << (double(total_sz) / (1 << 20)) << " MB\n"; }
+
+        tmp_db_customer_.Clear();
     }
 
 private:
@@ -940,12 +1016,20 @@ public:
                       const map <string, vector<abstract_ordered_index *>> &partitions, ssize_t warehouse_id)
             : bench_loader(seed, db, open_tables),
               tpcc_worker_mixin(partitions),
-              warehouse_id(warehouse_id) {
+              warehouse_id(warehouse_id),
+              order_line_zstd_(new ZSTD<order_line::value>()),
+              order_zstd_(new ZSTD<oorder::value>()) {
         ALWAYS_ASSERT(
                 warehouse_id == -1 || (warehouse_id >= 1 && static_cast<size_t>(warehouse_id) <= NumWarehouses()));
     }
 
     double avg_order_sz = 0, avg_new_order_sz = 0, avg_order_line_sz = 0;
+    ZSTDTable<order_line::value> tmp_db_order_line_;
+    ZSTDTable<oorder::value> tmp_db_order_;
+    ZSTD<order_line::value> *order_line_zstd_;
+    ZSTD<oorder::value> *order_zstd_;
+    std::vector<order_line::key> order_line_keys;
+    std::vector<oorder::key> order_keys;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Order");
@@ -957,7 +1041,7 @@ public:
     }
 
 protected:
-    virtual void load() {
+    void BlitzTraining() {
         if (verbose) { cerr << "[INFO] Start Loading Order, New Order, Order Line\n"; }
 
         string obj_buf;
@@ -999,7 +1083,10 @@ protected:
                         const size_t sz = Size(v_oo);
                         oorder_total_sz += sz;
                         n_oorders++;
-                        tbl_oorder(w)->insert(txn, Encode(k_oo), Encode(obj_buf, v_oo));
+
+                        order_keys.push_back(k_oo);
+                        tmp_db_order_.PushTuple(v_oo);
+                        // tbl_oorder(w)->insert(txn, Encode(k_oo), Encode(obj_buf, v_oo));
 
                         const oorder_c_id_idx::key k_oo_idx(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
                         const oorder_c_id_idx::value v_oo_idx(0);
@@ -1039,7 +1126,9 @@ protected:
                             const size_t sz = Size(v_ol);
                             order_line_total_sz += sz;
                             n_order_lines++;
-                            tbl_order_line(w)->insert(txn, Encode(k_ol), Encode(obj_buf, v_ol));
+
+                            order_line_keys.push_back(k_ol);
+                            tmp_db_order_line_.PushTuple(v_ol);
                         }
                         if (db->commit_txn(txn)) {
                             c++;
@@ -1057,7 +1146,9 @@ protected:
             }
         }
 
-        avg_order_line_sz = (double) (order_line_total_sz) / double(n_order_lines);
+        order_line_zstd_->Train(tmp_db_order_line_);
+        order_zstd_->Train(tmp_db_order_);
+
         avg_new_order_sz = double(new_order_total_sz) / double(n_new_orders);
         avg_order_sz = double(oorder_total_sz) / double(n_oorders);
 
@@ -1069,6 +1160,57 @@ protected:
                  << "OOrder Total Size: " << (double(oorder_total_sz) / (1 << 20)) << " MB\t"
                  << "New Order Total Size: " << (double(new_order_total_sz) / (1 << 20)) << " MB\n";
         }
+    }
+
+    virtual void load() {
+        // Training the Blitz-crank model
+        BlitzTraining();
+
+        // ----------------- Training Done, Load Compressed Value Into KV Store ----------------------- //
+        uint64_t order_line_total_sz = 0, n_order_lines = 0;
+        uint64_t order_total_sz = 0, n_order = 0;
+
+        scoped_str_arena s_arena(arena);
+        void *const txn = db->new_txn(txn_flags, arena, txn_buf());
+        try {
+            for (size_t i = 0; i < order_keys.size(); ++i) {
+                oorder::key &k_oo = order_keys[i];
+                std::string v_codes = order_zstd_->ZstdCompress(tmp_db_order_.GetTuple(i));
+                tbl_oorder(k_oo.o_w_id)->insert(txn, Encode(k_oo), v_codes);
+                order_total_sz += v_codes.size();
+                n_order++;
+            }
+
+            for (size_t i = 0; i < order_line_keys.size(); ++i) {
+                order_line::key &k_ol = order_line_keys[i];
+                std::string v_codes = order_line_zstd_->ZstdCompress(tmp_db_order_line_.GetTuple(i));
+                tbl_order_line(k_ol.ol_w_id)->insert(txn, Encode(k_ol), v_codes);
+                order_line_total_sz += v_codes.size();
+                n_order_lines++;
+            }
+            if (db->commit_txn(txn)) {
+                // b++;
+            } else {
+                db->abort_txn(txn);
+                ALWAYS_ASSERT(warehouse_id != -1);
+                if (verbose) cerr << "[WARNING] order line loader loading abort" << endl;
+            }
+        } catch (abstract_db::abstract_abort_exception &ex) {
+            db->abort_txn(txn);
+            ALWAYS_ASSERT(warehouse_id != -1);
+            if (verbose) cerr << "[WARNING] order line loader loading abort" << endl;
+        }
+
+        avg_order_line_sz = double(order_line_total_sz) / double(n_order_lines);
+        avg_order_sz = double(order_total_sz) / double(n_order);
+
+        if (verbose) {
+            cerr << "[INFO]   * Order Line Compressed Size: " << (double(order_line_total_sz) / (1 << 20)) << " MB\t"
+                 << "OOrder Compressed Size: " << (double(order_total_sz) / (1 << 20)) << " MB\n";
+        }
+
+        tmp_db_order_line_.Clear();
+        tmp_db_order_.Clear();
     }
 
 private:
@@ -1857,18 +1999,26 @@ protected:
         {
             auto loader = new tpcc_stock_loader(89785943, db, open_tables, partitions, -1);
             loaders.push_back(loader);
+
+            stock_zstd = loader->stock_zstd_;
+            stock_data_zstd = loader->stock_data_zstd_;
         }
 
         // customer
         {
             auto loader = new tpcc_customer_loader(92358785, db, open_tables, partitions, -1);
             loaders.push_back(loader);
+
+            customer_zstd = loader->customer_zstd_;
         }
 
         // order, new order, and orderline
         {
             auto loader = new tpcc_order_loader(2343352, db, open_tables, partitions, -1);
             loaders.push_back(loader);
+
+            order_line_zstd = loader->order_line_zstd_;
+            order_zstd = loader->order_zstd_;
         }
 
         return loaders;
@@ -1897,11 +2047,27 @@ protected:
                                         wstart + 1, wend + 1));
             }
         }
+
+        for (auto worker: workers) {
+            ((tpcc_worker *) worker)->stock_zstd = stock_zstd->Copy();
+            ((tpcc_worker *) worker)->stock_data_zstd = stock_data_zstd->Copy();
+            ((tpcc_worker *) worker)->order_line_zstd = order_line_zstd->Copy();
+            ((tpcc_worker *) worker)->order_zstd = order_zstd->Copy();
+            ((tpcc_worker *) worker)->customer_zstd = customer_zstd->Copy();
+        }
+
         return workers;
     }
 
 private:
     map <string, vector<abstract_ordered_index *>> partitions;
+
+    // ZSTD
+    ZSTD<stock::value> *stock_zstd;
+    ZSTD<stock_data::value> *stock_data_zstd;
+    ZSTD<order_line::value> *order_line_zstd;
+    ZSTD<oorder::value> *order_zstd;
+    ZSTD<customer::value> *customer_zstd;
 };
 
 void tpcc_do_test(abstract_db *db, int argc, char **argv) {
