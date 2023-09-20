@@ -386,6 +386,11 @@ public:
     ZSTD<oorder::value> *order_zstd;
     ZSTD<customer::value> *customer_zstd;
 
+    customer::value customer_buffer;
+    oorder::value order_buffer;
+    order_line::value order_line_buffer;
+    stock::value stock_buffer;
+    stock_data::value stock_data_buffer;
 
     // resp for [warehouse_id_start, warehouse_id_end)
     tpcc_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
@@ -924,13 +929,11 @@ protected:
                         tmp_db_customer_.PushTuple(v);
 
                         // customer name index
-                        const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true),
-                                                           v.c_first.str(true));
+                        const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
                         const customer_name_idx::value v_idx(k.c_id);
 
                         // index structure is:
                         // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
-
                         tbl_customer_name_idx(w)->insert(txn, Encode(k_idx), Encode(obj_buf, v_idx));
 
                         history::key k_hist;
@@ -959,7 +962,6 @@ protected:
         }
 
         customer_zstd_->Train(tmp_db_customer_);
-
         avg_customer_sz =
                 (double(total_sz)) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict());
 
@@ -988,7 +990,7 @@ protected:
                 total_sz += v_codes.size();
             }
             if (db->commit_txn(txn)) {
-                // b++;
+                b++;
             } else {
                 db->abort_txn(txn);
                 if (verbose) cerr << "[WARNING] customer loader loading abort" << endl;
@@ -1086,7 +1088,6 @@ protected:
 
                         order_keys.push_back(k_oo);
                         tmp_db_order_.PushTuple(v_oo);
-                        // tbl_oorder(w)->insert(txn, Encode(k_oo), Encode(obj_buf, v_oo));
 
                         const oorder_c_id_idx::key k_oo_idx(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
                         const oorder_c_id_idx::value v_oo_idx(0);
@@ -1189,7 +1190,7 @@ protected:
                 n_order_lines++;
             }
             if (db->commit_txn(txn)) {
-                // b++;
+                b++;
             } else {
                 db->abort_txn(txn);
                 ALWAYS_ASSERT(warehouse_id != -1);
@@ -1289,9 +1290,9 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
         ssize_t ret = 0;
         const customer::key k_c(warehouse_id, districtID, customerID);
         ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-        customer::value v_c_temp;
-        const customer::value *v_c = Decode(obj_v, v_c_temp);
-        checker::SanityCheckCustomer(&k_c, v_c);
+        customer::value v_c;
+        customer_zstd->ZstdDecompress(&v_c, obj_v);
+        checker::SanityCheckCustomer(&k_c, &v_c);
 
         const warehouse::key k_w(warehouse_id);
         ALWAYS_ASSERT(tbl_warehouse(warehouse_id)->get(txn, Encode(obj_key0, k_w), obj_v));
@@ -1328,9 +1329,9 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
         v_oo.o_all_local = allLocal;
         v_oo.o_entry_d = GetCurrentTimeMillis();
 
-        const size_t oorder_sz = Size(v_oo);
-        tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k_oo), Encode(str(), v_oo));
-        ret += oorder_sz;
+        std::string v_oo_codes = order_zstd->ZstdCompress(v_oo);
+        tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k_oo), v_oo_codes);
+        ret += v_oo_codes.size();
 
         const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
         const oorder_c_id_idx::value v_oo_idx(0);
@@ -1350,18 +1351,19 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
 
             const stock::key k_s(ol_supply_w_id, ol_i_id);
             ALWAYS_ASSERT(tbl_stock(ol_supply_w_id)->get(txn, Encode(obj_key0, k_s), obj_v));
-            stock::value v_s_temp;
-            const stock::value *v_s = Decode(obj_v, v_s_temp);
-            checker::SanityCheckStock(&k_s, v_s);
+            stock::value v_s;
+            stock_zstd->ZstdDecompress(&v_s, obj_v);
+            checker::SanityCheckStock(&k_s, &v_s);
 
-            stock::value v_s_new(*v_s);
+            stock::value v_s_new(v_s);
             if (v_s_new.s_quantity - ol_quantity >= 10) v_s_new.s_quantity -= ol_quantity;
             else
                 v_s_new.s_quantity += -int32_t(ol_quantity) + 91;
             v_s_new.s_ytd += ol_quantity;
             v_s_new.s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
 
-            tbl_stock(ol_supply_w_id)->put(txn, Encode(str(), k_s), Encode(str(), v_s_new));
+            std::string v_s_codes = stock_zstd->ZstdCompress(v_s_new);
+            tbl_stock(ol_supply_w_id)->put(txn, Encode(str(), k_s), v_s_codes);
 
             const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
             order_line::value v_ol;
@@ -1371,8 +1373,9 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
             v_ol.ol_supply_w_id = int32_t(ol_supply_w_id);
             v_ol.ol_quantity = int8_t(ol_quantity);
 
-            const size_t order_line_sz = Size(v_ol);
-            tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), Encode(str(), v_ol));
+            std::string v_ol_codes = order_line_zstd->ZstdCompress(v_ol);
+            const size_t order_line_sz = v_ol_codes.size();
+            tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), v_ol_codes);
             ret += order_line_sz;
         }
 
@@ -1457,8 +1460,8 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
                 db->abort_txn(txn);
                 return txn_result(false, 0);
             }
-            oorder::value v_oo_temp;
-            const oorder::value *v_oo = Decode(obj_v, v_oo_temp);
+            order_zstd->ZstdDecompress(&order_buffer, obj_v);
+            const oorder::value *v_oo = &order_buffer;
             checker::SanityCheckOOrder(&k_oo, v_oo);
 
             static_limit_callback<15> c(s_arena.get(), false);// never more than 15 order_lines per order
@@ -1470,20 +1473,15 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
                                                s_arena.get());
             float sum = 0.0;
             for (size_t i = 0; i < c.size(); i++) {
-                order_line::value v_ol_temp;
-                const order_line::value *v_ol = Decode(*c.values[i].second, v_ol_temp);
-
-#ifdef CHECK_INVARIANTS
-                order_line::key k_ol_temp;
-                const order_line::key *k_ol = Decode(*c.values[i].first, k_ol_temp);
-                checker::SanityCheckOrderLine(k_ol, v_ol);
-#endif
+                order_line_zstd->ZstdDecompress(&order_line_buffer, std::move(*c.values[i].second));
+                const order_line::value *v_ol = &order_line_buffer;
 
                 sum += v_ol->ol_amount;
                 order_line::value v_ol_new(*v_ol);
                 v_ol_new.ol_delivery_d = ts;
                 INVARIANT(s_arena.get()->manages(c.values[i].first));
-                tbl_order_line(warehouse_id)->put(txn, *c.values[i].first, Encode(str(), v_ol_new));
+                std::string v_ol_codes = order_line_zstd->ZstdCompress(v_ol_new);
+                tbl_order_line(warehouse_id)->put(txn, *c.values[i].first, v_ol_codes);
             }
 
             // delete new order
@@ -1493,7 +1491,8 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             // update oorder
             oorder::value v_oo_new(*v_oo);
             v_oo_new.o_carrier_id = o_carrier_id;
-            tbl_oorder(warehouse_id)->put(txn, Encode(str(), k_oo), Encode(str(), v_oo_new));
+            std::string v_oo_new_codes = order_zstd->ZstdCompress(v_oo_new);
+            tbl_oorder(warehouse_id)->put(txn, Encode(str(), k_oo), v_oo_new_codes);
 
             const uint c_id = v_oo->o_c_id;
             const float ol_total = sum;
@@ -1502,11 +1501,10 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             const customer::key k_c(warehouse_id, d, c_id);
             ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
 
-            customer::value v_c_temp;
-            const customer::value *v_c = Decode(obj_v, v_c_temp);
-            customer::value v_c_new(*v_c);
-            v_c_new.c_balance += ol_total;
-            tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), Encode(str(), v_c_new));
+            customer_zstd->ZstdDecompress(&customer_buffer, obj_v);
+            customer_buffer.c_balance += ol_total;
+            std::string v_c_codes = customer_zstd->ZstdCompress(customer_buffer);
+            tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), obj_v);
         }
         measure_txn_counters(txn, "txn_delivery");
         if (likely(db->commit_txn(txn))) return txn_result(true, ret);
@@ -1611,8 +1609,7 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
             k_c.c_d_id = customerDistrictID;
             k_c.c_id = v_c_idx->c_id;
             ALWAYS_ASSERT(tbl_customer(customerWarehouseID)->get(txn, Encode(obj_key0, k_c), obj_v));
-            Decode(obj_v, v_c);
-
+            customer_zstd->ZstdDecompress(&v_c, obj_v);
         } else {
             // cust by ID
             const uint customerID = GetCustomerId(r);
@@ -1620,7 +1617,7 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
             k_c.c_d_id = customerDistrictID;
             k_c.c_id = customerID;
             ALWAYS_ASSERT(tbl_customer(customerWarehouseID)->get(txn, Encode(obj_key0, k_c), obj_v));
-            Decode(obj_v, v_c);
+            customer_zstd->ZstdDecompress(&v_c, obj_v);
         }
         checker::SanityCheckCustomer(&k_c, &v_c);
         customer::value v_c_new(v_c);
@@ -1636,7 +1633,8 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
             NDB_MEMCPY((void *) v_c_new.c_data.data(), &buf[0], v_c_new.c_data.size());
         }
 
-        tbl_customer(customerWarehouseID)->put(txn, Encode(str(), k_c), Encode(str(), v_c_new));
+        std::string v_c_codes = customer_zstd->ZstdCompress(v_c_new);
+        tbl_customer(customerWarehouseID)->put(txn, Encode(str(), k_c), v_c_codes);
 
         const history::key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, districtID, warehouse_id, ts);
         history::value v_h;
@@ -1662,13 +1660,6 @@ public:
 
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(order_line::key));
-        order_line::value v_ol_temp;
-        const order_line::value *v_ol UNUSED = Decode(value, v_ol_temp);
-#ifdef CHECK_INVARIANTS
-        order_line::key k_ol_temp;
-        const order_line::key *k_ol = Decode(keyp, k_ol_temp);
-        checker::SanityCheckOrderLine(k_ol, v_ol);
-#endif
         ++n;
         return true;
     }
@@ -1739,7 +1730,7 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             k_c.c_d_id = districtID;
             k_c.c_id = v_c_idx->c_id;
             ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-            Decode(obj_v, v_c);
+            customer_zstd->ZstdDecompress(&v_c, obj_v);
 
         } else {
             // cust by ID
@@ -1748,7 +1739,7 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             k_c.c_d_id = districtID;
             k_c.c_id = customerID;
             ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-            Decode(obj_v, v_c);
+            customer_zstd->ZstdDecompress(&v_c, obj_v);
         }
         checker::SanityCheckCustomer(&k_c, &v_c);
 
@@ -1804,22 +1795,17 @@ public:
 
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(order_line::key));
-        order_line::value v_ol_temp;
-        const order_line::value *v_ol = Decode(value, v_ol_temp);
+        order_line::value v_ol;
+        order_line_zstd->ZstdDecompress(&v_ol, value);
 
-#ifdef CHECK_INVARIANTS
-        order_line::key k_ol_temp;
-        const order_line::key *k_ol = Decode(keyp, k_ol_temp);
-        checker::SanityCheckOrderLine(k_ol, v_ol);
-#endif
-
-        s_i_ids[v_ol->ol_i_id] = 1;
+        s_i_ids[v_ol.ol_i_id] = 1;
         n++;
         return true;
     }
 
     size_t n;
     small_unordered_map<uint, bool, 512> s_i_ids;
+    ZSTD<order_line::value> *order_line_zstd;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe0_tod, stock_level_probe0_cg)
@@ -1863,6 +1849,7 @@ tpcc_worker::txn_result tpcc_worker::txn_stock_level() {
 
         // manual joins are fun!
         order_line_scan_callback c;
+        c.order_line_zstd = order_line_zstd;
         const int32_t lower = cur_next_o_id >= 20 ? (cur_next_o_id - 20) : 0;
         const order_line::key k_ol_0(warehouse_id, districtID, lower, 0);
         const order_line::key k_ol_1(warehouse_id, districtID, cur_next_o_id, 0);

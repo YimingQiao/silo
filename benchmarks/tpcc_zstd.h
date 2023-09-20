@@ -7,21 +7,22 @@
 #include "../third-party/libzstd/zstd.h"
 #include "../third-party/libzstd/zdict.h"
 #include "../third-party/libzstd/common.h"
+#include "../macros.h"
 
 template<typename T>
 class ZSTDTable {
 public:
     ZSTDTable() : sample_size_(sizeof(T)) {};
 
-    void PushTuple(const T &tuple) {
+    inline ALWAYS_INLINE void PushTuple(const T &tuple) {
         table_.push_back(tuple);
     }
 
-    T &GetTuple(size_t index) {
+    inline ALWAYS_INLINE T &GetTuple(size_t index) {
         return table_[index];
     }
 
-    void Clear() {
+    inline ALWAYS_INLINE void Clear() {
         table_.clear();
     }
 
@@ -36,49 +37,60 @@ public:
     static const int kCompressLevel = 3;
 
 public:
-    ZSTD() : cctx_(ZSTD_createCCtx()), dctx_(ZSTD_createDCtx()) {}
+    ZSTD() : cctx_(ZSTD_createCCtx()), dctx_(ZSTD_createDCtx()), dict_buffer_(malloc_orDie(kDictCapacity)),
+             dict_size_(0), code_buffer_(ZSTD_compressBound(sizeof(T)), '\0') {}
 
     void Train(ZSTDTable<T> &table) {
         std::vector <T> &samples = table.table_;
         std::vector <size_t> sample_sizes(samples.size(), table.sample_size_);
 
-        void *dict_buffer = malloc_orDie(kDictCapacity);
-        size_t dict_size = ZDICT_trainFromBuffer(dict_buffer, kDictCapacity,
-                                                 samples.data(), sample_sizes.data(),
-                                                 samples.size());
-        if (ZDICT_isError(dict_size)) {
-            std::cout << "Error: " << ZDICT_getErrorName(dict_size) << std::endl;
+        dict_size_ = ZDICT_trainFromBuffer(dict_buffer_, kDictCapacity,
+                                           samples.data(), sample_sizes.data(),
+                                           samples.size());
+        if (ZDICT_isError(dict_size_)) {
+            std::cout << "Error: " << ZDICT_getErrorName(dict_size_) << std::endl;
             exit(1);
         }
-        cdict_ = ZSTD_createCDict(dict_buffer, dict_size, kCompressLevel);
-        ddict_ = ZSTD_createDDict(dict_buffer, dict_size);
+        cdict_ = ZSTD_createCDict(dict_buffer_, dict_size_, kCompressLevel);
+        ddict_ = ZSTD_createDDict(dict_buffer_, dict_size_);
     }
 
-    std::string ZstdCompress(T &src) {
-        size_t code_capacity = ZSTD_compressBound(sizeof(T));
-        std::string code_buffer(code_capacity, '\0');
-        size_t code_size = ZSTD_compress_usingCDict(cctx_, code_buffer.data(), code_capacity,
-                                                    &src, sizeof(T), cdict_);
-        return std::move(code_buffer.substr(0, code_size));
+    inline ALWAYS_INLINE std::string ZstdCompress(T &src) {
+        size_t code_size = ZSTD_compress_usingCDict(cctx_, code_buffer_.data(), code_buffer_.size(), &src, sizeof(T),
+                                                    cdict_);
+        if (ZSTD_isError(code_size)) {
+            CHECK_ZSTD(code_size);
+        }
+        return std::move(code_buffer_.substr(0, code_size));
     }
 
-    void ZstdDecompress(T *data, std::string &src) {
-        int ret = ZSTD_decompress_usingDDict(dctx_, data, sizeof(T), src.data(), src.size(), ddict_);
-        if (ret < 0)
+    inline ALWAYS_INLINE void ZstdDecompress(T *data, const std::string &src) {
+        size_t ret = ZSTD_decompress_usingDDict(dctx_, data, sizeof(T), src.data(), src.size(), ddict_);
+        if (ZSTD_isError(ret)) {
             CHECK_ZSTD(ret);
+        }
     }
 
-    ZSTD *Copy() {
-        ZSTD *ret = new ZSTD();
-        ret->cdict_ = cdict_;
-        ret->ddict_ = ddict_;
+    inline ALWAYS_INLINE ZSTD *Copy() {
+        ZSTD *ret = new ZSTD<T>();
+        ret->cdict_ = ZSTD_createCDict(dict_buffer_, dict_size_, kCompressLevel);
+        ret->ddict_ = ZSTD_createDDict(dict_buffer_, dict_size_);
         return ret;
     }
 
 private:
+    // zstd context
     ZSTD_CCtx *const cctx_;
     ZSTD_DCtx *const dctx_;
 
+    // zstd dictionary
     ZSTD_CDict_s *cdict_;
     ZSTD_DDict_s *ddict_;
+
+    // zstd dictionary meta data
+    void *dict_buffer_;
+    size_t dict_size_;
+
+    // buffer for compressing
+    std::string code_buffer_;
 };
