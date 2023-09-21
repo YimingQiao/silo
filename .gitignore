@@ -13,3 +13,4 @@ out-*
 # blitz model
 .blitz
 .index
+/third-party/libraman/build/

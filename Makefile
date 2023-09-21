@@ -2,7 +2,7 @@
 
 ### Options ###
 
-DEBUG ?= 0
+DEBUG ?= 1
 CHECK_INVARIANTS ?= 0
 
 # 0 = libc malloc
@@ -101,6 +101,8 @@ LDFLAGS := -lpthread -lnuma -lrt
 
 LZ4LDFLAGS := -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
 
+RAMANLDFLAGS := -Ithird-party/libraman -Lthird-party/libraman/build -lraman -Wl,-rpath,$(TOP)/third-party/libraman/build
+
 ifeq ($(USE_MALLOC_MODE_S),1)
         CXXFLAGS+=-DUSE_JEMALLOC
         LDFLAGS+=-ljemalloc
@@ -160,6 +162,7 @@ BENCH_SRCFILES = benchmarks/bdb_wrapper.cc \
 	benchmarks/tpcc.cc \
 	benchmarks/ycsb.cc \
 	benchmarks/tpcc_random_generator.cc \
+	benchmarks/tpcc_raman.cc \
 
 ifeq ($(MYSQL_S),1)
 BENCH_CXXFLAGS += -DMYSQL_SHARE_DIR=\"$(MYSQL_SHARE_DIR)\"
@@ -201,6 +204,9 @@ $(MASSTREE_OBJFILES) : $(O)/%.o: masstree/%.cc masstree/config.h
 third-party/lz4/liblz4.so:
 	make -C third-party/lz4 library
 
+third-party/libraman/build/libraman.a:
+	@mkdir -p third-party/libraman/build && cd third-party/libraman/build && cmake .. && make
+
 .PHONY: test
 test: $(O)/test
 
@@ -230,8 +236,8 @@ masstree/configure masstree/config.h.in: masstree/configure.ac
 .PHONY: dbtest
 dbtest: $(O)/benchmarks/dbtest
 
-$(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS)
+$(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES) third-party/libraman/build/libraman.a
+	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) $(RAMANLDFLAGS)
 
 .PHONY: kvtest
 kvtest: $(O)/benchmarks/masstree/kvtest
