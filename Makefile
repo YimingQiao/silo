@@ -2,7 +2,7 @@
 
 ### Options ###
 
-DEBUG ?= 1
+DEBUG ?= 0
 CHECK_INVARIANTS ?= 0
 
 # 0 = libc malloc

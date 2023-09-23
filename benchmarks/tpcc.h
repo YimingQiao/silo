@@ -6,7 +6,7 @@
 #include "../record/inline_str.h"
 
 #define TUPLE_KEY(x, y) x(int32_t, dummy)
-#define TUPLE_VALUE(x, y) x(int32_t, dict_id) y(inline_str_8<500>, data) y(inline_str_8<10>, type)
+#define TUPLE_VALUE(x, y) x(int32_t, dict_id) y(std::string, data)
 DO_STRUCT(tuple_raman, TUPLE_KEY, TUPLE_VALUE)
 
 #define CUSTOMER_KEY_FIELDS(x, y) x(int32_t, c_w_id) y(int32_t, c_d_id) y(int32_t, c_id)

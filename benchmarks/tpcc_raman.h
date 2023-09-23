@@ -17,8 +17,6 @@ static tuple_raman::value CreateTuple(std::string &data, int32_t dict_id = 0) {
     tuple_raman::value tuple;
     tuple.data = data;
     tuple.dict_id = dict_id;
-    if (dict_id == -1) tuple.type.assign("inserted");
-    else tuple.type.assign("naive");
     return tuple;
 }
 
@@ -49,7 +47,6 @@ public:
     std::vector <vector_of_string> table_;
     size_t sample_size_;
 };
-
 
 // ------------------------------- Raman Compressor ----------------------------------
 class RamanCompressor {
@@ -152,7 +149,7 @@ private:
 template<typename T>
 class RamanTupleBlock {
 public:
-    const size_t kBufferSize = 64;
+    const size_t kBufferSize = 1024 * 16;
 
     int32_t n_tuple;
     std::vector<typename T::key> keys_;
@@ -188,12 +185,12 @@ public:
 
     inline ALWAYS_INLINE void Decompress(tuple_raman::value &tuple, value &sample) {
         if (tuple.dict_id == -1) {
-            Decode(tuple.data.str(), sample);
+            Decode(tuple.data, sample);
             return;
         }
 
         RamanCompressor *cpr = GetCompressor(tuple.dict_id);
-        cpr->RamanDecompress(tuple.data.str(), sample);
+        cpr->RamanDecompress(tuple.data, sample);
     }
 
     inline ALWAYS_INLINE value &GetValue(key &key) {

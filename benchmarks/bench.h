@@ -26,7 +26,9 @@ extern void encstress_do_test(abstract_db *db, int argc, char **argv);
 
 extern void bid_do_test(abstract_db *db, int argc, char **argv);
 
-enum { RUNMODE_TIME = 0, RUNMODE_OPS = 1 };
+enum {
+    RUNMODE_TIME = 0, RUNMODE_OPS = 1
+};
 
 // benchmark global variables
 extern size_t nthreads;
@@ -46,239 +48,243 @@ extern int backoff_aborted_transaction;
 
 class scoped_db_thread_ctx {
 public:
-  scoped_db_thread_ctx(const scoped_db_thread_ctx &) = delete;
+    scoped_db_thread_ctx(const scoped_db_thread_ctx &) = delete;
 
-  scoped_db_thread_ctx(scoped_db_thread_ctx &&) = delete;
+    scoped_db_thread_ctx(scoped_db_thread_ctx &&) = delete;
 
-  scoped_db_thread_ctx &operator=(const scoped_db_thread_ctx &) = delete;
+    scoped_db_thread_ctx &operator=(const scoped_db_thread_ctx &) = delete;
 
-  scoped_db_thread_ctx(abstract_db *db, bool loader) : db(db) { db->thread_init(loader); }
+    scoped_db_thread_ctx(abstract_db *db, bool loader) : db(db) { db->thread_init(loader); }
 
-  ~scoped_db_thread_ctx() { db->thread_end(); }
+    ~scoped_db_thread_ctx() { db->thread_end(); }
 
 private:
-  abstract_db *const db;
+    abstract_db *const db;
 };
 
 class bench_loader : public ndb_thread {
 public:
-  bench_loader(unsigned long seed, abstract_db *db, const std::map<std::string, abstract_ordered_index *> &open_tables)
-      : r(seed),
-        db(db),
-        open_tables(open_tables),
-        b(nullptr),
-        blitz_generator(r) {
-    txn_obj_buf.reserve(str_arena::MinStrReserveLength);
-    txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
-  }
-
-  inline void set_barrier(spin_barrier &b) {
-    ALWAYS_ASSERT(!this->b);
-    this->b = &b;
-  }
-
-  void run() override {
-    {                     // XXX(stephentu): this is a hack
-      scoped_rcu_region r;// register this thread in rcu region
+    bench_loader(unsigned long seed, abstract_db *db,
+                 const std::map<std::string, abstract_ordered_index *> &open_tables)
+            : r(seed),
+              db(db),
+              open_tables(open_tables),
+              b(nullptr),
+              blitz_generator(r) {
+        txn_obj_buf.reserve(str_arena::MinStrReserveLength);
+        txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
     }
-    //    ALWAYS_ASSERT(b);
-    //    b->count_down();
-    //    b->wait_for();
-    scoped_db_thread_ctx ctx(db, true);
-    load();
-  }
 
-  virtual void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) {}
+    inline void set_barrier(spin_barrier &b) {
+        ALWAYS_ASSERT(!this->b);
+        this->b = &b;
+    }
+
+    void run() override {
+        {                     // XXX(stephentu): this is a hack
+            scoped_rcu_region r;// register this thread in rcu region
+        }
+        //    ALWAYS_ASSERT(b);
+        //    b->count_down();
+        //    b->wait_for();
+        scoped_db_thread_ctx ctx(db, true);
+        load();
+    }
+
+    virtual void GetAvgLength(std::vector <std::string> &names, std::vector<double> &avg_lengths) {}
 
 protected:
-  inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
+    inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 
-  virtual void load() = 0;
+    virtual void load() = 0;
 
-  util::fast_random r;
-  abstract_db *const db;
-  std::map<std::string, abstract_ordered_index *> open_tables;
-  spin_barrier *b;
-  std::string txn_obj_buf;
-  str_arena arena;
-  TPCCRandomGenerator blitz_generator;
+    util::fast_random r;
+    abstract_db *const db;
+    std::map<std::string, abstract_ordered_index *> open_tables;
+    spin_barrier *b;
+    std::string txn_obj_buf;
+    str_arena arena;
+    TPCCRandomGenerator blitz_generator;
 };
 
 class bench_worker : public ndb_thread {
 public:
-  bench_worker(unsigned int worker_id, bool set_core_id, unsigned long seed, abstract_db *db,
-               const std::map<std::string, abstract_ordered_index *> &open_tables, spin_barrier *barrier_a,
-               spin_barrier *barrier_b)
-      : worker_id(worker_id),
-        set_core_id(set_core_id),
-        r(seed),
-        db(db),
-        open_tables(open_tables),
-        barrier_a(barrier_a),
-        barrier_b(barrier_b),
-        // the ntxn_* numbers are per worker
-        ntxn_commits(0),
-        ntxn_aborts(0),
-        latency_numer_us(0),
-        backoff_shifts(0),// spin between [0, 2^backoff_shifts) times before retry
-        size_delta(0) {
-    txn_obj_buf.reserve(str_arena::MinStrReserveLength);
-    txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
-  }
-
-  virtual ~bench_worker() {}
-
-  // returns [did_commit?, size_increase_bytes]
-  typedef std::pair<bool, ssize_t> txn_result;
-
-  typedef txn_result (*txn_fn_t)(bench_worker *);
-
-  struct workload_desc {
-    workload_desc() {}
-
-    workload_desc(const std::string &name, double frequency, txn_fn_t fn) : name(name), frequency(frequency), fn(fn) {
-      ALWAYS_ASSERT(frequency > 0.0);
-      ALWAYS_ASSERT(frequency <= 1.0);
+    bench_worker(unsigned int worker_id, bool set_core_id, unsigned long seed, abstract_db *db,
+                 const std::map<std::string, abstract_ordered_index *> &open_tables, spin_barrier *barrier_a,
+                 spin_barrier *barrier_b)
+            : worker_id(worker_id),
+              set_core_id(set_core_id),
+              r(seed),
+              db(db),
+              open_tables(open_tables),
+              barrier_a(barrier_a),
+              barrier_b(barrier_b),
+            // the ntxn_* numbers are per worker
+              ntxn_commits(0),
+              ntxn_aborts(0),
+              latency_numer_us(0),
+              backoff_shifts(0),// spin between [0, 2^backoff_shifts) times before retry
+              size_delta(0) {
+        txn_obj_buf.reserve(str_arena::MinStrReserveLength);
+        txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
     }
 
-    std::string name;
-    double frequency;
-    txn_fn_t fn;
-  };
+    virtual ~bench_worker() {}
 
-  typedef std::vector<workload_desc> workload_desc_vec;
+    // returns [did_commit?, size_increase_bytes]
+    typedef std::pair<bool, ssize_t> txn_result;
 
-  virtual workload_desc_vec get_workload() const = 0;
+    typedef txn_result (*txn_fn_t)(bench_worker *);
 
-  virtual void run();
+    struct workload_desc {
+        workload_desc() {}
 
-  inline size_t get_ntxn_commits() const { return ntxn_commits; }
+        workload_desc(const std::string &name, double frequency, txn_fn_t fn) : name(name), frequency(frequency),
+                                                                                fn(fn) {
+            ALWAYS_ASSERT(frequency > 0.0);
+            ALWAYS_ASSERT(frequency <= 1.0);
+        }
 
-  inline size_t get_ntxn_aborts() const { return ntxn_aborts; }
+        std::string name;
+        double frequency;
+        txn_fn_t fn;
+    };
 
-  inline uint64_t get_latency_numer_us() const { return latency_numer_us; }
+    typedef std::vector <workload_desc> workload_desc_vec;
 
-  inline double get_avg_latency_us() const { return double(latency_numer_us) / double(ntxn_commits); }
+    virtual workload_desc_vec get_workload() const = 0;
 
-  std::map<std::string, size_t> get_txn_counts() const;
+    virtual void run();
 
-  typedef abstract_db::counter_map counter_map;
-  typedef abstract_db::txn_counter_map txn_counter_map;
+    inline size_t get_ntxn_commits() const { return ntxn_commits; }
+
+    inline size_t get_ntxn_aborts() const { return ntxn_aborts; }
+
+    inline uint64_t get_latency_numer_us() const { return latency_numer_us; }
+
+    inline double get_avg_latency_us() const { return double(latency_numer_us) / double(ntxn_commits); }
+
+    std::map <std::string, size_t> get_txn_counts() const;
+
+    typedef abstract_db::counter_map counter_map;
+    typedef abstract_db::txn_counter_map txn_counter_map;
 
 #ifdef ENABLE_BENCH_TXN_COUNTERS
-  inline txn_counter_map get_local_txn_counters() const { return local_txn_counters; }
+    inline txn_counter_map get_local_txn_counters() const { return local_txn_counters; }
 #endif
 
-  inline ssize_t get_size_delta() const { return size_delta; }
+    inline ssize_t get_size_delta() const { return size_delta; }
+
+    virtual uint64_t get_cpr_model_size() { return 0; }
 
 protected:
-  virtual void on_run_setup() {}
+    virtual void on_run_setup() {}
 
-  inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
+    inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 
-  unsigned int worker_id;
-  bool set_core_id;
-  util::fast_random r;
-  abstract_db *const db;
-  std::map<std::string, abstract_ordered_index *> open_tables;
-  spin_barrier *const barrier_a;
-  spin_barrier *const barrier_b;
+    unsigned int worker_id;
+    bool set_core_id;
+    util::fast_random r;
+    abstract_db *const db;
+    std::map<std::string, abstract_ordered_index *> open_tables;
+    spin_barrier *const barrier_a;
+    spin_barrier *const barrier_b;
 
 private:
-  size_t ntxn_commits;
-  size_t ntxn_aborts;
-  uint64_t latency_numer_us;
-  unsigned backoff_shifts;
+    size_t ntxn_commits;
+    size_t ntxn_aborts;
+    uint64_t latency_numer_us;
+    unsigned backoff_shifts;
 
 protected:
 #ifdef ENABLE_BENCH_TXN_COUNTERS
-  txn_counter_map local_txn_counters;
-  void measure_txn_counters(void *txn, const char *txn_name);
+    txn_counter_map local_txn_counters;
+    void measure_txn_counters(void *txn, const char *txn_name);
 #else
 
-  inline ALWAYS_INLINE void measure_txn_counters(void *txn, const char *txn_name) {}
+    inline ALWAYS_INLINE void measure_txn_counters(void *txn, const char *txn_name) {}
 
 #endif
 
-  std::vector<size_t> txn_counts;// breakdown of txns
-  ssize_t size_delta;            // how many logical bytes (of values) did the worker add
-                                 // to the DB
+    std::vector <size_t> txn_counts;// breakdown of txns
+    ssize_t size_delta;            // how many logical bytes (of values) did the worker add
+    // to the DB
 
-  std::string txn_obj_buf;
-  str_arena arena;
+    std::string txn_obj_buf;
+    str_arena arena;
 };
 
 class bench_runner {
 public:
-  bench_runner(const bench_runner &) = delete;
+    bench_runner(const bench_runner &) = delete;
 
-  bench_runner(bench_runner &&) = delete;
+    bench_runner(bench_runner &&) = delete;
 
-  bench_runner &operator=(const bench_runner &) = delete;
+    bench_runner &operator=(const bench_runner &) = delete;
 
-  bench_runner(abstract_db *db) : db(db), barrier_a(nthreads), barrier_b(1) {}
+    bench_runner(abstract_db *db) : db(db), barrier_a(nthreads), barrier_b(1) {}
 
-  virtual ~bench_runner() {}
+    virtual ~bench_runner() {}
 
-  void run();
+    void run();
 
 protected:
-  // only called once
-  virtual std::vector<bench_loader *> make_loaders() = 0;
+    // only called once
+    virtual std::vector<bench_loader *> make_loaders() = 0;
 
-  // only called once
-  virtual std::vector<bench_worker *> make_workers() = 0;
+    // only called once
+    virtual std::vector<bench_worker *> make_workers() = 0;
 
-  abstract_db *const db;
-  std::map<std::string, abstract_ordered_index *> open_tables;
+    abstract_db *const db;
+    std::map<std::string, abstract_ordered_index *> open_tables;
 
-  // barriers for actual benchmark execution
-  spin_barrier barrier_a;
-  spin_barrier barrier_b;
+    // barriers for actual benchmark execution
+    spin_barrier barrier_a;
+    spin_barrier barrier_b;
 };
 
 // XXX(stephentu): limit_callback is not optimal, should use
 // static_limit_callback if possible
 class limit_callback : public abstract_ordered_index::scan_callback {
 public:
-  limit_callback(ssize_t limit = -1) : limit(limit), n(0) { ALWAYS_ASSERT(limit == -1 || limit > 0); }
+    limit_callback(ssize_t limit = -1) : limit(limit), n(0) { ALWAYS_ASSERT(limit == -1 || limit > 0); }
 
-  virtual bool invoke(const char *keyp, size_t keylen, const std::string &value) {
-    INVARIANT(limit == -1 || n < size_t(limit));
-    values.emplace_back(std::string(keyp, keylen), value);
-    return (limit == -1) || (++n < size_t(limit));
-  }
+    virtual bool invoke(const char *keyp, size_t keylen, const std::string &value) {
+        INVARIANT(limit == -1 || n < size_t(limit));
+        values.emplace_back(std::string(keyp, keylen), value);
+        return (limit == -1) || (++n < size_t(limit));
+    }
 
-  typedef std::pair<std::string, std::string> kv_pair;
-  std::vector<kv_pair> values;
+    typedef std::pair <std::string, std::string> kv_pair;
+    std::vector <kv_pair> values;
 
-  const ssize_t limit;
+    const ssize_t limit;
 
 private:
-  size_t n;
+    size_t n;
 };
 
 class latest_key_callback : public abstract_ordered_index::scan_callback {
 public:
-  latest_key_callback(std::string &k, ssize_t limit = -1) : limit(limit), n(0), k(&k) {
-    ALWAYS_ASSERT(limit == -1 || limit > 0);
-  }
+    latest_key_callback(std::string &k, ssize_t limit = -1) : limit(limit), n(0), k(&k) {
+        ALWAYS_ASSERT(limit == -1 || limit > 0);
+    }
 
-  virtual bool invoke(const char *keyp, size_t keylen, const std::string &value) {
-    INVARIANT(limit == -1 || n < size_t(limit));
-    k->assign(keyp, keylen);
-    ++n;
-    return (limit == -1) || (n < size_t(limit));
-  }
+    virtual bool invoke(const char *keyp, size_t keylen, const std::string &value) {
+        INVARIANT(limit == -1 || n < size_t(limit));
+        k->assign(keyp, keylen);
+        ++n;
+        return (limit == -1) || (n < size_t(limit));
+    }
 
-  inline size_t size() const { return n; }
+    inline size_t size() const { return n; }
 
-  inline std::string &kstr() { return *k; }
+    inline std::string &kstr() { return *k; }
 
 private:
-  ssize_t limit;
-  size_t n;
-  std::string *k;
+    ssize_t limit;
+    size_t n;
+    std::string *k;
 };
 
 // explicitly copies keys, because btree::search_range_call() interally
@@ -290,34 +296,34 @@ private:
 template<size_t N>
 class static_limit_callback : public abstract_ordered_index::scan_callback {
 public:
-  // XXX: push ignore_key into lower layer
-  static_limit_callback(str_arena *arena, bool ignore_key) : n(0), arena(arena), ignore_key(ignore_key) {
-    static_assert(N > 0, "xx");
-  }
-
-  virtual bool invoke(const char *keyp, size_t keylen, const std::string &value) {
-    INVARIANT(n < N);
-    INVARIANT(arena->manages(&value));
-    if (ignore_key) {
-      values.emplace_back(nullptr, &value);
-    } else {
-      std::string *const s_px = arena->next();
-      INVARIANT(s_px && s_px->empty());
-      s_px->assign(keyp, keylen);
-      values.emplace_back(s_px, &value);
+    // XXX: push ignore_key into lower layer
+    static_limit_callback(str_arena *arena, bool ignore_key) : n(0), arena(arena), ignore_key(ignore_key) {
+        static_assert(N > 0, "xx");
     }
-    return ++n < N;
-  }
 
-  inline size_t size() const { return values.size(); }
+    virtual bool invoke(const char *keyp, size_t keylen, const std::string &value) {
+        INVARIANT(n < N);
+        INVARIANT(arena->manages(&value));
+        if (ignore_key) {
+            values.emplace_back(nullptr, &value);
+        } else {
+            std::string *const s_px = arena->next();
+            INVARIANT(s_px && s_px->empty());
+            s_px->assign(keyp, keylen);
+            values.emplace_back(s_px, &value);
+        }
+        return ++n < N;
+    }
 
-  typedef std::pair<const std::string *, const std::string *> kv_pair;
-  typename util::vec<kv_pair, N>::type values;
+    inline size_t size() const { return values.size(); }
+
+    typedef std::pair<const std::string *, const std::string *> kv_pair;
+    typename util::vec<kv_pair, N>::type values;
 
 private:
-  size_t n;
-  str_arena *arena;
-  bool ignore_key;
+    size_t n;
+    str_arena *arena;
+    bool ignore_key;
 };
 
 #endif /* _NDB_BENCH_H_ */
