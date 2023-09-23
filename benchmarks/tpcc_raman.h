@@ -13,10 +13,13 @@
 
 using vector_of_string = std::vector<std::string>;
 
-static tuple_raman::value CreateTuple(std::string &data, int32_t dict_id = 0) {
+static tuple_raman::value
+CreateTuple(std::string &data, int32_t dict_id = 0, bool is_cprd = false, int32_t thread_id = -1) {
     tuple_raman::value tuple;
     tuple.data = data;
     tuple.dict_id = dict_id;
+    tuple.is_cprd = is_cprd;
+    tuple.thread_id = thread_id;
     return tuple;
 }
 
@@ -149,12 +152,16 @@ private:
 template<typename T>
 class RamanTupleBlock {
 public:
-    const size_t kBufferSize = 1024 * 16;
+    const size_t kBufferSize = 1024 * 8;
 
+    static int32_t block_counter;
+
+public:
+    const int32_t id;
     int32_t n_tuple;
     std::vector<typename T::key> keys_;
 
-    RamanTupleBlock() : n_tuple(0), values_(kBufferSize), keys_(kBufferSize) {}
+    RamanTupleBlock() : n_tuple(0), values_(kBufferSize), keys_(kBufferSize), id(block_counter++) {}
 
 public:
     using key = typename T::key;
@@ -184,13 +191,18 @@ public:
     }
 
     inline ALWAYS_INLINE void Decompress(tuple_raman::value &tuple, value &sample) {
-        if (tuple.dict_id == -1) {
+        if (tuple.is_cprd) {
+            RamanCompressor *cpr = GetCompressor(tuple.dict_id);
+            cpr->RamanDecompress(tuple.data, sample);
+        } else {
             Decode(tuple.data, sample);
-            return;
+            if (CprNum() > tuple.dict_id && tuple.thread_id == id) {
+                RamanCompressor *cpr = GetCompressor(tuple.dict_id);
+                std::string codes = cpr->RamanCompress(sample);
+                cpr->RamanDecompress(codes, sample);
+            }
         }
-
-        RamanCompressor *cpr = GetCompressor(tuple.dict_id);
-        cpr->RamanDecompress(tuple.data, sample);
+        return;
     }
 
     inline ALWAYS_INLINE value &GetValue(key &key) {
@@ -210,6 +222,8 @@ public:
         return raman_dict_size;
     }
 
+    inline ALWAYS_INLINE uint32_t CprNum() { return compressors_.size(); }
+
 private:
     std::vector<typename T::value> values_;
     std::vector<RamanCompressor *> compressors_;
@@ -220,3 +234,6 @@ private:
         return compressors_[dict_id];
     }
 };
+
+template<typename T>
+int32_t RamanTupleBlock<T>::block_counter = 0;
