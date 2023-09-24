@@ -445,10 +445,9 @@ public:
         // numbers from sigmod.csail.mit.edu:
         // w.push_back(workload_desc("NewOrder", 1.0, TxnNewOrder)); // ~10k ops/sec
         // w.push_back(workload_desc("Payment", 1.0, TxnPayment)); // ~32k ops/sec
-        // w.push_back(workload_desc("Delivery", 1.0, TxnDelivery)); // ~104k
-        // ops/sec w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus));
-        // // ~33k ops/sec w.push_back(workload_desc("StockLevel", 1.0,
-        // TxnStockLevel)); // ~2k ops/sec
+        // w.push_back(workload_desc("Delivery", 1.0, TxnDelivery)); // ~104k ops/sec
+        // w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus)); ~33k ops/sec
+        // w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
         unsigned m = 0;
         for (size_t i = 0; i < ARRAY_NELEMS(g_txn_workload_mix); i++) m += g_txn_workload_mix[i];
         ALWAYS_ASSERT(m == 100);
