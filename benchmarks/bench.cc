@@ -212,8 +212,8 @@ void bench_runner::run() {
     }
 
     map <string, size_t> table_sizes_before;
+    double inital_tbl_size = 0;
     if (verbose) {
-        double total_size = 0;
         for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin(); it != open_tables.end(); ++it) {
             scoped_rcu_region guard;
             const size_t s = it->second->size();
@@ -225,9 +225,9 @@ void bench_runner::run() {
             double table_size = it->second->size() * table_avg_length[table_idx];
             std::cerr << "Table: " << name << "\tSize: " << (((double) table_size) / (1 << 20)) << " MB\n";
 
-            total_size += table_size;
+            inital_tbl_size += table_size;
         }
-        std::cerr << "Total Size: " << (((double) total_size) / (1 << 20)) << " MB\n";
+        std::cerr << "Total Size: " << (((double) inital_tbl_size) / (1 << 20)) << " MB\n";
         cerr << "starting benchmark..." << endl;
     }
 
@@ -300,7 +300,7 @@ void bench_runner::run() {
         map <string, counter_data> ctrs = event_counter::get_all_counters();
 
         cerr << "--- table statistics ---" << endl;
-        double total_size = 0;
+        double inital_tbl_size = 0;
         for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin(); it != open_tables.end(); ++it) {
             scoped_rcu_region guard;
             const size_t s = it->second->size();
@@ -319,9 +319,9 @@ void bench_runner::run() {
 //            double table_size = it->second->size() * table_avg_length[table_idx];
 //            std::cerr << "Size: " << (((double) table_size) / (1 << 20)) << " MB\n";
 
-            // total_size += table_size;
+            // inital_tbl_size += table_size;
         }
-        // std::cerr << "Total Size: " << (((double) total_size) / (1 << 20)) << " MB\n";
+        // std::cerr << "Total Size: " << (((double) inital_tbl_size) / (1 << 20)) << " MB\n";
 #ifdef ENABLE_BENCH_TXN_COUNTERS
         cerr << "--- txn counter statistics ---" << endl;
         {
@@ -359,31 +359,6 @@ void bench_runner::run() {
         ::allocator::DumpStats();
         cerr << "---------------------------------------" << endl;
 
-        cerr << "--- process statistics ---\n";
-        cerr << "[Executed Txns]\t[Throughput]\t[Table Size]\t[Model Size]\n";
-        std::vector <uint64_t> &executed_txns = workers[0]->executed_txns;
-        size_t num_intervals = executed_txns.size();
-        std::vector<double> throughputs(num_intervals, 0);
-        std::vector <uint64_t> table_size(num_intervals, 0);
-        std::vector <uint64_t> cpr_model_size(num_intervals, 0);
-        for (size_t i = 0; i < num_intervals; ++i) {
-            if (i != 0) {
-                table_size[i] = table_size[i - 1];
-                cpr_model_size[i] = cpr_model_size[i - 1];
-            }
-            for (auto *worker: workers) {
-                throughputs[i] += worker->throughputs[i];
-                table_size[i] += worker->table_size_delta[i];
-                cpr_model_size[i] += worker->cpr_model_size[i];
-            }
-        }
-        for (size_t i = 0; i < num_intervals; ++i) {
-            cerr << executed_txns[i] << "\t" << throughputs[i] << "\t" << (double(table_size[i]) / (1 << 20)) << " MB\t"
-                 << cpr_model_size[i]
-                 << "\n";
-        }
-        cerr << "--------------------------------------\n";
-
 #ifdef USE_JEMALLOC
         cerr << "dumping heap profile..." << endl;
         mallctl("prof.dump", NULL, NULL, NULL, 0);
@@ -395,9 +370,39 @@ void bench_runner::run() {
 #endif
     }
 
+    cout << "--- process statistics ---\n";
+    cout << "[Executed Txns]\t[Throughput]\t[Table Size]\t[Model Size]\n";
+    std::vector <uint64_t> &executed_txns = workers[0]->executed_txns;
+    size_t num_intervals = executed_txns.size();
+    std::vector<double> throughputs(num_intervals, 0);
+    std::vector <uint64_t> table_size_delta(num_intervals, 0);
+    std::vector <uint64_t> cpr_model_size(num_intervals, 0);
+    for (size_t i = 0; i < num_intervals; ++i) {
+        if (i != 0) {
+            table_size_delta[i] = table_size_delta[i - 1];
+            cpr_model_size[i] = cpr_model_size[i - 1];
+        }
+        for (auto *worker: workers) {
+            throughputs[i] += worker->throughputs[i];
+            table_size_delta[i] += worker->table_size_delta[i];
+            cpr_model_size[i] += worker->cpr_model_size[i];
+        }
+    }
+    for (size_t i = 0; i < num_intervals; ++i) {
+        cout << executed_txns[i] << "\t" << throughputs[i] << "\t" << (double(table_size_delta[i]) / (1 << 20)) << "\t"
+             << cpr_model_size[i]
+             << "\n";
+    }
+    cout << "--------------------------------------\n";
+
     // output for plotting script
+    double final_table_size = double(inital_tbl_size + table_size_delta.back()) / (1 << 20);
+    double model_size = double(cpr_model_size.back()) / (1 << 20);
     cout << agg_throughput << " " << agg_persist_throughput << " " << avg_latency_ms << " " << avg_persist_latency_ms
-         << " " << agg_abort_rate << endl;
+                                                                                            << " " << agg_abort_rate
+                                                                                            << " " << final_table_size
+                                                                                            << " " << model_size
+                                                                                            << endl;
     cout.flush();
 
     if (!slow_exit) return;
