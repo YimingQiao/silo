@@ -22,6 +22,8 @@
 #include "../txn.h"
 #include "bench.h"
 #include "tpcc_random_generator.h"
+#include "disk_storage.h"
+#include "tpcc_stat.h"
 
 using namespace std;
 using namespace util;
@@ -108,6 +110,7 @@ static int g_new_order_fast_id_gen = 0;
 static int g_uniform_item_dist = 0;
 static int g_order_status_scan_hack = 0;
 static unsigned g_txn_workload_mix[] = {45, 43, 4, 4, 4};// default TPC-C workload mix
+// static unsigned g_txn_workload_mix[] = {100, 0, 0, 0, 0};// default TPC-C workload mix
 
 static aligned_padded_elem<spinlock> *g_partition_locks = nullptr;
 static aligned_padded_elem<atomic < uint64_t>> *
@@ -386,7 +389,8 @@ public:
             : bench_worker(worker_id, true, seed, db, open_tables, barrier_a, barrier_b),
               tpcc_worker_mixin(partitions),
               warehouse_id_start(warehouse_id_start),
-              warehouse_id_end(warehouse_id_end) {
+              warehouse_id_end(warehouse_id_end),
+              stat((1 << 30) * mem_limit / nthreads) {
         INVARIANT(warehouse_id_start >= 1);
         INVARIANT(warehouse_id_start <= NumWarehouses());
         INVARIANT(warehouse_id_end > warehouse_id_start);
@@ -404,6 +408,10 @@ public:
 
     // XXX(stephentu): tune this
     static const size_t NMaxCustomerIdxScanElems = 512;
+
+    TPCCStat stat;
+
+public:
 
     txn_result txn_new_order();
 
@@ -464,6 +472,138 @@ public:
         return w;
     }
 
+    inline ALWAYS_INLINE size_t
+    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id) {
+        tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+        return Size(v);
+    }
+
+    inline ALWAYS_INLINE bool
+    FindOrder(void *txn, const oorder::key &k, size_t warehouse_id, oorder::value &v) {
+        bool success = tbl_oorder(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (success) Decode(obj_v, v);
+        return success;
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertNewOrder(void *txn, const new_order::key &k, const new_order::value &v, size_t warehouse_id) {
+        tbl_new_order(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+        return Size(v);
+    }
+
+    inline ALWAYS_INLINE bool
+    FindNewOrder(void *txn, const new_order::key &k, size_t warehouse_id, new_order::value &v) {
+        bool success = tbl_new_order(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (success) Decode(obj_v, v);
+        return success;
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertHistory(void *txn, const history::key &k, const history::value &v, size_t warehouse_id) {
+        tbl_history(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+        return Size(v);
+    }
+
+    inline ALWAYS_INLINE bool
+    FindHistory(void *txn, const history::key &k, size_t warehouse_id, history::value &v) {
+        bool success = tbl_history(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (success) Decode(obj_v, v);
+        return success;
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t warehouse_id) {
+        return InsertOrderLine(txn, Encode(str(), k), v, warehouse_id);
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertOrderLine(void *txn, const std::string &k_encoded, const order_line::value &v, size_t warehouse_id) {
+        size_t sz = Size(v);
+        bool in_mem = stat.ToMemory(sz);
+        if (likely(in_mem)) {
+            ol_tuple.Set(v, true, stat.n_ol_mem++, worker_id);
+            stat.Insert(sz, true, "order_line");
+            serial_str = Tuple<order_line::value>::Serialize(ol_tuple);
+            tbl_order_line(warehouse_id)->put(txn, k_encoded, serial_str);
+        } else {
+//            CreateTuple(tuple_buf, false, Encode(str(), v), stat.n_ol_disk++, worker_id);
+//            stat.Insert(sz, false, "order_line");
+//            SeqDiskTupleWrite(order_line_fd, &tuple);
+//            tbl_order_line(warehouse_id)->put(txn, k_encoded, Encode(str(), tuple_buf));
+        }
+        return sz;
+    }
+
+    inline ALWAYS_INLINE bool
+    FindOrderLine(void *txn, const order_line::key &k, size_t warehouse_id, order_line::value &v) {
+        bool success = tbl_order_line(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (success) FindOrderLineInternal(obj_v, v, ol_tuple);
+        return success;
+    }
+
+    static inline ALWAYS_INLINE void
+    FindOrderLineInternal(const std::string &obj, order_line::value &v, Tuple<order_line::value> &tuple) {
+        tuple = Tuple<order_line::value>::Deserialize(obj);
+        if (!tuple.in_memory_) {}
+        v = tuple.data_;
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t warehouse_id) {
+        size_t sz = Size(v);
+        bool in_mem = stat.ToMemory(sz);
+        if (likely(in_mem)) {
+            s_tuple.Set(v, true, stat.n_s_mem++, worker_id);
+            stat.Insert(sz, true, "stock");
+            serial_str = Tuple<stock::value>::Serialize(s_tuple);
+            tbl_stock(warehouse_id)->put(txn, Encode(str(), k), serial_str);
+        } else {}
+        return sz;
+    }
+
+    inline ALWAYS_INLINE bool
+    FindStock(void *txn, const stock::key &k, size_t warehouse_id, stock::value &v) {
+        bool success = tbl_stock(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (likely(success)) {
+            s_tuple = Tuple<stock::value>::Deserialize(obj_v);
+            if (!s_tuple.in_memory_) {}
+            v = s_tuple.data_;
+        }
+        return success;
+    }
+
+    inline ALWAYS_INLINE bool
+    FindStock(void *txn, const stock::key &k, size_t warehouse_id, std::string &v_data,
+              size_t max_bytes_read = std::string::npos) {
+        // The first 2 bytes of Encode(Tuple(Encode(v))) are also the first 2 bytes of Encode(v)
+        bool success = tbl_stock(warehouse_id)->get(txn, Encode(obj_key0, k), v_data, max_bytes_read);
+        return success;
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t warehouse_id) {
+        size_t sz = Size(v);
+        bool in_mem = stat.ToMemory(sz);
+        if (likely(in_mem)) {
+            c_tuple.Set(v, true, stat.n_ol_mem++, worker_id);
+            stat.Insert(sz, true, "customer");
+            serial_str = Tuple<customer::value>::Serialize(c_tuple);
+            tbl_order_line(warehouse_id)->put(txn, Encode(str(), k), serial_str);
+        } else {}
+        return sz;
+    }
+
+    inline ALWAYS_INLINE bool
+    FindCustomer(void *txn, const customer::key &k, size_t warehouse_id, customer::value &v) {
+        bool success = tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (likely(success)) {
+            c_tuple = Tuple<customer::value>::Deserialize(obj_v);
+            if (!s_tuple.in_memory_) {}
+            v = c_tuple.data_;
+        }
+        return success;
+    }
+
 protected:
     virtual void on_run_setup() OVERRIDE {
         if (!pin_cpus) return;
@@ -484,6 +624,14 @@ private:
     string obj_key0;
     string obj_key1;
     string obj_v;
+    string serial_str;
+
+    Tuple<stock::value> s_tuple;
+    Tuple<order_line::value> ol_tuple;
+    Tuple<customer::value> c_tuple;
+    Tuple<new_order::value> no_tuple;
+    Tuple<oorder::value> o_tuple;
+    Tuple<history::value> h_tuple;
 };
 
 class tpcc_warehouse_loader : public bench_loader, public tpcc_worker_mixin {
@@ -531,9 +679,9 @@ protected:
                 v.w_zip.assign(w_zip);
 
                 checker::SanityCheckWarehouse(&k, &v);
+                n_warehouses++;
                 const size_t sz = Size(v);
                 warehouse_total_sz += sz;
-                n_warehouses++;
                 tbl_warehouse(i)->insert(txn, Encode(k), Encode(obj_buf, v));
 
                 warehouses.push_back(v);
@@ -647,10 +795,19 @@ public:
     }
 
     int avg_stock_sz;
+    Tuple<stock::value> s_tuple;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Stock");
         avg_lengths.push_back(avg_stock_sz);
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t warehouse_id) {
+        size_t sz = Size(v);
+        s_tuple.Set(v);
+        tbl_stock(warehouse_id)->insert(txn, Encode(k), Tuple<stock::value>::Serialize(s_tuple));
+        return sz;
     }
 
 protected:
@@ -701,10 +858,9 @@ protected:
                         v_data.s_dist_10.assign(TPCCRandomGenerator::DistInfo(10, w, i));
 
                         checker::SanityCheckStock(&k, &v);
-                        stock_total_sz += Size(v);
-                        stock_total_sz += Size(v_data);
                         n_stocks++;
-                        tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, v));
+                        stock_total_sz += InsertStock(txn, k, v, w);
+                        stock_total_sz += Size(v_data);
                         tbl_stock_data(w)->insert(txn, Encode(k_data), Encode(obj_buf1, v_data));
                     }
                     if (db->commit_txn(txn)) {
@@ -814,10 +970,19 @@ public:
     }
 
     double avg_customer_sz = 0;
+    Tuple<customer::value> c_tuple;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Customer");
         avg_lengths.push_back(avg_customer_sz);
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t warehouse_id) {
+        size_t sz = Size(v);
+        c_tuple.Set(v);
+        tbl_customer(warehouse_id)->insert(txn, Encode(k), Tuple<customer::value>::Serialize(c_tuple));
+        return sz;
     }
 
 protected:
@@ -878,8 +1043,7 @@ protected:
 
                             checker::SanityCheckCustomer(&k, &v);
                             const size_t sz = Size(v);
-                            total_sz += sz;
-                            tbl_customer(w)->insert(txn, Encode(k), Encode(obj_buf, v));
+                            total_sz += InsertCustomer(txn, k, v, w);
 
                             // customer name index
                             const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true),
@@ -945,6 +1109,7 @@ public:
     }
 
     double avg_order_sz = 0, avg_new_order_sz = 0, avg_order_line_sz = 0;
+    Tuple<order_line::value> ol_tuple;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Order");
@@ -953,6 +1118,14 @@ public:
         avg_lengths.push_back(avg_new_order_sz);
         names.push_back("OrderLine");
         avg_lengths.push_back(avg_order_line_sz);
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t warehouse_id) {
+        size_t sz = Size(v);
+        ol_tuple.Set(v);
+        tbl_order_line(warehouse_id)->put(txn, Encode(k), Tuple<order_line::value>::Serialize(ol_tuple));
+        return sz;
     }
 
 protected:
@@ -1035,10 +1208,8 @@ protected:
                             v_ol.ol_dist_info.assign(blitz_generator.DistInfo(d, w, v_ol.ol_i_id));
 
                             checker::SanityCheckOrderLine(&k_ol, &v_ol);
-                            const size_t sz = Size(v_ol);
-                            order_line_total_sz += sz;
+                            order_line_total_sz += InsertOrderLine(txn, k_ol, v_ol, w);
                             n_order_lines++;
-                            tbl_order_line(w)->insert(txn, Encode(k_ol), Encode(obj_buf, v_ol));
                         }
                         if (db->commit_txn(txn)) {
                             c++;
@@ -1145,9 +1316,9 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
     try {
         ssize_t ret = 0;
         const customer::key k_c(warehouse_id, districtID, customerID);
-        ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
         customer::value v_c_temp;
-        const customer::value *v_c = Decode(obj_v, v_c_temp);
+        ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, v_c_temp));
+        const customer::value *v_c = &v_c_temp;
         checker::SanityCheckCustomer(&k_c, v_c);
 
         const warehouse::key k_w(warehouse_id);
@@ -1167,9 +1338,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
 
         const new_order::key k_no(warehouse_id, districtID, my_next_o_id);
         const new_order::value v_no;
-        const size_t new_order_sz = Size(v_no);
-        tbl_new_order(warehouse_id)->insert(txn, Encode(str(), k_no), Encode(str(), v_no));
-        ret += new_order_sz;
+        ret += InsertNewOrder(txn, k_no, v_no, warehouse_id);
 
         if (!g_new_order_fast_id_gen) {
             district::value v_d_new(*v_d);
@@ -1184,10 +1353,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
         v_oo.o_ol_cnt = int8_t(numItems);
         v_oo.o_all_local = allLocal;
         v_oo.o_entry_d = GetCurrentTimeMillis();
-
-        const size_t oorder_sz = Size(v_oo);
-        tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k_oo), Encode(str(), v_oo));
-        ret += oorder_sz;
+        ret += InsertOrder(txn, k_oo, v_oo, warehouse_id);
 
         const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
         const oorder_c_id_idx::value v_oo_idx(0);
@@ -1206,19 +1372,16 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
             checker::SanityCheckItem(&k_i, v_i);
 
             const stock::key k_s(ol_supply_w_id, ol_i_id);
-            ALWAYS_ASSERT(tbl_stock(ol_supply_w_id)->get(txn, Encode(obj_key0, k_s), obj_v));
-            stock::value v_s_temp;
-            const stock::value *v_s = Decode(obj_v, v_s_temp);
-            checker::SanityCheckStock(&k_s, v_s);
+            stock::value v_s;
+            ALWAYS_ASSERT(FindStock(txn, k_s, ol_supply_w_id, v_s));
+            checker::SanityCheckStock(&k_s, &v_s);
 
-            stock::value v_s_new(*v_s);
+            stock::value &v_s_new = v_s;
             if (v_s_new.s_quantity - ol_quantity >= 10) v_s_new.s_quantity -= ol_quantity;
-            else
-                v_s_new.s_quantity += -int32_t(ol_quantity) + 91;
+            else v_s_new.s_quantity += -int32_t(ol_quantity) + 91;
             v_s_new.s_ytd += ol_quantity;
             v_s_new.s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
-
-            tbl_stock(ol_supply_w_id)->put(txn, Encode(str(), k_s), Encode(str(), v_s_new));
+            InsertStock(txn, k_s, v_s_new, ol_supply_w_id);
 
             const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
             order_line::value v_ol;
@@ -1227,10 +1390,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
             v_ol.ol_amount = float(ol_quantity) * v_i->i_price;
             v_ol.ol_supply_w_id = int32_t(ol_supply_w_id);
             v_ol.ol_quantity = int8_t(ol_quantity);
-
-            const size_t order_line_sz = Size(v_ol);
-            tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), Encode(str(), v_ol));
-            ret += order_line_sz;
+            ret += InsertOrderLine(txn, k_ol, v_ol, warehouse_id);
         }
 
         measure_txn_counters(txn, "txn_new_order");
@@ -1307,15 +1467,15 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             last_no_o_ids[d - 1] = k_no->no_o_id + 1;// XXX: update last seen
 
             const oorder::key k_oo(warehouse_id, d, k_no->no_o_id);
-            if (unlikely(!tbl_oorder(warehouse_id)->get(txn, Encode(obj_key0, k_oo), obj_v))) {
+            oorder::value v_oo_temp;
+            if (unlikely(!FindOrder(txn, k_oo, warehouse_id, v_oo_temp))) {
                 // even if we read the new order entry, there's no guarantee
                 // we will read the oorder entry: in this case the txn will abort,
                 // but we're simply bailing out early
                 db->abort_txn(txn);
                 return txn_result(false, 0);
             }
-            oorder::value v_oo_temp;
-            const oorder::value *v_oo = Decode(obj_v, v_oo_temp);
+            const oorder::value *v_oo = &v_oo_temp;
             checker::SanityCheckOOrder(&k_oo, v_oo);
 
             static_limit_callback<15> c(s_arena.get(), false);// never more than 15 order_lines per order
@@ -1327,20 +1487,13 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
                                                s_arena.get());
             float sum = 0.0;
             for (size_t i = 0; i < c.size(); i++) {
-                order_line::value v_ol_temp;
-                const order_line::value *v_ol = Decode(*c.values[i].second, v_ol_temp);
+                order_line::value v_ol;
+                FindOrderLineInternal(*c.values[i].second, v_ol, ol_tuple);
 
-#ifdef CHECK_INVARIANTS
-                order_line::key k_ol_temp;
-                const order_line::key *k_ol = Decode(*c.values[i].first, k_ol_temp);
-                checker::SanityCheckOrderLine(k_ol, v_ol);
-#endif
-
-                sum += v_ol->ol_amount;
-                order_line::value v_ol_new(*v_ol);
-                v_ol_new.ol_delivery_d = ts;
+                sum += v_ol.ol_amount;
+                v_ol.ol_delivery_d = ts;
                 INVARIANT(s_arena.get()->manages(c.values[i].first));
-                tbl_order_line(warehouse_id)->put(txn, *c.values[i].first, Encode(str(), v_ol_new));
+                InsertOrderLine(txn, *c.values[i].first, v_ol, warehouse_id);
             }
 
             // delete new order
@@ -1350,20 +1503,17 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             // update oorder
             oorder::value v_oo_new(*v_oo);
             v_oo_new.o_carrier_id = o_carrier_id;
-            tbl_oorder(warehouse_id)->put(txn, Encode(str(), k_oo), Encode(str(), v_oo_new));
+            InsertOrder(txn, k_oo, v_oo_new, warehouse_id);
 
             const uint c_id = v_oo->o_c_id;
             const float ol_total = sum;
 
             // update customer
             const customer::key k_c(warehouse_id, d, c_id);
-            ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-
-            customer::value v_c_temp;
-            const customer::value *v_c = Decode(obj_v, v_c_temp);
-            customer::value v_c_new(*v_c);
-            v_c_new.c_balance += ol_total;
-            tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), Encode(str(), v_c_new));
+            customer::value v_c;
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, v_c));
+            v_c.c_balance += ol_total;
+            InsertCustomer(txn, k_c, v_c, warehouse_id);
         }
         measure_txn_counters(txn, "txn_delivery");
         if (likely(db->commit_txn(txn))) return txn_result(true, ret);
@@ -1467,17 +1617,14 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
             k_c.c_w_id = customerWarehouseID;
             k_c.c_d_id = customerDistrictID;
             k_c.c_id = v_c_idx->c_id;
-            ALWAYS_ASSERT(tbl_customer(customerWarehouseID)->get(txn, Encode(obj_key0, k_c), obj_v));
-            Decode(obj_v, v_c);
-
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, customerWarehouseID, v_c));
         } else {
             // cust by ID
             const uint customerID = GetCustomerId(r);
             k_c.c_w_id = customerWarehouseID;
             k_c.c_d_id = customerDistrictID;
             k_c.c_id = customerID;
-            ALWAYS_ASSERT(tbl_customer(customerWarehouseID)->get(txn, Encode(obj_key0, k_c), obj_v));
-            Decode(obj_v, v_c);
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, customerWarehouseID, v_c));
         }
         checker::SanityCheckCustomer(&k_c, &v_c);
         customer::value v_c_new(v_c);
@@ -1492,8 +1639,7 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
             v_c_new.c_data.resize_junk(min(static_cast<size_t>(n), v_c_new.c_data.max_size()));
             NDB_MEMCPY((void *) v_c_new.c_data.data(), &buf[0], v_c_new.c_data.size());
         }
-
-        tbl_customer(customerWarehouseID)->put(txn, Encode(str(), k_c), Encode(str(), v_c_new));
+        // InsertCustomer(txn, k_c, v_c_new, customerWarehouseID);
 
         const history::key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, districtID, warehouse_id, ts);
         history::value v_h;
@@ -1502,10 +1648,7 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
         int n = snprintf((char *) v_h.h_data.data(), v_h.h_data.max_size() + 1, "%.10s    %.10s", v_w->w_name.c_str(),
                          v_d->d_name.c_str());
         v_h.h_data.resize_junk(min(static_cast<size_t>(n), v_h.h_data.max_size()));
-
-        const size_t history_sz = Size(v_h);
-        tbl_history(warehouse_id)->insert(txn, Encode(str(), k_h), Encode(str(), v_h));
-        ret += history_sz;
+        ret += InsertHistory(txn, k_h, v_h, warehouse_id);
 
         measure_txn_counters(txn, "txn_payment");
         if (likely(db->commit_txn(txn))) return txn_result(true, ret);
@@ -1519,13 +1662,6 @@ public:
 
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(order_line::key));
-        order_line::value v_ol_temp;
-        const order_line::value *v_ol UNUSED = Decode(value, v_ol_temp);
-#ifdef CHECK_INVARIANTS
-        order_line::key k_ol_temp;
-        const order_line::key *k_ol = Decode(keyp, k_ol_temp);
-        checker::SanityCheckOrderLine(k_ol, v_ol);
-#endif
         ++n;
         return true;
     }
@@ -1555,7 +1691,6 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
     // NB: since txn_order_status() is a RO txn, we assume that
     // locking is un-necessary (since we can just read from some old snapshot)
     try {
-
         customer::key k_c;
         customer::value v_c;
         if (RandomNumber(r, 1, 100) <= 60) {
@@ -1595,17 +1730,14 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             k_c.c_w_id = warehouse_id;
             k_c.c_d_id = districtID;
             k_c.c_id = v_c_idx->c_id;
-            ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-            Decode(obj_v, v_c);
-
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, v_c));
         } else {
             // cust by ID
             const uint customerID = GetCustomerId(r);
             k_c.c_w_id = warehouse_id;
             k_c.c_d_id = districtID;
             k_c.c_id = customerID;
-            ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-            Decode(obj_v, v_c);
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, v_c));
         }
         checker::SanityCheckCustomer(&k_c, &v_c);
 
@@ -1661,16 +1793,11 @@ public:
 
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(order_line::key));
-        order_line::value v_ol_temp;
-        const order_line::value *v_ol = Decode(value, v_ol_temp);
+        order_line::value v_ol;
+        Tuple<order_line::value> ol_tuple;
+        tpcc_worker::FindOrderLineInternal(value, v_ol, ol_tuple);
 
-#ifdef CHECK_INVARIANTS
-        order_line::key k_ol_temp;
-        const order_line::key *k_ol = Decode(keyp, k_ol_temp);
-        checker::SanityCheckOrderLine(k_ol, v_ol);
-#endif
-
-        s_i_ids[v_ol->ol_i_id] = 1;
+        s_i_ids[v_ol.ol_i_id] = 1;
         n++;
         return true;
     }
@@ -1739,7 +1866,7 @@ tpcc_worker::txn_result tpcc_worker::txn_stock_level() {
                 INVARIANT(p.first >= 1 && p.first <= NumItems());
                 {
                     ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
-                    ALWAYS_ASSERT(tbl_stock(warehouse_id)->get(txn, Encode(obj_key0, k_s), obj_v, nbytesread));
+                    ALWAYS_ASSERT(FindStock(txn, k_s, warehouse_id, obj_v, nbytesread));
                 }
                 INVARIANT(obj_v.size() <= nbytesread);
                 const uint8_t *ptr = (const uint8_t *) obj_v.data();

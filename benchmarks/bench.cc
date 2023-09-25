@@ -30,6 +30,7 @@ using namespace std;
 using namespace util;
 
 size_t nthreads = 1;
+size_t mem_limit = 512;
 volatile bool running = true;
 int verbose = 0;
 uint64_t txn_flags = 0;

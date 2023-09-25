@@ -36,6 +36,7 @@ enum {
 
 // benchmark global variables
 extern size_t nthreads;
+extern size_t mem_limit;
 extern volatile bool running;
 extern int verbose;
 extern uint64_t txn_flags;
