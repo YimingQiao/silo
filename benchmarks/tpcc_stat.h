@@ -23,6 +23,38 @@ public:
     uint64_t n_s_mem = 0;
     uint64_t n_s_disk = 0;
 
+    uint64_t warehouse_mem_ = 0;
+    uint64_t warehouse_disk_ = 0;
+
+    uint64_t district_mem_ = 0;
+    uint64_t district_disk_ = 0;
+
+    uint64_t customer_mem_ = 0;
+    uint64_t customer_disk_ = 0;
+
+    uint64_t history_mem_ = 0;
+    uint64_t history_disk_ = 0;
+
+    uint64_t order_mem_ = 0;
+    uint64_t order_disk_ = 0;
+
+    uint64_t new_order_mem_ = 0;
+    uint64_t new_order_disk_ = 0;
+
+    uint64_t order_line_mem_ = 0;
+    uint64_t order_line_disk_ = 0;
+
+    uint64_t item_mem_ = 0;
+    uint64_t item_disk_ = 0;
+
+    uint64_t stock_mem_ = 0;
+    uint64_t stock_disk_ = 0;
+
+    uint64_t total_mem_ = 0;
+    uint64_t total_disk_ = 0;
+
+    uint64_t total_mem_limit_;
+
 public:
     inline ALWAYS_INLINE void Insert(uint64_t size, bool is_mem, const std::string &table_name) {
         if (table_name != "order" && table_name != "new_order") {
@@ -113,37 +145,4 @@ public:
                   << " MB\t" << "Other: " << double(others) / (1 << 20) << " MB" << std::endl;
         std::cerr << "-----------------------------------------------------\n";
     }
-
-private:
-    uint64_t warehouse_mem_ = 0;
-    uint64_t warehouse_disk_ = 0;
-
-    uint64_t district_mem_ = 0;
-    uint64_t district_disk_ = 0;
-
-    uint64_t customer_mem_ = 0;
-    uint64_t customer_disk_ = 0;
-
-    uint64_t history_mem_ = 0;
-    uint64_t history_disk_ = 0;
-
-    uint64_t order_mem_ = 0;
-    uint64_t order_disk_ = 0;
-
-    uint64_t new_order_mem_ = 0;
-    uint64_t new_order_disk_ = 0;
-
-    uint64_t order_line_mem_ = 0;
-    uint64_t order_line_disk_ = 0;
-
-    uint64_t item_mem_ = 0;
-    uint64_t item_disk_ = 0;
-
-    uint64_t stock_mem_ = 0;
-    uint64_t stock_disk_ = 0;
-
-    uint64_t total_mem_ = 0;
-    uint64_t total_disk_ = 0;
-
-    uint64_t total_mem_limit_;
 };

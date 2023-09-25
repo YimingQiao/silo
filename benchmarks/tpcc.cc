@@ -658,6 +658,7 @@ public:
               tpcc_worker_mixin(partitions) {}
 
     double avg_warehouse_sz = 0;
+    uint64_t warehouse_total_sz = 0, n_warehouses = 0;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Warehouse");
@@ -670,7 +671,6 @@ protected:
 
         string obj_buf;
         void *txn = db->new_txn(txn_flags, arena, txn_buf());
-        uint64_t warehouse_total_sz = 0, n_warehouses = 0;
         try {
             vector <warehouse::value> warehouses;
             for (uint i = 1; i <= NumWarehouses(); i++) {
@@ -738,6 +738,7 @@ public:
               tpcc_worker_mixin(partitions) {}
 
     double avg_item_sz = 0;
+    uint64_t total_sz = 0;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Item");
@@ -751,7 +752,6 @@ protected:
         string obj_buf;
         const ssize_t bsize = db->txn_max_batch_size();
         void *txn = db->new_txn(txn_flags, arena, txn_buf());
-        uint64_t total_sz = 0;
         try {
             for (uint i = 1; i <= NumItems(); i++) {
                 // items don't "belong" to a certain warehouse, so no pinning
@@ -811,7 +811,9 @@ public:
     }
 
     int avg_stock_sz;
+    uint64_t stock_total_sz = 0, n_stocks = 0;
     Tuple<stock::value> s_tuple;
+
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Stock");
@@ -831,7 +833,6 @@ protected:
         if (verbose) { cerr << "[INFO] Start Loading Stock\n"; }
         string obj_buf, obj_buf1;
 
-        uint64_t stock_total_sz = 0, n_stocks = 0;
         const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
         const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
 
@@ -913,6 +914,7 @@ public:
               tpcc_worker_mixin(partitions) {}
 
     double avg_district_sz = 0;
+    uint64_t district_total_sz = 0, n_districts = 0;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("District");
@@ -927,7 +929,6 @@ protected:
 
         const ssize_t bsize = db->txn_max_batch_size();
         void *txn = db->new_txn(txn_flags, arena, txn_buf());
-        uint64_t district_total_sz = 0, n_districts = 0;
         try {
             uint cnt = 0;
             for (uint w = 1; w <= NumWarehouses(); w++) {
@@ -986,6 +987,7 @@ public:
     }
 
     double avg_customer_sz = 0;
+    uint64_t total_sz = 0;
     Tuple<customer::value> c_tuple;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
@@ -1012,8 +1014,6 @@ protected:
         const size_t batchsize = (db->txn_max_batch_size() == -1) ? NumCustomersPerDistrict()
                                                                   : db->txn_max_batch_size();
         const size_t nbatches = (batchsize > NumCustomersPerDistrict()) ? 1 : (NumCustomersPerDistrict() / batchsize);
-
-        uint64_t total_sz = 0;
 
         for (uint w = w_start; w <= w_end; w++) {
             if (pin_cpus) PinToWarehouseId(w);
@@ -1125,6 +1125,9 @@ public:
     }
 
     double avg_order_sz = 0, avg_new_order_sz = 0, avg_order_line_sz = 0;
+    uint64_t order_line_total_sz = 0, n_order_lines = 0;
+    uint64_t oorder_total_sz = 0, n_oorders = 0;
+    uint64_t new_order_total_sz = 0, n_new_orders = 0;
     Tuple<order_line::value> ol_tuple;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
@@ -1149,10 +1152,6 @@ protected:
         if (verbose) { cerr << "[INFO] Start Loading Order, New Order, Order Line\n"; }
 
         string obj_buf;
-
-        uint64_t order_line_total_sz = 0, n_order_lines = 0;
-        uint64_t oorder_total_sz = 0, n_oorders = 0;
-        uint64_t new_order_total_sz = 0, n_new_orders = 0;
 
         const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
         const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
@@ -1989,28 +1988,54 @@ protected:
         vector < bench_loader * > loaders;
 
         // warehouse
-        loaders.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions));
+        {
+            auto loader = new tpcc_warehouse_loader(9324, db, open_tables, partitions);
+            loaders.push_back(loader);
+
+            size_warehouse = &loader->warehouse_total_sz;
+        }
         // item
-        loaders.push_back(new tpcc_item_loader(235443, db, open_tables, partitions));
+        {
+            auto loader = new tpcc_item_loader(235443, db, open_tables, partitions);
+            loaders.push_back(loader);
+
+            size_item = &loader->total_sz;
+        }
         // district
-        loaders.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions));
+        {
+            auto loader = new tpcc_district_loader(129856349, db, open_tables, partitions);
+            loaders.push_back(loader);
+
+            size_district = &loader->district_total_sz;
+        }
 
         // stock
         {
             auto loader = new tpcc_stock_loader(89785943, db, open_tables, partitions, -1);
             loaders.push_back(loader);
+
+            size_stock = &loader->stock_total_sz;
         }
 
         // customer
         {
             auto loader = new tpcc_customer_loader(92358785, db, open_tables, partitions, -1);
             loaders.push_back(loader);
+
+            size_customer = &loader->total_sz;
         }
 
         // order, new order, and orderline
         {
             auto loader = new tpcc_order_loader(2343352, db, open_tables, partitions, -1);
             loaders.push_back(loader);
+
+            n_order = &loader->n_oorders;
+            n_order_line = &loader->n_order_lines;
+            n_new_order = &loader->n_new_orders;
+            size_order = &loader->oorder_total_sz;
+            size_new_order = &loader->new_order_total_sz;
+            size_order_line = &loader->order_line_total_sz;
         }
 
         return loaders;
@@ -2039,11 +2064,36 @@ protected:
                                         wstart + 1, wend + 1));
             }
         }
+
+        for (auto *worker: workers) {
+            tpcc_worker *w = (tpcc_worker *) worker;
+            w->stat.n_ol_mem = *n_order_line;
+            w->stat.n_c_mem = NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict();
+            w->stat.n_s_mem = NumItems() * NumWarehouses();
+
+            w->stat.warehouse_mem_ = *size_warehouse;
+            w->stat.item_mem_ = *size_item;
+            w->stat.district_mem_ = *size_district;
+            w->stat.customer_mem_ = *size_customer;
+            w->stat.stock_mem_ = *size_stock;
+            w->stat.order_mem_ = *size_order;
+            w->stat.new_order_mem_ = *size_new_order;
+            w->stat.order_line_mem_ = *size_order_line;
+
+            w->stat.total_mem_ =
+                    w->stat.warehouse_mem_ + w->stat.item_mem_ + w->stat.district_mem_ + w->stat.customer_mem_ +
+                    w->stat.stock_mem_ + w->stat.order_mem_ + w->stat.new_order_mem_ + w->stat.order_line_mem_;
+        }
+
+
         return workers;
     }
 
 private:
     map <string, vector<abstract_ordered_index *>> partitions;
+
+    uint64_t *n_order, *n_new_order, *n_order_line;
+    uint64_t *size_warehouse, *size_item, *size_district, *size_stock, *size_customer, *size_order, *size_new_order, *size_order_line;
 };
 
 void tpcc_do_test(abstract_db *db, int argc, char **argv) {

@@ -150,14 +150,12 @@ void bench_worker::run() {
             // calculate throughput
             double intervalDifference = static_cast<double>(used_time_us - interval_used_time_us);
             throughputs.push_back(1e6 * kTxnsInterval / intervalDifference - throughput_overhead);
+            interval_used_time_us = used_time_us;
             // calculate size delta
             table_size_delta.push_back(size_delta);
             // calculate cpr model size
             cpr_model_size.push_back(get_cpr_model_size());
-
-            interval_used_time_us = used_time_us;
-
-            if (worker_id == 128 && total_txn_counts % (kTxnsInterval << 4) == 0) print_extra_stats();
+            // if (worker_id == 128 && total_txn_counts % (kTxnsInterval << 4) == 0) print_extra_stats();
         }
     }
 }
@@ -303,29 +301,6 @@ void bench_runner::run() {
         const double size_delta_mb = double(size_delta) / 1048576.0;
         map <string, counter_data> ctrs = event_counter::get_all_counters();
 
-        cerr << "--- table statistics ---" << endl;
-        double inital_tbl_size = 0;
-        for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin(); it != open_tables.end(); ++it) {
-            scoped_rcu_region guard;
-            const size_t s = it->second->size();
-            const ssize_t delta = ssize_t(s) - ssize_t(table_sizes_before[it->first]);
-            cerr << "table: " << it->first << "\t#tuple: " << it->second->size();
-            if (delta < 0) cerr << " (" << delta << " records)\t";
-            else
-                cerr << " (+" << delta << " records)\n";
-
-//            const std::string &name = it->first;
-//            if (table_index_map.count(name) == 0) {
-//                std::cerr << "\n";
-//                continue;
-//            }
-//            size_t table_idx = table_index_map[name];
-//            double table_size = it->second->size() * table_avg_length[table_idx];
-//            std::cerr << "Size: " << (((double) table_size) / (1 << 20)) << " MB\n";
-
-            // inital_tbl_size += table_size;
-        }
-        // std::cerr << "Total Size: " << (((double) inital_tbl_size) / (1 << 20)) << " MB\n";
 #ifdef ENABLE_BENCH_TXN_COUNTERS
         cerr << "--- txn counter statistics ---" << endl;
         {
