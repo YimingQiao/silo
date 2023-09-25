@@ -104,7 +104,6 @@ void bench_worker::run() {
 
     uint64_t total_txn_counts = 0;
     uint64_t interval_used_time_us = 0;
-    uint64_t interval_size_delta = 0;
     uint64_t used_time_us = 0;
 
     while (running && (run_mode != RUNMODE_OPS || ntxn_commits < ops_per_worker)) {
@@ -152,12 +151,13 @@ void bench_worker::run() {
             double intervalDifference = static_cast<double>(used_time_us - interval_used_time_us);
             throughputs.push_back(1e6 * kTxnsInterval / intervalDifference - throughput_overhead);
             // calculate size delta
-            table_size_delta.push_back(size_delta - interval_size_delta);
+            table_size_delta.push_back(size_delta);
             // calculate cpr model size
             cpr_model_size.push_back(get_cpr_model_size());
 
             interval_used_time_us = used_time_us;
-            interval_size_delta = size_delta;
+
+            if (worker_id == 128 && total_txn_counts % (kTxnsInterval << 4) == 0) print_extra_stats();
         }
     }
 }
@@ -236,7 +236,10 @@ void bench_runner::run() {
 
     const vector<bench_worker *> workers = make_workers();
     ALWAYS_ASSERT(!workers.empty());
-    for (vector<bench_worker *>::const_iterator it = workers.begin(); it != workers.end(); ++it) (*it)->start();
+    for (vector<bench_worker *>::const_iterator it = workers.begin(); it != workers.end(); ++it) {
+        (*it)->init_table_size = inital_tbl_size / nthreads;
+        (*it)->start();
+    }
 
     barrier_a.wait_for();// wait for all threads to start up
     timer t, t_nosync;
@@ -376,28 +379,29 @@ void bench_runner::run() {
     std::vector <uint64_t> &executed_txns = workers[0]->executed_txns;
     size_t num_intervals = executed_txns.size();
     std::vector<double> throughputs(num_intervals, 0);
-    std::vector <uint64_t> table_size_delta(num_intervals, 0);
+    std::vector <uint64_t> table_size(num_intervals, 0);
     std::vector <uint64_t> cpr_model_size(num_intervals, 0);
     for (size_t i = 0; i < num_intervals; ++i) {
-        if (i != 0) {
-            table_size_delta[i] = table_size_delta[i - 1];
-            cpr_model_size[i] = cpr_model_size[i - 1];
-        }
+        if (i != 0) cpr_model_size[i] = cpr_model_size[i - 1];
+
         for (auto *worker: workers) {
+            if (worker->throughputs[i] == 0) {
+                num_intervals = i;
+                break;
+            }
             throughputs[i] += worker->throughputs[i];
-            table_size_delta[i] += worker->table_size_delta[i];
+            table_size[i] += worker->table_size_delta[i] + worker->init_table_size;
             cpr_model_size[i] += worker->cpr_model_size[i];
         }
     }
     for (size_t i = 0; i < num_intervals; ++i) {
-        cout << executed_txns[i] << "\t" << throughputs[i] << "\t" << (double(table_size_delta[i]) / (1 << 20)) << "\t"
-             << cpr_model_size[i]
-             << "\n";
+        cout << executed_txns[i] * nthreads << "\t" << double(throughputs[i]) << "\t"
+             << (double(table_size[i]) / (1 << 20)) << "\t" << cpr_model_size[i] << "\n";
     }
     cout << "--------------------------------------\n";
 
     // output for plotting script
-    double final_table_size = double(inital_tbl_size + table_size_delta.back()) / (1 << 20);
+    double final_table_size = double(table_size.back()) / (1 << 20);
     double model_size = double(cpr_model_size.back()) / (1 << 20);
     cout << agg_throughput << " " << agg_persist_throughput << " " << avg_latency_ms << " " << avg_persist_latency_ms
                                                                                             << " " << agg_abort_rate

@@ -472,10 +472,19 @@ public:
         return w;
     }
 
+    void print_extra_stats() override {
+        stat.Print(false);
+    }
+
     inline ALWAYS_INLINE size_t
-    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id) {
-        tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
-        return Size(v);
+    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, bool update = true) {
+        size_t sz = Size(v);
+        if (update) tbl_oorder(warehouse_id)->put(txn, Encode(str(), k), Encode(str(), v));
+        else {
+            stat.Insert(sz, true, "order");
+            tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+        }
+        return sz;
     }
 
     inline ALWAYS_INLINE bool
@@ -488,6 +497,8 @@ public:
     inline ALWAYS_INLINE size_t
     InsertNewOrder(void *txn, const new_order::key &k, const new_order::value &v, size_t warehouse_id) {
         tbl_new_order(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+        size_t sz = Size(v);
+        stat.Insert(sz, true, "new_order");
         return Size(v);
     }
 
@@ -501,6 +512,8 @@ public:
     inline ALWAYS_INLINE size_t
     InsertHistory(void *txn, const history::key &k, const history::value &v, size_t warehouse_id) {
         tbl_history(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+        size_t sz = Size(v);
+        stat.Insert(sz, true, "history");
         return Size(v);
     }
 
@@ -512,19 +525,24 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t warehouse_id) {
-        return InsertOrderLine(txn, Encode(str(), k), v, warehouse_id);
+    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t warehouse_id,
+                    bool update = true) {
+        return InsertOrderLine(txn, Encode(str(), k), v, warehouse_id, update);
     }
 
     inline ALWAYS_INLINE size_t
-    InsertOrderLine(void *txn, const std::string &k_encoded, const order_line::value &v, size_t warehouse_id) {
+    InsertOrderLine(void *txn, const std::string &k_encoded, const order_line::value &v, size_t warehouse_id,
+                    bool update = true) {
         size_t sz = Size(v);
         bool in_mem = stat.ToMemory(sz);
         if (likely(in_mem)) {
             ol_tuple.Set(v, true, stat.n_ol_mem++, worker_id);
-            stat.Insert(sz, true, "order_line");
             serial_str = Tuple<order_line::value>::Serialize(ol_tuple);
-            tbl_order_line(warehouse_id)->put(txn, k_encoded, serial_str);
+            if (update) tbl_order_line(warehouse_id)->put(txn, k_encoded, serial_str);
+            else {
+                stat.Insert(sz, true, "order_line");
+                tbl_order_line(warehouse_id)->insert(txn, k_encoded, serial_str);
+            }
         } else {
 //            CreateTuple(tuple_buf, false, Encode(str(), v), stat.n_ol_disk++, worker_id);
 //            stat.Insert(sz, false, "order_line");
@@ -554,7 +572,6 @@ public:
         bool in_mem = stat.ToMemory(sz);
         if (likely(in_mem)) {
             s_tuple.Set(v, true, stat.n_s_mem++, worker_id);
-            stat.Insert(sz, true, "stock");
             serial_str = Tuple<stock::value>::Serialize(s_tuple);
             tbl_stock(warehouse_id)->put(txn, Encode(str(), k), serial_str);
         } else {}
@@ -586,7 +603,6 @@ public:
         bool in_mem = stat.ToMemory(sz);
         if (likely(in_mem)) {
             c_tuple.Set(v, true, stat.n_ol_mem++, worker_id);
-            stat.Insert(sz, true, "customer");
             serial_str = Tuple<customer::value>::Serialize(c_tuple);
             tbl_order_line(warehouse_id)->put(txn, Encode(str(), k), serial_str);
         } else {}
@@ -1353,7 +1369,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
         v_oo.o_ol_cnt = int8_t(numItems);
         v_oo.o_all_local = allLocal;
         v_oo.o_entry_d = GetCurrentTimeMillis();
-        ret += InsertOrder(txn, k_oo, v_oo, warehouse_id);
+        ret += InsertOrder(txn, k_oo, v_oo, warehouse_id, false);
 
         const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
         const oorder_c_id_idx::value v_oo_idx(0);
@@ -1390,7 +1406,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
             v_ol.ol_amount = float(ol_quantity) * v_i->i_price;
             v_ol.ol_supply_w_id = int32_t(ol_supply_w_id);
             v_ol.ol_quantity = int8_t(ol_quantity);
-            ret += InsertOrderLine(txn, k_ol, v_ol, warehouse_id);
+            ret += InsertOrderLine(txn, k_ol, v_ol, warehouse_id, false);
         }
 
         measure_txn_counters(txn, "txn_new_order");
@@ -1639,7 +1655,7 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
             v_c_new.c_data.resize_junk(min(static_cast<size_t>(n), v_c_new.c_data.max_size()));
             NDB_MEMCPY((void *) v_c_new.c_data.data(), &buf[0], v_c_new.c_data.size());
         }
-        // InsertCustomer(txn, k_c, v_c_new, customerWarehouseID);
+        InsertCustomer(txn, k_c, v_c_new, customerWarehouseID);
 
         const history::key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, districtID, warehouse_id, ts);
         history::value v_h;

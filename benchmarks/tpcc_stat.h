@@ -88,6 +88,32 @@ public:
         return total_mem_limit_ > total_mem_ + size;
     }
 
+    void Print(bool detailed = false) {
+        if (detailed) {
+            std::cerr << "[Table Name]: " << "[Memory Size] + [Disk Size]" << std::endl;
+            std::cerr << "Warehouse: " << warehouse_mem_ << " byte" << std::endl;
+            std::cerr << "District: " << district_mem_ << " byte" << std::endl;
+            std::cerr << "Customer: " << customer_mem_ << " + " << customer_disk_ << " byte"
+                      << std::endl;
+            std::cerr << "Order: " << order_mem_ << " byte" << std::endl;
+            std::cerr << "Order_line: " << order_line_mem_ << " + " << order_line_disk_
+                      << " byte" << std::endl;
+            std::cerr << "New_order: " << new_order_mem_ << " byte" << std::endl;
+            std::cerr << "Item: " << item_mem_ << " byte" << std::endl;
+            std::cerr << "Stock: " << stock_mem_ << " + " << stock_disk_ << " byte"
+                      << std::endl;
+            std::cerr << "History: " << history_mem_ << " byte" << std::endl;
+            std::cerr << "--------------------------------------------" << std::endl;
+        }
+        uint64_t mem_total = warehouse_mem_ + district_mem_ + customer_mem_ +
+                             order_line_mem_ + item_mem_ + stock_mem_;
+        uint64_t disk_total = customer_disk_ + order_line_disk_ + stock_disk_;
+        uint64_t others = history_mem_ + new_order_mem_ + order_mem_;
+        std::cerr << "Mem: " << double(mem_total) / (1 << 20) << " MB\t" << "Disk: " << double(disk_total) / (1 << 20)
+                  << " MB\t" << "Other: " << double(others) / (1 << 20) << " MB" << std::endl;
+        std::cerr << "-----------------------------------------------------\n";
+    }
+
 private:
     uint64_t warehouse_mem_ = 0;
     uint64_t warehouse_disk_ = 0;
