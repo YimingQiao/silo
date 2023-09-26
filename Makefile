@@ -280,4 +280,4 @@ $(O)/buildstamp $(O)/buildstamp.bench $(O)/buildstamp.masstree:
 .PHONY: clean
 clean:
 	rm -rf out-*
-	make -C third-party/lz4 clean
+	rm -rf benchmarks/workspace/*.tbl

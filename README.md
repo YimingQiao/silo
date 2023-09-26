@@ -38,7 +38,7 @@ benchmark suite, invoke `<outdir>/benchmarks/dbtest`. For now, look in
 `benchmarks/dbtest.cc` for documentation on the command line arguments. An
 example invocation for TPC-C is:
 
-    <outdir>/benchmarks/dbtest --verbose --bench tpcc --num-threads 1 --scale-factor 1 --runtime 10 --numa-memory 1G
+    <outdir>/benchmarks/dbtest --verbose --bench tpcc --num-threads 4 --mem-limit 8 --scale-factor 4 --runtime 10
 
     <outdir>/benchmarks/dbtest \
         --verbose \
