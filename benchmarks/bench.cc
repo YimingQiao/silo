@@ -333,8 +333,8 @@ void bench_runner::run() {
         cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
     }
 
-    cout << "------------------------ process statistics ------------------------\n";
-    cout << "[Executed Txns]\t[Throughput]\t[Mem Size]\t[Disk Size]\t[Model Size]\n";
+    cerr << "------------------------ process statistics ------------------------\n";
+    cerr << "[Executed Txns]\t[Throughput]\t[Mem Size]\t[Disk Size]\t[Model Size]\n";
     std::vector <uint64_t> &executed_txns = workers[0]->executed_txns;
     size_t num_intervals = executed_txns.size();
     std::vector<double> throughputs(num_intervals, 0);
@@ -363,6 +363,7 @@ void bench_runner::run() {
     cerr << "--------------------------------------\n";
 
     // output for plotting script
+    ALWAYS_ASSERT(!table_size.empty());
     double final_table_size = double(table_size.back()) / (1 << 20);
     double model_size = double(cpr_model_size.back()) / (1 << 20);
     cout << agg_throughput << " " << agg_persist_throughput << " " << avg_latency_ms << " " << avg_persist_latency_ms

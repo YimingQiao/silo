@@ -403,7 +403,6 @@ public:
         obj_key0.reserve(str_arena::MinStrReserveLength);
         obj_key1.reserve(str_arena::MinStrReserveLength);
         obj_v.reserve(str_arena::MinStrReserveLength);
-        serial_str.reserve(str_arena::MinStrReserveLength);
 
         // yiqiao: init the disk storage
         auto &disk_manager = FileManager::GetInstance();
@@ -542,7 +541,7 @@ public:
         bool in_mem = stat.ToMemory(sz);
         if (likely(in_mem)) {
             ol_tuple.Set(v, true, stat.n_ol_mem++, worker_id);
-            serial_str = Tuple<order_line::value>::Serialize(ol_tuple);
+            std::string &serial_str = Tuple<order_line::value>::Serialize(str(), ol_tuple);
             if (update) tbl_order_line(warehouse_id)->put(txn, k_encoded, serial_str);
             else {
                 stat.Insert(sz, true, "order_line");
@@ -553,7 +552,7 @@ public:
             ol_disk.SeqDiskTupleWrite(&v);
 
             ol_tuple.Set(v, false, stat.n_ol_disk++, worker_id);
-            serial_str = Tuple<order_line::value>::Serialize(ol_tuple);
+            std::string &serial_str = Tuple<order_line::value>::Serialize(str(), ol_tuple);
             if (update) tbl_order_line(warehouse_id)->put(txn, k_encoded, serial_str);
             else {
                 stat.Insert(sz, false, "order_line");
@@ -568,14 +567,14 @@ public:
         bool success = tbl_order_line(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (success) {
             FindOrderLineInternal(obj_v, v, ol_tuple);
-            if (!ol_tuple.in_memory_) stat.Insert(Size(v), true, "order_line");
+            if (!ol_tuple.in_memory_) stat.SwapTuple(Size(v), "order_line");
         }
         return success;
     }
 
     static inline ALWAYS_INLINE void
     FindOrderLineInternal(const std::string &obj, order_line::value &v, Tuple<order_line::value> &tuple) {
-        tuple = Tuple<order_line::value>::Deserialize(obj);
+        Tuple<order_line::value>::Deserialize(obj, tuple);
         if (!tuple.in_memory_) {
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(tuple.id_thread_, 2);
             ol_disk.DiskTupleRead(&tuple.data_, tuple.id_pos_);
@@ -586,21 +585,32 @@ public:
     inline ALWAYS_INLINE size_t
     InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t warehouse_id) {
         size_t sz = Size(v);
-        bool in_mem = stat.ToMemory(sz);
+        // bool in_mem = stat.ToMemory(sz);
+        bool in_mem = true;
         if (likely(in_mem)) {
-            s_tuple.Set(v, true, stat.n_s_mem++, worker_id);
-            serial_str = Tuple<stock::value>::Serialize(s_tuple);
-            tbl_stock(warehouse_id)->put(txn, Encode(str(), k), serial_str);
-        } else {}
+            s_tuple.Set(v);
+            tbl_stock(warehouse_id)->put(txn, Encode(str(), k), Tuple<stock::value>::Serialize(str(), s_tuple));
+        } else {
+            FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(worker_id, 1);
+            s_disk.SeqDiskTupleWrite(&v);
+
+            s_tuple.Set(v, false, stat.n_s_disk++, worker_id);
+            tbl_stock(warehouse_id)->put(txn, Encode(str(), k), Tuple<stock::value>::Serialize(str(), s_tuple));
+        }
         return sz;
     }
 
     inline ALWAYS_INLINE bool
     FindStock(void *txn, const stock::key &k, size_t warehouse_id, stock::value &v) {
-        bool success = tbl_stock(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+        string str;
+        bool success = tbl_stock(warehouse_id)->get(txn, Encode(obj_key0, k), str);
         if (likely(success)) {
-            s_tuple = Tuple<stock::value>::Deserialize(obj_v);
-            if (!s_tuple.in_memory_) {}
+            Tuple<stock::value>::Deserialize(str, s_tuple);
+            if (!s_tuple.in_memory_) {
+                FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(s_tuple.id_thread_, 1);
+                s_disk.DiskTupleRead(&s_tuple.data_, s_tuple.id_pos_);
+                stat.SwapTuple(Size(s_tuple.data_), "stock");
+            }
             v = s_tuple.data_;
         }
         return success;
@@ -617,12 +627,20 @@ public:
     inline ALWAYS_INLINE size_t
     InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t warehouse_id) {
         size_t sz = Size(v);
-        bool in_mem = stat.ToMemory(sz);
+        // bool in_mem = stat.ToMemory(sz);
+        bool in_mem = true;
         if (likely(in_mem)) {
             c_tuple.Set(v, true, stat.n_ol_mem++, worker_id);
-            serial_str = Tuple<customer::value>::Serialize(c_tuple);
+            std::string &serial_str = Tuple<customer::value>::Serialize(str(), c_tuple);
             tbl_order_line(warehouse_id)->put(txn, Encode(str(), k), serial_str);
-        } else {}
+        } else {
+            FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(worker_id, 0);
+            c_disk.SeqDiskTupleWrite(&v);
+
+            c_tuple.Set(v, false, stat.n_c_disk++, worker_id);
+            std::string &serial_str = Tuple<customer::value>::Serialize(str(), c_tuple);
+            tbl_customer(warehouse_id)->put(txn, Encode(str(), k), serial_str);
+        }
         return sz;
     }
 
@@ -630,8 +648,12 @@ public:
     FindCustomer(void *txn, const customer::key &k, size_t warehouse_id, customer::value &v) {
         bool success = tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (likely(success)) {
-            c_tuple = Tuple<customer::value>::Deserialize(obj_v);
-            if (!s_tuple.in_memory_) {}
+            Tuple<customer::value>::Deserialize(obj_v, c_tuple);
+            if (!c_tuple.in_memory_) {
+                FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(c_tuple.id_thread_, 0);
+                c_disk.DiskTupleRead(&c_tuple.data_, c_tuple.id_pos_);
+                stat.SwapTuple(Size(c_tuple.data_), "customer");
+            }
             v = c_tuple.data_;
         }
         return success;
@@ -657,7 +679,6 @@ private:
     string obj_key0;
     string obj_key1;
     string obj_v;
-    string serial_str;
 
     Tuple<stock::value> s_tuple;
     Tuple<order_line::value> ol_tuple;
@@ -838,10 +859,10 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t warehouse_id) {
+    InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t warehouse_id, string obj_buf) {
         size_t sz = Size(v);
         s_tuple.Set(v);
-        tbl_stock(warehouse_id)->insert(txn, Encode(k), Tuple<stock::value>::Serialize(s_tuple));
+        tbl_stock(warehouse_id)->insert(txn, Encode(k), Tuple<stock::value>::Serialize(obj_buf, s_tuple));
         return sz;
     }
 
@@ -873,6 +894,8 @@ protected:
                         v.s_ytd = blitz_generator.StockIntDist("ytd");
                         v.s_order_cnt = blitz_generator.StockIntDist("order_cnt");
                         v.s_remote_cnt = blitz_generator.StockIntDist("remote_cnt");
+                        checker::SanityCheckStock(&k, &v);
+                        stock_total_sz += InsertStock(txn, k, v, w, obj_buf);
 
                         stock_data::value v_data;
                         if (RandomNumber(r, 1, 100) > 10) {
@@ -891,17 +914,14 @@ protected:
                         v_data.s_dist_09.assign(TPCCRandomGenerator::DistInfo(9, w, i));
                         v_data.s_dist_10.assign(TPCCRandomGenerator::DistInfo(10, w, i));
 
-                        checker::SanityCheckStock(&k, &v);
-                        n_stocks++;
-                        stock_total_sz += InsertStock(txn, k, v, w);
                         stock_total_sz += Size(v_data);
                         tbl_stock_data(w)->insert(txn, Encode(k_data), Encode(obj_buf1, v_data));
+                        n_stocks++;
                     }
-                    if (db->commit_txn(txn)) {
-                        b++;
-                    } else {
+                    if (db->commit_txn(txn)) b++;
+                    else {
                         db->abort_txn(txn);
-                        if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
+                        cerr << "[WARNING] stock loader loading abort" << endl;
                     }
                 } catch (abstract_db::abstract_abort_exception &ex) {
                     db->abort_txn(txn);
@@ -1013,10 +1033,10 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t warehouse_id) {
+    InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t warehouse_id, string obj_buf) {
         size_t sz = Size(v);
         c_tuple.Set(v);
-        tbl_customer(warehouse_id)->insert(txn, Encode(k), Tuple<customer::value>::Serialize(c_tuple));
+        tbl_customer(warehouse_id)->insert(txn, Encode(k), Tuple<customer::value>::Serialize(obj_buf, c_tuple));
         return sz;
     }
 
@@ -1076,7 +1096,7 @@ protected:
 
                             checker::SanityCheckCustomer(&k, &v);
                             const size_t sz = Size(v);
-                            total_sz += InsertCustomer(txn, k, v, w);
+                            total_sz += InsertCustomer(txn, k, v, w, obj_buf);
 
                             // customer name index
                             const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true),
@@ -1157,10 +1177,11 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t warehouse_id) {
+    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t warehouse_id,
+                    string obj_buf) {
         size_t sz = Size(v);
         ol_tuple.Set(v);
-        tbl_order_line(warehouse_id)->put(txn, Encode(k), Tuple<order_line::value>::Serialize(ol_tuple));
+        tbl_order_line(warehouse_id)->put(txn, Encode(k), Tuple<order_line::value>::Serialize(obj_buf, ol_tuple));
         return sz;
     }
 
@@ -1240,7 +1261,7 @@ protected:
                             v_ol.ol_dist_info.assign(blitz_generator.DistInfo(d, w, v_ol.ol_i_id));
 
                             checker::SanityCheckOrderLine(&k_ol, &v_ol);
-                            order_line_total_sz += InsertOrderLine(txn, k_ol, v_ol, w);
+                            order_line_total_sz += InsertOrderLine(txn, k_ol, v_ol, w, obj_buf);
                             n_order_lines++;
                         }
                         if (db->commit_txn(txn)) {

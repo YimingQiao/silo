@@ -14,33 +14,30 @@ template<class T>
 struct Tuple {
     T data_;            // in memory
     bool in_memory_;
-    int32_t id_pos_;    // on disk
+    int64_t id_pos_;    // on disk
     int32_t id_thread_;
 
     Tuple() : in_memory_(false), data_(), id_pos_(-1), id_thread_(-1) {}
 
-    inline ALWAYS_INLINE void Set(const T &data, bool in_memory, int64_t id_pos, int64_t id_thread) {
+    inline ALWAYS_INLINE void Set(const T &data, bool in_memory = true, int64_t id_pos = 0, int64_t id_thread = 0) {
         data_ = data;
         in_memory_ = in_memory;
         id_pos_ = id_pos;
         id_thread_ = id_thread;
     }
 
-    inline ALWAYS_INLINE void Set(const T &data) {
-        data_ = data;
-        in_memory_ = true;
-        id_pos_ = -1;
-        id_thread_ = -1;
+    static inline ALWAYS_INLINE std::string &Serialize(std::string &s, const Tuple<T> &data) {
+        ALWAYS_ASSERT(data.id_thread_ >= -1 && data.id_thread_ <= 256);
+
+        s.resize(sizeof(data));
+        std::memcpy(&s[0], &data, sizeof(data));
+        return s;
     }
 
-    static std::string Serialize(const Tuple<T> &data) {
-        return std::string(reinterpret_cast<const char *>(&data), sizeof(data));
-    }
+    static inline ALWAYS_INLINE void Deserialize(const std::string &s, Tuple<T> &tuple) {
+        ALWAYS_ASSERT(s.size() == sizeof(tuple));
 
-    static inline ALWAYS_INLINE Tuple<T> Deserialize(const std::string &s) {
-        Tuple<T> tuple;
         memcpy(&tuple, s.data(), sizeof(tuple));
-        return tuple;
     }
 };
 
