@@ -398,21 +398,24 @@ public:
         NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
         if (verbose) {
             cerr << "tpcc: worker id " << worker_id << " => warehouses [" << warehouse_id_start << ", "
-                 << warehouse_id_end
-                 << ")" << endl;
+                 << warehouse_id_end << ")" << endl;
         }
         obj_key0.reserve(str_arena::MinStrReserveLength);
         obj_key1.reserve(str_arena::MinStrReserveLength);
         obj_v.reserve(str_arena::MinStrReserveLength);
+        serial_str.reserve(str_arena::MinStrReserveLength);
+
+        // yiqiao: init the disk storage
+        auto &disk_manager = FileManager::GetInstance();
+        disk_manager.AddFile(worker_id, "stock");
+        disk_manager.AddFile(worker_id, "order_line");
+        disk_manager.AddFile(worker_id, "customer");
     }
 
     // XXX(stephentu): tune this
     static const size_t NMaxCustomerIdxScanElems = 512;
-
     TPCCStat stat;
-
 public:
-
     txn_result txn_new_order();
 
     static txn_result TxnNewOrder(bench_worker *w) {
@@ -544,10 +547,17 @@ public:
                 tbl_order_line(warehouse_id)->insert(txn, k_encoded, serial_str);
             }
         } else {
-//            CreateTuple(tuple_buf, false, Encode(str(), v), stat.n_ol_disk++, worker_id);
-//            stat.Insert(sz, false, "order_line");
-//            SeqDiskTupleWrite(order_line_fd, &tuple);
-//            tbl_order_line(warehouse_id)->put(txn, k_encoded, Encode(str(), tuple_buf));
+            FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(worker_id, 2);
+            ol_disk.SeqDiskTupleWrite(&v);
+            stat.SwapTuple(Size(v), "order_line");
+
+            ol_tuple.Set(v, false, stat.n_ol_disk++, worker_id);
+            serial_str = Tuple<order_line::value>::Serialize(ol_tuple);
+            if (update) tbl_order_line(warehouse_id)->put(txn, k_encoded, serial_str);
+            else {
+                stat.Insert(sz, false, "order_line");
+                tbl_order_line(warehouse_id)->insert(txn, k_encoded, serial_str);
+            }
         }
         return sz;
     }
@@ -562,7 +572,10 @@ public:
     static inline ALWAYS_INLINE void
     FindOrderLineInternal(const std::string &obj, order_line::value &v, Tuple<order_line::value> &tuple) {
         tuple = Tuple<order_line::value>::Deserialize(obj);
-        if (!tuple.in_memory_) {}
+        if (!tuple.in_memory_) {
+            FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(tuple.id_thread_, 2);
+            ol_disk.DiskTupleRead(&tuple.data_, tuple.id_pos_);
+        }
         v = tuple.data_;
     }
 

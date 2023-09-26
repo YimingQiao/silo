@@ -155,6 +155,9 @@ void bench_worker::run() {
             table_size_delta.push_back(size_delta);
             // calculate cpr model size
             cpr_model_size.push_back(get_cpr_model_size());
+            // calculate disk size
+            FileManager &manager = FileManager::GetInstance();
+            disk_size.push_back(manager.GetSize(worker_id));
             // if (worker_id == 128 && total_txn_counts % (kTxnsInterval << 4) == 0) print_extra_stats();
         }
     }
@@ -337,6 +340,7 @@ void bench_runner::run() {
     std::vector<double> throughputs(num_intervals, 0);
     std::vector <uint64_t> table_size(num_intervals, 0);
     std::vector <uint64_t> cpr_model_size(num_intervals, 0);
+    std::vector <uint64_t> disk_size(num_intervals, 0);
     for (size_t i = 0; i < num_intervals; ++i) {
         if (i != 0) cpr_model_size[i] = cpr_model_size[i - 1];
 
@@ -348,11 +352,13 @@ void bench_runner::run() {
             throughputs[i] += worker->throughputs[i];
             table_size[i] += worker->table_size_delta[i] + worker->init_table_size;
             cpr_model_size[i] += worker->cpr_model_size[i];
+            disk_size[i] += worker->disk_size[i];
         }
     }
     for (size_t i = 0; i < num_intervals; ++i) {
         cout << executed_txns[i] * nthreads << "\t" << double(throughputs[i]) << "\t"
-             << (double(table_size[i]) / (1 << 20)) << "\t" << cpr_model_size[i] << "\n";
+             << double(table_size[i] / (1 << 20)) << "\t" << double(disk_size[i]) / (1 << 20) << "\t"
+             << cpr_model_size[i] << "\n";
     }
     cout << "--------------------------------------\n";
 
@@ -360,10 +366,10 @@ void bench_runner::run() {
     double final_table_size = double(table_size.back()) / (1 << 20);
     double model_size = double(cpr_model_size.back()) / (1 << 20);
     cout << agg_throughput << " " << agg_persist_throughput << " " << avg_latency_ms << " " << avg_persist_latency_ms
-                                                                                            << " " << agg_abort_rate
-                                                                                            << " " << final_table_size
-                                                                                            << " " << model_size
-                                                                                            << endl;
+         << " " << agg_abort_rate
+         << " " << final_table_size
+         << " " << model_size
+         << endl;
     cout.flush();
 
     if (!slow_exit) return;

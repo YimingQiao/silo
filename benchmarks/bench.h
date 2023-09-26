@@ -15,6 +15,7 @@
 #include "../util.h"
 #include "abstract_db.h"
 #include "tpcc_random_generator.h"
+#include "disk_storage.h"
 
 static const uint64_t kTxnsInterval = 1e4;
 static const uint64_t kNumDP = 1e5;
@@ -146,6 +147,7 @@ public:
     std::vector<double> throughputs;
     std::vector <uint64_t> table_size_delta;
     std::vector <uint64_t> cpr_model_size;
+    std::vector <uint64_t> disk_size;
     int64_t init_table_size = 0;
 
 public:
@@ -182,11 +184,11 @@ public:
 
     inline double get_avg_latency_us() const { return double(latency_numer_us) / double(ntxn_commits); }
 
+    std::map <std::string, size_t> get_txn_counts() const;
+
     virtual uint64_t get_cpr_model_size() { return 0; }
 
     virtual void print_extra_stats() {}
-
-    std::map <std::string, size_t> get_txn_counts() const;
 
     typedef abstract_db::counter_map counter_map;
     typedef abstract_db::txn_counter_map txn_counter_map;
