@@ -162,6 +162,7 @@ void bench_worker::run() {
 
 void bench_runner::run() {
     // load data
+    cerr << "------------------------ Loading data ------------------------\n";
     const vector<bench_loader *> loaders = make_loaders();
     {
         // spin_barrier b(1);
@@ -193,13 +194,11 @@ void bench_runner::run() {
         const auto persisted_info = db->get_ntxn_persisted();
         if (get<0>(persisted_info) != get<1>(persisted_info)) cerr << "ERROR: " << persisted_info << endl;
         // ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
-        if (verbose) cerr << persisted_info << " txns persisted in loading phase" << endl;
     }
     db->reset_ntxn_persisted();
 
     if (!no_reset_counters) {
-        event_counter::reset_all_counters();// XXX: for now - we really should have
-        // a before/after loading
+        event_counter::reset_all_counters();// XXX: for now - we really should have a before/after loading
         PERF_EXPR(scopedperf::perfsum_base::resetall());
     }
     {
@@ -222,12 +221,12 @@ void bench_runner::run() {
             if (table_index_map.count(name) == 0) continue;
             size_t table_idx = table_index_map[name];
             double table_size = it->second->size() * table_avg_length[table_idx];
-            std::cerr << "Table: " << name << "\tSize: " << (((double) table_size) / (1 << 20)) << " MB\n";
+            // std::cerr << "Table: " << name << "\tSize: " << (((double) table_size) / (1 << 20)) << " MB\n";
 
             inital_tbl_size += table_size;
         }
         std::cerr << "Total Size: " << (((double) inital_tbl_size) / (1 << 20)) << " MB\n";
-        cerr << "starting benchmark..." << endl;
+        cerr << "------------------------ Running ------------------------\n";
     }
 
     const pair <uint64_t, uint64_t> mem_info_before = get_system_memory_info();
@@ -312,7 +311,7 @@ void bench_runner::run() {
           }
         }
 #endif
-        cerr << "--- benchmark statistics ---" << endl;
+        cerr << "------------------------ benchmark statistics ------------------------" << endl;
         cerr << "runtime: " << elapsed_sec << " sec" << endl;
         cerr << "memory delta: " << delta_mb << " MB" << endl;
         cerr << "memory delta rate: " << (delta_mb / elapsed_sec) << " MB/sec" << endl;
@@ -329,27 +328,9 @@ void bench_runner::run() {
         cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
         cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
         cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
-        cerr << "--- system counters (for benchmark) ---" << endl;
-        for (map<string, counter_data>::iterator it = ctrs.begin(); it != ctrs.end(); ++it)
-            cerr << it->first << ": " << it->second << endl;
-        cerr << "--- perf counters (if enabled, for benchmark) ---" << endl;
-        PERF_EXPR(scopedperf::perfsum_base::printall());
-        cerr << "--- allocator stats ---" << endl;
-        ::allocator::DumpStats();
-        cerr << "---------------------------------------" << endl;
-
-#ifdef USE_JEMALLOC
-        cerr << "dumping heap profile..." << endl;
-        mallctl("prof.dump", NULL, NULL, NULL, 0);
-        cerr << "printing jemalloc stats..." << endl;
-        malloc_stats_print(write_cb, NULL, "");
-#endif
-#ifdef USE_TCMALLOC
-        HeapProfilerDump("before-exit");
-#endif
     }
 
-    cout << "--- process statistics ---\n";
+    cout << "------------------------ process statistics ------------------------\n";
     cout << "[Executed Txns]\t[Throughput]\t[Table Size]\t[Model Size]\n";
     std::vector <uint64_t> &executed_txns = workers[0]->executed_txns;
     size_t num_intervals = executed_txns.size();

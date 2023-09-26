@@ -2120,13 +2120,11 @@ void tpcc_do_test(abstract_db *db, int argc, char **argv) {
                 if (long_options[option_index].flag != 0) break;
                 abort();
                 break;
-
             case 'r':
                 g_new_order_remote_item_pct = strtoul(optarg, NULL, 10);
                 ALWAYS_ASSERT(g_new_order_remote_item_pct >= 0 && g_new_order_remote_item_pct <= 100);
                 did_spec_remote_pct = true;
                 break;
-
             case 'w': {
                 const vector <string> toks = split(optarg, ',');
                 ALWAYS_ASSERT(toks.size() == ARRAY_NELEMS(g_txn_workload_mix));
@@ -2140,11 +2138,9 @@ void tpcc_do_test(abstract_db *db, int argc, char **argv) {
                 ALWAYS_ASSERT(s == 100);
             }
                 break;
-
             case '?':
                 /* getopt_long already printed an error message. */
                 exit(1);
-
             default:
                 abort();
         }
@@ -2155,20 +2151,6 @@ void tpcc_do_test(abstract_db *db, int argc, char **argv) {
                 "--disable-cross-partition-transactions"
              << endl;
         cerr << "  --new-order-remote-item-pct will have no effect" << endl;
-    }
-
-    if (verbose) {
-        cerr << "tpcc settings:" << endl;
-        cerr << "  cross_partition_transactions : " << !g_disable_xpartition_txn << endl;
-        cerr << "  read_only_snapshots          : " << !g_disable_read_only_scans << endl;
-        cerr << "  partition_locks              : " << g_enable_partition_locks << endl;
-        cerr << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
-        cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
-        cerr << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
-        cerr << "  uniform_item_dist            : " << g_uniform_item_dist << endl;
-        cerr << "  order_status_scan_hack       : " << g_order_status_scan_hack << endl;
-        cerr << "  workload_mix                 : "
-             << format_list(g_txn_workload_mix, g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
     }
 
     tpcc_bench_runner r(db);
