@@ -568,7 +568,7 @@ public:
         bool success = tbl_order_line(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (success) {
             FindOrderLineInternal(obj_v, v, ol_tuple);
-            if (!ol_tuple.in_memory_) stat.Insert(Size(v), "order_line");
+            if (!ol_tuple.in_memory_) stat.Insert(Size(v), true, "order_line");
         }
         return success;
     }

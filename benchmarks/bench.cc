@@ -159,7 +159,7 @@ void bench_worker::run() {
             disk_size.push_back(table_size[1]);
             mem_size.push_back(table_size[0]);
 
-            if (worker_id == 128 && total_txn_counts % (kTxnsInterval << 3) == 0) print_extra_stats();
+            // if (worker_id == 128 && total_txn_counts % (kTxnsInterval << 3) == 0) print_extra_stats();
         }
     }
 }
@@ -356,11 +356,11 @@ void bench_runner::run() {
         }
     }
     for (size_t i = 0; i < num_intervals; ++i) {
-        cout << executed_txns[i] * nthreads << "\t" << double(throughputs[i]) << "\t"
+        cerr << executed_txns[i] * nthreads << "\t" << double(throughputs[i]) << "\t"
              << double(table_size[i] / (1 << 20)) << "\t" << double(disk_size[i]) / (1 << 20) << "\t"
              << cpr_model_size[i] << "\n";
     }
-    cout << "--------------------------------------\n";
+    cerr << "--------------------------------------\n";
 
     // output for plotting script
     double final_table_size = double(table_size.back()) / (1 << 20);

@@ -57,37 +57,62 @@ public:
 
 public:
     inline ALWAYS_INLINE void Insert(uint64_t size, bool is_mem, const std::string &table_name) {
-        if (table_name == "customer") {
-            if (is_mem) {
-                customer_mem_ += size;
-                BlockSwap("customer");
-            } else customer_disk_ += size;
+        if (table_name != "order" && table_name != "new_order" && table_name != "history") {
+            if (is_mem) total_mem_ += size;
+            else total_disk_ += size;
+        }
+
+        if (table_name == "warehouse") {
+            if (is_mem) warehouse_mem_ += size;
+            else warehouse_disk_ += size;
+        } else if (table_name == "district") {
+            if (is_mem) district_mem_ += size;
+            else district_disk_ += size;
+        } else if (table_name == "customer") {
+            if (is_mem) customer_mem_ += size;
+            else customer_disk_ += size;
         } else if (table_name == "history") {
-            if (is_mem) {
-                history_mem_ += size;
-                BlockSwap("order_line");
-            } else history_disk_ += size;
+            if (is_mem) history_mem_ += size;
+            else history_disk_ += size;
         } else if (table_name == "order") {
-            if (is_mem) {
-                order_mem_ += size;
-                BlockSwap("order_line");
-            } else order_disk_ += size;
+            if (is_mem) order_mem_ += size;
+            else order_disk_ += size;
         } else if (table_name == "new_order") {
-            if (is_mem) {
-                new_order_mem_ += size;
-                BlockSwap("order_line");
-            } else new_order_disk_ += size;
+            if (is_mem) new_order_mem_ += size;
+            else new_order_disk_ += size;
         } else if (table_name == "order_line") {
-            if (is_mem) {
-                order_line_mem_ += size;
-                BlockSwap("order_line");
-            } else order_line_disk_ += size;
+            if (is_mem) order_line_mem_ += size;
+            else order_line_disk_ += size;
+        } else if (table_name == "item") {
+            if (is_mem) item_mem_ += size;
+            else item_disk_ += size;
         } else if (table_name == "stock") {
-            if (is_mem) {
-                stock_mem_ += size;
-                BlockSwap("stock");
-            } else stock_disk_ += size;
-        } else throw std::runtime_error("Table name not found!\n");
+            if (is_mem) stock_mem_ += size;
+            else stock_disk_ += size;
+        } else {
+            printf("Error: table name not found!\n");
+        }
+    }
+
+    inline ALWAYS_INLINE void SwapTuple(uint64_t size, const std::string &table_name) {
+        Insert(size, true, table_name);
+
+        while (total_mem_ + size > total_mem_limit_) {
+            total_mem_ -= kPageSize;
+            total_disk_ += kPageSize;
+
+            if (table_name == "stock") {
+                stock_mem_ -= kPageSize;
+                stock_disk_ += kPageSize;
+            } else if (table_name == "customer") {
+                customer_mem_ -= kPageSize;
+                customer_disk_ += kPageSize;
+            } else if (table_name == "order_line") {
+                order_line_mem_ -= kPageSize;
+                order_line_disk_ += kPageSize;
+            } else
+                printf("Error: table name not found!\n");
+        }
     }
 
     inline ALWAYS_INLINE bool ToMemory(uint64_t size) const {
@@ -118,24 +143,5 @@ public:
         std::cerr << "Mem: " << double(mem_total) / (1 << 20) << " MB\t" << "Disk: " << double(disk_total) / (1 << 20)
                   << " MB\t" << "Other: " << double(others) / (1 << 20) << " MB" << std::endl;
         std::cerr << "-----------------------------------------------------\n";
-    }
-
-private:
-    inline ALWAYS_INLINE void BlockSwap(const std::string &table_name) {
-        while (total_mem_ > total_mem_limit_) {
-            total_mem_ -= kPageSize;
-            total_disk_ += kPageSize;
-
-            if (table_name == "stock") {
-                stock_mem_ -= kPageSize;
-                stock_disk_ += kPageSize;
-            } else if (table_name == "customer") {
-                customer_mem_ -= kPageSize;
-                customer_disk_ += kPageSize;
-            } else if (table_name == "order_line") {
-                order_line_mem_ -= kPageSize;
-                order_line_disk_ += kPageSize;
-            } else throw std::runtime_error("Table name not found!\n");
-        }
     }
 };
