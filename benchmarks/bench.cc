@@ -30,7 +30,7 @@ using namespace std;
 using namespace util;
 
 size_t nthreads = 1;
-size_t mem_limit = 512;
+double mem_limit = 512;
 volatile bool running = true;
 int verbose = 0;
 uint64_t txn_flags = 0;
@@ -151,14 +151,15 @@ void bench_worker::run() {
             double intervalDifference = static_cast<double>(used_time_us - interval_used_time_us);
             throughputs.push_back(1e6 * kTxnsInterval / intervalDifference - throughput_overhead);
             interval_used_time_us = used_time_us;
-            // calculate size delta
-            table_size_delta.push_back(size_delta);
             // calculate cpr model size
             cpr_model_size.push_back(get_cpr_model_size());
-            // calculate disk size
-            FileManager &manager = FileManager::GetInstance();
-            disk_size.push_back(manager.GetSize(worker_id));
-            // if (worker_id == 128 && total_txn_counts % (kTxnsInterval << 4) == 0) print_extra_stats();
+            // calculate table size
+            std::vector <uint64_t> table_size = get_table_size();
+            ALWAYS_ASSERT(table_size.size() == 2);
+            disk_size.push_back(table_size[1]);
+            mem_size.push_back(table_size[0]);
+
+            if (worker_id == 128 && total_txn_counts % (kTxnsInterval << 3) == 0) print_extra_stats();
         }
     }
 }
@@ -301,7 +302,6 @@ void bench_runner::run() {
             size_delta += workers[i]->get_size_delta();
         }
         const double size_delta_mb = double(size_delta) / 1048576.0;
-        map <string, counter_data> ctrs = event_counter::get_all_counters();
 
 #ifdef ENABLE_BENCH_TXN_COUNTERS
         cerr << "--- txn counter statistics ---" << endl;
@@ -334,7 +334,7 @@ void bench_runner::run() {
     }
 
     cout << "------------------------ process statistics ------------------------\n";
-    cout << "[Executed Txns]\t[Throughput]\t[Table Size]\t[Model Size]\n";
+    cout << "[Executed Txns]\t[Throughput]\t[Mem Size]\t[Disk Size]\t[Model Size]\n";
     std::vector <uint64_t> &executed_txns = workers[0]->executed_txns;
     size_t num_intervals = executed_txns.size();
     std::vector<double> throughputs(num_intervals, 0);
@@ -350,8 +350,8 @@ void bench_runner::run() {
                 break;
             }
             throughputs[i] += worker->throughputs[i];
-            table_size[i] += worker->table_size_delta[i] + worker->init_table_size;
             cpr_model_size[i] += worker->cpr_model_size[i];
+            table_size[i] += worker->mem_size[i];
             disk_size[i] += worker->disk_size[i];
         }
     }

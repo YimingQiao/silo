@@ -19,7 +19,7 @@
 
 static const uint64_t kTxnsInterval = 1e4;
 static const uint64_t kNumDP = 1e5;
-static const uint64_t throughput_overhead = 1000;
+static const uint64_t throughput_overhead = 0;
 
 extern void ycsb_do_test(abstract_db *db, int argc, char **argv);
 
@@ -37,7 +37,7 @@ enum {
 
 // benchmark global variables
 extern size_t nthreads;
-extern size_t mem_limit;
+extern double mem_limit;
 extern volatile bool running;
 extern int verbose;
 extern uint64_t txn_flags;
@@ -136,7 +136,7 @@ public:
 
         executed_txns.reserve(kNumDP);
         throughputs.reserve(kNumDP);
-        table_size_delta.reserve(kNumDP);
+        mem_size.reserve(kNumDP);
         cpr_model_size.reserve(kNumDP);
     }
 
@@ -145,7 +145,7 @@ public:
     // stats
     std::vector <uint64_t> executed_txns;
     std::vector<double> throughputs;
-    std::vector <uint64_t> table_size_delta;
+    std::vector <uint64_t> mem_size;
     std::vector <uint64_t> cpr_model_size;
     std::vector <uint64_t> disk_size;
     int64_t init_table_size = 0;
@@ -187,6 +187,8 @@ public:
     std::map <std::string, size_t> get_txn_counts() const;
 
     virtual uint64_t get_cpr_model_size() { return 0; }
+
+    virtual std::vector <uint64_t> get_table_size() { return std::vector<uint64_t>(); }
 
     virtual void print_extra_stats() {}
 

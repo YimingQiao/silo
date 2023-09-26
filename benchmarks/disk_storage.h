@@ -68,10 +68,12 @@ struct SeqWriteBuffer {
 struct FileDescriptor {
     int fd;
     std::mutex mutex;
-    char direct_io_buffer[DIRECT_IO_BUFFER_SIZE];
+
+    void *direct_io_buffer;
     SeqWriteBuffer write_buffer;
 
-    FileDescriptor(const std::string &filename) { fd = DirectIOFile(filename); }
+    FileDescriptor(const std::string &filename) : fd(DirectIOFile(filename)),
+                                                  direct_io_buffer(aligned_alloc(BLOCKSIZE, DIRECT_IO_BUFFER_SIZE)) {}
 
     ~FileDescriptor() { if (fd != -1) close(fd); }
 
@@ -111,7 +113,10 @@ struct FileDescriptor {
         if (pos * num_page < write_buffer.write_pos_) {
             // tuple is not in write buffer
             int64_t ret = pread(fd, direct_io_buffer, num_page * BLOCKSIZE, pos * num_page * BLOCKSIZE);
-            if (ret < 0) throw std::runtime_error("read error in SeqDiskTupleWrite");
+            if (ret < 0) {
+                std::string error_msg = "read error in SeqDiskTupleWrite: " + std::string(strerror(errno));
+                throw std::runtime_error(error_msg);
+            }
             else {
                 memcpy(data, direct_io_buffer, sizeof(T));
                 return sizeof(T);

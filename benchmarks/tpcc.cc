@@ -479,6 +479,8 @@ public:
         stat.Print(false);
     }
 
+    std::vector<uint64_t> get_table_size() { return std::vector<uint64_t>{stat.total_mem_, stat.total_disk_}; }
+
     inline ALWAYS_INLINE size_t
     InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, bool update = true) {
         size_t sz = Size(v);
@@ -549,7 +551,6 @@ public:
         } else {
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(worker_id, 2);
             ol_disk.SeqDiskTupleWrite(&v);
-            stat.SwapTuple(Size(v), "order_line");
 
             ol_tuple.Set(v, false, stat.n_ol_disk++, worker_id);
             serial_str = Tuple<order_line::value>::Serialize(ol_tuple);
@@ -565,7 +566,10 @@ public:
     inline ALWAYS_INLINE bool
     FindOrderLine(void *txn, const order_line::key &k, size_t warehouse_id, order_line::value &v) {
         bool success = tbl_order_line(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
-        if (success) FindOrderLineInternal(obj_v, v, ol_tuple);
+        if (success) {
+            FindOrderLineInternal(obj_v, v, ol_tuple);
+            if (!ol_tuple.in_memory_) stat.Insert(Size(v), "order_line");
+        }
         return success;
     }
 
@@ -2080,18 +2084,18 @@ protected:
 
         for (auto *worker: workers) {
             tpcc_worker *w = (tpcc_worker *) worker;
-            w->stat.n_ol_mem = *n_order_line;
-            w->stat.n_c_mem = NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict();
-            w->stat.n_s_mem = NumItems() * NumWarehouses();
+            w->stat.n_ol_mem = *n_order_line / nthreads;
+            w->stat.n_c_mem = NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict() / nthreads;
+            w->stat.n_s_mem = NumItems() * NumWarehouses() / nthreads;
 
-            w->stat.warehouse_mem_ = *size_warehouse;
-            w->stat.item_mem_ = *size_item;
-            w->stat.district_mem_ = *size_district;
-            w->stat.customer_mem_ = *size_customer;
-            w->stat.stock_mem_ = *size_stock;
-            w->stat.order_mem_ = *size_order;
-            w->stat.new_order_mem_ = *size_new_order;
-            w->stat.order_line_mem_ = *size_order_line;
+            w->stat.warehouse_mem_ = *size_warehouse / nthreads;
+            w->stat.item_mem_ = *size_item / nthreads;
+            w->stat.district_mem_ = *size_district / nthreads;
+            w->stat.customer_mem_ = *size_customer / nthreads;
+            w->stat.stock_mem_ = *size_stock / nthreads;
+            w->stat.order_mem_ = *size_order / nthreads;
+            w->stat.new_order_mem_ = *size_new_order / nthreads;
+            w->stat.order_line_mem_ = *size_order_line / nthreads;
 
             w->stat.total_mem_ =
                     w->stat.warehouse_mem_ + w->stat.item_mem_ + w->stat.district_mem_ + w->stat.customer_mem_ +
