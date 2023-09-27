@@ -612,6 +612,7 @@ public:
                           ZSTD<order_line::value> *order_line_zstd) {
         Deserialize(obj, tuple);
         if (!tuple.in_memory_) {
+            ALWAYS_ASSERT(tuple.id_thread_ >= 0);
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(tuple.id_thread_, 2);
             ol_disk.DiskTupleRead(&v, tuple.id_pos_);
         } else order_line_zstd->ZstdDecompress(tuple.data_, &v);
@@ -661,7 +662,7 @@ public:
         if (likely(in_mem)) {
             c_tuple.Set(codes, true, stat.n_ol_mem++, worker_id);
             std::string &serial_str = Serialize(str(), c_tuple);
-            tbl_order_line(w_id)->put(txn, Encode(str(), k), serial_str);
+            tbl_customer(w_id)->put(txn, Encode(str(), k), serial_str);
         } else {
             FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(worker_id, 0);
             c_disk.SeqDiskTupleWrite(&v);
