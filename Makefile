@@ -101,7 +101,7 @@ LDFLAGS := -lpthread -lnuma -lrt
 
 LZ4LDFLAGS := -Lthird-party/lz4 -llz4 -Wl,-rpath,$(TOP)/third-party/lz4
 
-BlitzLDFLAGS := -Ithird-party/libblitz/include -Lthird-party/libblitz/build -ldb_compress -Wl,-rpath,$(TOP)/third-party/libblitz/build
+ZSTDLDFLAGS := -Ithird-party/libzstd -Lthird-party/libzstd -lzstd -Wl,-rpath,$(TOP)/third-party/libzstd
 
 ifeq ($(USE_MALLOC_MODE_S),1)
         CXXFLAGS+=-DUSE_JEMALLOC
@@ -249,7 +249,7 @@ $(O)/benchmarks/masstree/kvtest: $(O)/benchmarks/masstree/kvtest.o $(OBJFILES) $
 newdbtest: $(O)/new-benchmarks/dbtest
 
 $(O)/new-benchmarks/dbtest: $(O)/new-benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(NEWBENCH_OBJFILES) third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/new-benchmarks/dbtest $^ $(LDFLAGS) $(LZ4LDFLAGS) ${BLITZFLAGS}
+	$(CXX) -o $(O)/new-benchmarks/dbtest $^ $(LDFLAGS) $(LZ4LDFLAGS)
 
 DEPFILES := $(wildcard $(O)/*.d $(O)/*/*.d $(O)/*/*/*.d masstree/_masstree_config.d)
 ifneq ($(DEPFILES),)
@@ -283,4 +283,4 @@ $(O)/buildstamp $(O)/buildstamp.bench $(O)/buildstamp.masstree:
 .PHONY: clean
 clean:
 	rm -rf out-*
-	make -C third-party/lz4 clean
+	rm -rf benchmarks/workspace/*.tbl
