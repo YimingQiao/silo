@@ -613,9 +613,8 @@ public:
         Deserialize(obj, tuple);
         if (!tuple.in_memory_) {
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(tuple.id_thread_, 2);
-            ol_disk.DiskTupleRead(&tuple.data_, tuple.id_pos_);
-        }
-        order_line_zstd->ZstdDecompress(tuple.data_, &v);
+            ol_disk.DiskTupleRead(&v, tuple.id_pos_);
+        } else order_line_zstd->ZstdDecompress(tuple.data_, &v);
     }
 
     inline ALWAYS_INLINE size_t InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t w_id) {
@@ -641,10 +640,9 @@ public:
             Deserialize(obj_v, s_tuple);
             if (!s_tuple.in_memory_) {
                 FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(s_tuple.id_thread_, 1);
-                s_disk.DiskTupleRead(&s_tuple.data_, s_tuple.id_pos_);
+                s_disk.DiskTupleRead(&v, s_tuple.id_pos_);
                 stat.SwapTuple(s_tuple.data_.size(), "stock");
-            }
-            stock_zstd->ZstdDecompress(s_tuple.data_, &v);
+            } else stock_zstd->ZstdDecompress(s_tuple.data_, &v);
         }
         return success;
     }
@@ -681,10 +679,9 @@ public:
             Deserialize(obj_v, c_tuple);
             if (!c_tuple.in_memory_) {
                 FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(c_tuple.id_thread_, 0);
-                c_disk.DiskTupleRead(&c_tuple.data_, c_tuple.id_pos_);
+                c_disk.DiskTupleRead(&v, c_tuple.id_pos_);
                 stat.SwapTuple(c_tuple.data_.size(), "customer");
-            }
-            customer_zstd->ZstdDecompress(c_tuple.data_, &v);
+            } else customer_zstd->ZstdDecompress(c_tuple.data_, &v);
         }
         return success;
     }

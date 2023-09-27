@@ -47,9 +47,12 @@ static inline ALWAYS_INLINE std::string &Serialize(std::string &s, const Tuple<s
     s.clear();
     // Directly append the string data to the output string
     s.append(data.data_);
-    // Serialize the last three members together
-    s.append(reinterpret_cast<const char *>(&data.in_memory_),
-             sizeof(data.id_pos_) + sizeof(data.id_thread_) + sizeof(data.in_memory_));
+//    // Serialize the last three members together
+//    s.append(reinterpret_cast<const char *>(&data.in_memory_),
+//             sizeof(data.id_pos_) + sizeof(data.id_thread_) + sizeof(data.in_memory_));
+    s.append(reinterpret_cast<const char *>(&data.in_memory_), sizeof(data.in_memory_));
+    s.append(reinterpret_cast<const char *>(&data.id_pos_), sizeof(data.id_pos_));
+    s.append(reinterpret_cast<const char *>(&data.id_thread_), sizeof(data.id_thread_));
 
     return s;
 }
@@ -62,7 +65,12 @@ static inline ALWAYS_INLINE void Deserialize(const std::string &s, Tuple<std::st
     data.data_.assign(s.data(), dataSize);
     // Deserialize the last three members together
     const char *ptr = s.data() + dataSize;
-    std::memcpy(&data.in_memory_, ptr, sz);
+//    std::memcpy(&data.in_memory_, ptr, sz);
+    std::memcpy(&data.in_memory_, ptr, sizeof(data.in_memory_));
+    ptr += sizeof(data.in_memory_);
+    std::memcpy(&data.id_pos_, ptr, sizeof(data.id_pos_));
+    ptr += sizeof(data.id_pos_);
+    std::memcpy(&data.id_thread_, ptr, sizeof(data.id_thread_));
 }
 
 #if __linux__
