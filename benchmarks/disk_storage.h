@@ -28,6 +28,7 @@ struct Tuple {
 
     static inline ALWAYS_INLINE std::string &Serialize(std::string &s, const Tuple<T> &data) {
         ALWAYS_ASSERT(data.id_thread_ >= -1 && data.id_thread_ <= 256);
+        ALWAYS_ASSERT(std::is_pod<Tuple<T>>::value);
 
         s.resize(sizeof(data));
         std::memcpy(&s[0], &data, sizeof(data));
@@ -40,6 +41,33 @@ struct Tuple {
         memcpy(&tuple, s.data(), sizeof(tuple));
     }
 };
+
+static inline ALWAYS_INLINE std::string &Serialize(std::string &s, const Tuple<std::string> &data) {
+    // Assuming T is std::string for data_
+    size_t dataSize = data.data_.size();
+    s.append(reinterpret_cast<const char *>(&dataSize), sizeof(dataSize));
+    s += data.data_;
+
+    // Serialize the last three members together
+    s.append(reinterpret_cast<const char *>(&data.in_memory_),
+             sizeof(data.in_memory_) + sizeof(data.id_pos_) + sizeof(data.id_thread_));
+
+    return s;
+}
+
+static inline ALWAYS_INLINE void Deserialize(const std::string &s, Tuple<std::string> &data) {
+    const char *ptr = s.data();
+
+    // Assuming T is std::string for data_
+    size_t dataSize;
+    std::memcpy(&dataSize, ptr, sizeof(dataSize));
+    ptr += sizeof(dataSize);
+    data.data_.assign(ptr, dataSize);
+    ptr += dataSize;
+
+    // Deserialize the last three members together
+    std::memcpy(&data.in_memory_, ptr, sizeof(data.in_memory_) + sizeof(data.id_pos_) + sizeof(data.id_thread_));
+}
 
 #if __linux__
 #define BLOCKSIZE 4096
