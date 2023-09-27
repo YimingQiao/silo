@@ -14,17 +14,11 @@ class ZSTDTable {
 public:
     ZSTDTable() : sample_size_(sizeof(T)) {};
 
-    inline ALWAYS_INLINE void PushTuple(const T &tuple) {
-        table_.push_back(tuple);
-    }
+    inline ALWAYS_INLINE void PushTuple(const T &tuple) { table_.push_back(tuple); }
 
-    inline ALWAYS_INLINE T &GetTuple(size_t index) {
-        return table_[index];
-    }
+    inline ALWAYS_INLINE T &GetTuple(size_t index) { return table_[index]; }
 
-    inline ALWAYS_INLINE void Clear() {
-        table_.clear();
-    }
+    inline ALWAYS_INLINE void Clear() { table_.clear(); }
 
     std::vector <T> table_;
     size_t sample_size_;
@@ -38,7 +32,7 @@ public:
 
 public:
     ZSTD() : cctx_(ZSTD_createCCtx()), dctx_(ZSTD_createDCtx()), dict_buffer_(malloc_orDie(kDictCapacity)),
-             dict_size_(0), code_buffer_(ZSTD_compressBound(sizeof(T)), '\0') {}
+             dict_size_(0), codes(ZSTD_compressBound(sizeof(T)), '\0') {}
 
     void Train(ZSTDTable<T> &table) {
         std::vector <T> &samples = table.table_;
@@ -55,20 +49,19 @@ public:
         ddict_ = ZSTD_createDDict(dict_buffer_, dict_size_);
     }
 
-    inline ALWAYS_INLINE std::string ZstdCompress(T &src) {
-        size_t code_size = ZSTD_compress_usingCDict(cctx_, code_buffer_.data(), code_buffer_.size(), &src, sizeof(T),
-                                                    cdict_);
-        if (ZSTD_isError(code_size)) {
-            CHECK_ZSTD(code_size);
-        }
-        return std::move(code_buffer_.substr(0, code_size));
+    inline ALWAYS_INLINE std::string ZstdCompress(const T &src) {
+        std::string codes(ZSTD_compressBound(sizeof(T)), '\0');
+        size_t code_size = ZSTD_compress_usingCDict(cctx_, codes.data(), codes.size(), &src, sizeof(T), cdict_);
+        ALWAYS_ASSERT(!ZSTD_isError(code_size));
+        if (ZSTD_isError(code_size)) CHECK_ZSTD(code_size);
+
+        return codes.substr(0, code_size);
     }
 
-    inline ALWAYS_INLINE void ZstdDecompress(T *data, const std::string &src) {
+    inline ALWAYS_INLINE void ZstdDecompress(const std::string &src, T *data) {
         size_t ret = ZSTD_decompress_usingDDict(dctx_, data, sizeof(T), src.data(), src.size(), ddict_);
-        if (ZSTD_isError(ret)) {
-            CHECK_ZSTD(ret);
-        }
+        ALWAYS_ASSERT(!ZSTD_isError(ret));
+        // if (ZSTD_isError(ret)) CHECK_ZSTD(ret);
     }
 
     inline ALWAYS_INLINE ZSTD *Copy() {
@@ -79,18 +72,14 @@ public:
     }
 
 private:
-    // zstd context
     ZSTD_CCtx *const cctx_;
     ZSTD_DCtx *const dctx_;
 
-    // zstd dictionary
     ZSTD_CDict_s *cdict_;
     ZSTD_DDict_s *ddict_;
 
-    // zstd dictionary meta data
     void *dict_buffer_;
     size_t dict_size_;
 
-    // buffer for compressing
-    std::string code_buffer_;
+    std::string codes;
 };
