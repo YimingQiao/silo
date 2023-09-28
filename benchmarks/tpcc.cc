@@ -541,8 +541,9 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertOrderLine(void *txn, const order_line::key &k, blitz_vector &v, size_t w_id, bool update = true) {
-        return InsertOrderLine(txn, Encode(str(), k), v, w_id, update);
+    InsertOrderLine(void *txn, const order_line::key &k, blitz_vector &v, size_t w_id, bool update = true,
+                    int32_t stop_idx = 5) {
+        return InsertOrderLine(txn, Encode(str(), k), v, w_id, update, stop_idx);
     }
 
     inline ALWAYS_INLINE size_t
@@ -1311,7 +1312,7 @@ public:
     inline ALWAYS_INLINE size_t
     InsertOrderLine(void *txn, const order_line::key &k, db_compress::AttrVector &v, size_t warehouse_id,
                     string obj_buf) {
-        ol_tuple.Set(BlitzCpr(order_line_blitz, v, 6));
+        ol_tuple.Set(BlitzCpr(order_line_blitz, v, 4));
         tbl_order_line(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf, ol_tuple));
         return ol_tuple.data_.size();
     }
@@ -1543,7 +1544,8 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
     try {
         ssize_t ret = 0;
         const customer::key k_c(warehouse_id, districtID, customerID);
-        ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
+        ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
+        // ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
         // checker::SanityCheckCustomer(&k_c, &v_c);
 
         const warehouse::key k_w(warehouse_id);
@@ -1614,7 +1616,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
                 s_quantity += -int32_t(ol_quantity) + 91;
             s_ytd += ol_quantity;
             s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
-            InsertStock(txn, k_s, stock_buffer, 4);
+            InsertStock(txn, k_s, stock_buffer, ol_supply_w_id);
 
             const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
             order_line_buffer.attr_[0].value_ = int(ol_i_id);
@@ -1622,7 +1624,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
             order_line_buffer.attr_[2].value_ = int(ol_supply_w_id);
             order_line_buffer.attr_[3].value_ = int(ol_quantity);
             order_line_buffer.attr_[4].value_ = 0;// not delivered yet
-            ret += InsertOrderLine(txn, k_ol, order_line_buffer, warehouse_id, false);
+            ret += InsertOrderLine(txn, k_ol, order_line_buffer, warehouse_id, false, 4);
         }
         measure_txn_counters(txn, "txn_new_order");
         if (likely(db->commit_txn(txn))) return txn_result(true, ret);
@@ -1892,7 +1894,6 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
         measure_txn_counters(txn, "txn_payment");
         if (likely(db->commit_txn(txn))) return txn_result(true, ret);
     } catch (abstract_db::abstract_abort_exception &ex) { db->abort_txn(txn); }
-
     return txn_result(false, 0);
 }
 
