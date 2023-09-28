@@ -27,7 +27,7 @@ public:
 template<typename T>
 class ZSTD {
 public:
-    static const int kDictCapacity = 5 * 110 * 1024;
+    static const int kDictCapacity = 10 * 110 * 1024;
     static const int kCompressLevel = 3;
 
 public:
@@ -68,8 +68,11 @@ public:
         ZSTD *ret = new ZSTD<T>();
         ret->cdict_ = ZSTD_createCDict(dict_buffer_, dict_size_, kCompressLevel);
         ret->ddict_ = ZSTD_createDDict(dict_buffer_, dict_size_);
+        ret->dict_size_ = dict_size_;
         return ret;
     }
+
+    size_t GetDictSize() { return dict_size_; }
 
 private:
     ZSTD_CCtx *const cctx_;

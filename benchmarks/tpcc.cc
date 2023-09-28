@@ -493,7 +493,12 @@ public:
         stat.Print(false);
     }
 
-    std::vector<uint64_t> get_table_size() { return std::vector<uint64_t>{stat.total_mem_, stat.total_disk_}; }
+    std::vector<uint64_t> get_table_size() override { return std::vector<uint64_t>{stat.total_mem_, stat.total_disk_}; }
+
+    uint64_t get_cpr_model_size() override {
+        return stock_zstd->GetDictSize() + stock_data_zstd->GetDictSize() + order_line_zstd->GetDictSize() +
+               order_zstd->GetDictSize() + customer_zstd->GetDictSize();
+    }
 
     inline ALWAYS_INLINE size_t
     InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, bool update = true) {
@@ -582,6 +587,7 @@ public:
                 stat.Insert(codes.size(), true, "order_line");
                 tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
             }
+            return codes.size();
         } else {
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(worker_id, 2);
             ol_disk.SeqDiskTupleWrite(&v);
@@ -590,12 +596,11 @@ public:
             std::string &serial_str = Serialize(str(), ol_tuple);
             if (update) tbl_order_line(w_id)->put(txn, k_encoded, serial_str);
             else {
-                stat.Insert(codes.size(), false, "order_line");
+                stat.Insert(sizeof(order_line::value), false, "order_line");
                 tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
             }
+            return sizeof(order_line::value);
         }
-
-        return codes.size();
     }
 
     inline ALWAYS_INLINE bool FindOrderLine(void *txn, const order_line::key &k, size_t w_id, order_line::value &v) {
