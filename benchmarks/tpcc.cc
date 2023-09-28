@@ -1312,7 +1312,7 @@ public:
     inline ALWAYS_INLINE size_t
     InsertOrderLine(void *txn, const order_line::key &k, db_compress::AttrVector &v, size_t warehouse_id,
                     string obj_buf) {
-        ol_tuple.Set(BlitzCpr(order_line_blitz, v, 4));
+        ol_tuple.Set(BlitzCpr(order_line_blitz, v, 6));
         tbl_order_line(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf, ol_tuple));
         return ol_tuple.data_.size();
     }
@@ -1544,9 +1544,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
     try {
         ssize_t ret = 0;
         const customer::key k_c(warehouse_id, districtID, customerID);
-        ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-        // ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
-        // checker::SanityCheckCustomer(&k_c, &v_c);
+        ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
 
         const warehouse::key k_w(warehouse_id);
         ALWAYS_ASSERT(tbl_warehouse(warehouse_id)->get(txn, Encode(obj_key0, k_w), obj_v));
@@ -1639,7 +1637,6 @@ public:
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(new_order::key));
         INVARIANT(value.size() == sizeof(new_order::value));
-        k_no = Decode(keyp, k_no_temp);
         return false;
     }
 
@@ -1686,8 +1683,8 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             new_order_scan_callback new_order_c;
             {
                 ANON_REGION("DeliverNewOrderScan:", &delivery_probe0_cg);
-                tbl_new_order(warehouse_id)->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c,
-                                                  s_arena.get());
+                tbl_new_order(warehouse_id)
+                        ->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c, s_arena.get());
             }
 
             const new_order::key *k_no = new_order_c.get_key();
