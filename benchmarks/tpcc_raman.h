@@ -10,24 +10,9 @@
 #include "../record/encoder.h"
 #include "raman_dummy.h"
 #include "abstract_ordered_index.h"
+#include "disk_storage.h"
 
 using vector_of_string = std::vector<std::string>;
-
-static tuple_raman::value
-CreateTuple(std::string &data, int32_t dict_id = 0, bool is_cprd = false, int32_t thread_id = -1) {
-    tuple_raman::value tuple;
-    tuple.data = data;
-    tuple.dict_id = dict_id;
-    tuple.is_cprd = is_cprd;
-    tuple.thread_id = thread_id;
-    return tuple;
-}
-
-static tuple_raman::value DecodeTuple(const std::string &obj) {
-    tuple_raman::value tuple;
-    Decode(obj, tuple);
-    return tuple;
-}
 
 // -------------------------------- Raman Table  -------------------------------------
 template<typename T>
@@ -35,17 +20,11 @@ class RamanTable {
 public:
     RamanTable() : sample_size_(sizeof(T)) {};
 
-    inline ALWAYS_INLINE void PushTuple(const T &tuple) {
-        table_.push_back(std::move(ToRamanFormat(tuple)));
-    }
+    inline ALWAYS_INLINE void PushTuple(const T &tuple) { table_.push_back(std::move(ToRamanFormat(tuple))); }
 
-    inline ALWAYS_INLINE vector_of_string &GetTuple(size_t index) {
-        return table_[index];
-    }
+    inline ALWAYS_INLINE vector_of_string &GetTuple(size_t index) { return table_[index]; }
 
-    inline ALWAYS_INLINE void Clear() {
-        table_.clear();
-    }
+    inline ALWAYS_INLINE void Clear() { table_.clear(); }
 
     std::vector <vector_of_string> table_;
     size_t sample_size_;
@@ -165,7 +144,7 @@ public:
     using key = typename T::key;
     using value = typename T::value;
 
-    inline ALWAYS_INLINE bool Insert(const key &key, value &value) {
+    inline ALWAYS_INLINE bool Insert(const key &key, const value &value) {
         keys_[n_tuple] = key;
         values_[n_tuple] = value;
         return ++n_tuple == kBufferSize;
@@ -188,14 +167,14 @@ public:
         return cpr->Size();
     }
 
-    inline ALWAYS_INLINE void Decompress(tuple_raman::value &tuple, value &sample) {
-        if (tuple.is_cprd) {
-            RamanCompressor *cpr = GetCompressor(tuple.dict_id);
-            cpr->RamanDecompress(tuple.data, sample);
+    inline ALWAYS_INLINE void Decompress(Tuple<std::string> &tuple, value &sample) {
+        if (tuple.is_cprd_) {
+            RamanCompressor *cpr = GetCompressor(tuple.id_dict_);
+            cpr->RamanDecompress(tuple.data_, sample);
         } else {
-            Decode(tuple.data, sample);
-            if (CprNum() > tuple.dict_id && tuple.thread_id == id) {
-                RamanCompressor *cpr = GetCompressor(tuple.dict_id);
+            Decode(tuple.data_, sample);
+            if (CprNum() > tuple.id_dict_ && tuple.id_thread_ == id) {
+                RamanCompressor *cpr = GetCompressor(tuple.id_dict_);
                 std::string codes = cpr->RamanCompress(sample);
                 cpr->RamanDecompress(codes, sample);
             }

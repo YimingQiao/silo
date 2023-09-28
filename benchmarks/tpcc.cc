@@ -397,13 +397,6 @@ public:
     stock::value stock_buffer;
     stock_data::value stock_data_buffer;
 
-    tuple_raman::value history_tuple;
-    tuple_raman::value customer_tuple;
-    tuple_raman::value order_tuple;
-    tuple_raman::value order_line_tuple;
-    tuple_raman::value stock_tuple;
-    tuple_raman::value stock_data_tuple;
-
     // resp for [warehouse_id_start, warehouse_id_end)
     tpcc_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
                 const map<string, abstract_ordered_index *> &open_tables,
@@ -513,43 +506,40 @@ public:
 
 
     inline ALWAYS_INLINE size_t
-    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, bool update = true) {
-        std::string codes = order_zstd->ZstdCompress(v);
-        // bool in_mem = stat.ToMemory(codes.size());
-        bool in_mem = true;
-        if (in_mem) {
-            o_tuple.Set(codes);
-            if (update) tbl_oorder(warehouse_id)->put(txn, Encode(str(), k), Serialize(str(), o_tuple));
-            else {
-                stat.Insert(codes.size(), true, "order");
-                tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k), Serialize(str(), o_tuple));
+    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t w_id, bool update = true) {
+        std::string &codes = Encode(str(), v);
+        o_tuple.Set(codes, true, -1, worker_id, order_block.CprNum(), false);
+        if (update) tbl_oorder(w_id)->put(txn, Encode(str(), k), Serialize(str(), o_tuple));
+        else {
+            stat.Insert(codes.size(), true, "order");
+            tbl_oorder(w_id)->insert(txn, Encode(str(), k), Serialize(str(), o_tuple));
+        }
+
+        // raman block compression
+        auto tuples = RamanInsertOrderBlock(k, v);
+        if (!tuples.empty()) {
+            for (size_t i = 0; i < tuples.size(); ++i) {
+                auto &key = order_block.keys_[i];
+                auto &tuple = tuples[i];
+                uint32_t w_id = GetWarehouseID(key);
+                tbl_oorder(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
+
+                if (i % 256 == 0) {
+                    db->commit_txn(txn);
+                    txn = db->new_txn(txn_flags, arena, txn_buf());
+                }
             }
         }
-        return codes.size();
-        // bool in_mem = stat.ToMemory(codes.size());
-//        bool in_mem = true;
-//        size_t sz = Size(v);
-//        if (in_mem) {
-//            o_tuple.Set(v);
-//            if (update)
-//                tbl_oorder(warehouse_id)->put(txn, Encode(str(), k), Tuple<oorder::value>::Serialize(str(), o_tuple));
-//            else {
-//                stat.Insert(sz, true, "order");
-//                tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k),
-//                                                 Tuple<oorder::value>::Serialize(str(), o_tuple));
-//            }
-//        }
-//        return sz;
 
+        return codes.size();
     }
 
     inline ALWAYS_INLINE bool FindOrder(void *txn, const oorder::key &k, size_t warehouse_id, oorder::value &v) {
         bool success = tbl_oorder(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (likely(success)) {
             Deserialize(obj_v, o_tuple);
-            order_zstd->ZstdDecompress(o_tuple.data_, &v);
-//            Tuple<oorder::value>::Deserialize(obj_v, o_tuple);
-//            v = o_tuple.data_;
+            ALWAYS_ASSERT(o_tuple.in_memory_);
+            order_block.Decompress(o_tuple, v);
         }
         return success;
     }
@@ -583,33 +573,40 @@ public:
 
     inline ALWAYS_INLINE size_t
     InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t w_id, bool update = true) {
-        return InsertOrderLine(txn, Encode(str(), k), v, w_id, update);
-    }
-
-    inline ALWAYS_INLINE size_t
-    InsertOrderLine(void *txn, const std::string &k_encoded, const order_line::value &v, size_t w_id,
-                    bool update = true) {
-        std::string codes = order_line_zstd->ZstdCompress(v);
+        std::string &codes = Encode(str(), v);
         bool in_mem = stat.ToMemory(codes.size());
         if (likely(in_mem)) {
-            ol_tuple.Set(codes, true, stat.n_ol_mem++, worker_id);
+            ol_tuple.Set(codes, true, -1, worker_id, order_line_block.CprNum(), false);
             std::string &serial_str = Serialize(str(), ol_tuple);
-            if (update) tbl_order_line(w_id)->put(txn, k_encoded, serial_str);
+            if (update) tbl_order_line(w_id)->put(txn, Encode(str(), k), serial_str);
             else {
                 stat.Insert(codes.size(), true, "order_line");
-                tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
+                tbl_order_line(w_id)->insert(txn, Encode(str(), k), serial_str);
             }
-            return codes.size();
+
+            // raman block compression
+            auto tuples = RamanInsertOrderLineBlock(k, v);
+            if (!tuples.empty()) {
+                size_t n = tuples.size();
+                for (size_t i = 0; i < tuples.size(); ++i) {
+                    auto &key = order_line_block.keys_[i];
+                    auto &tuple = tuples[i];
+                    uint32_t w_id = GetWarehouseID(key);
+                    tbl_order_line(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
+                }
+            }
+
+            return Size(v);
         } else {
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(worker_id, 2);
             ol_disk.SeqDiskTupleWrite(&v);
 
-            ol_tuple.Set(codes, false, stat.n_ol_disk++, worker_id);
+            ol_tuple.Set(codes, false, stat.n_ol_disk++, worker_id, order_line_block.CprNum(), false);
             std::string &serial_str = Serialize(str(), ol_tuple);
-            if (update) tbl_order_line(w_id)->put(txn, k_encoded, serial_str);
+            if (update) tbl_order_line(w_id)->put(txn, Encode(str(), k), serial_str);
             else {
                 stat.Insert(sizeof(order_line::value), false, "order_line");
-                tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
+                tbl_order_line(w_id)->insert(txn, Encode(str(), k), serial_str);
             }
             return sizeof(order_line::value);
         }
@@ -618,38 +615,43 @@ public:
     inline ALWAYS_INLINE bool FindOrderLine(void *txn, const order_line::key &k, size_t w_id, order_line::value &v) {
         bool success = tbl_order_line(w_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (success) {
-            FindOrderLineInternal(obj_v, v, ol_tuple, order_line_zstd);
+            FindOrderLineInternal(obj_v, v, ol_tuple, &order_line_block);
             if (!ol_tuple.in_memory_) stat.SwapTuple(Size(v), "order_line");
         }
         return success;
     }
 
     static inline ALWAYS_INLINE void
-    FindOrderLineInternal(const std::string &obj, order_line::value &v, Tuple <std::string> &tuple,
-                          ZSTD <order_line::value> *order_line_zstd) {
+    FindOrderLineInternal(const std::string &obj, order_line::value &v, Tuple<std::string> &tuple,
+                          RamanTupleBlock<order_line> *order_line_block) {
         Deserialize(obj, tuple);
         if (!tuple.in_memory_) {
             ALWAYS_ASSERT(tuple.id_thread_ >= 0);
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(tuple.id_thread_, 2);
             ol_disk.DiskTupleRead(&v, tuple.id_pos_);
-        } else order_line_zstd->ZstdDecompress(tuple.data_, &v);
+        } else order_line_block->Decompress(tuple, v);
     }
 
     inline ALWAYS_INLINE size_t InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t w_id) {
-        std::string codes = stock_zstd->ZstdCompress(v);
-//        bool in_mem = stat.ToMemory(codes.size());
-        bool in_mem = true;
-        if (likely(in_mem)) {
-            s_tuple.Set(codes);
-            tbl_stock(w_id)->put(txn, Encode(str(), k), Serialize(str(), s_tuple));
-        } else {
-            FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(worker_id, 1);
-            s_disk.SeqDiskTupleWrite(&v);
+        s_tuple.Set(Encode(str(), v), true, -1, worker_id, stock_block.CprNum(), false);
+        tbl_oorder(w_id)->put(txn, Encode(str(), k), Serialize(str(), s_tuple));
 
-            s_tuple.Set(codes, false, stat.n_s_disk++, worker_id);
-            tbl_stock(w_id)->put(txn, Encode(str(), k), Serialize(str(), s_tuple));
+        // raman block compression
+        auto tuples = RamanInsertStockBlock(k, v);
+        if (!tuples.empty()) {
+            for (size_t i = 0; i < tuples.size(); ++i) {
+                auto &key = stock_block.keys_[i];
+                auto &tuple = tuples[i];
+                uint32_t w_id = GetWarehouseID(key);
+                tbl_stock(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
+
+                if (i % 256 == 0) {
+                    db->commit_txn(txn);
+                    txn = db->new_txn(txn_flags, arena, txn_buf());
+                }
+            }
         }
-        return codes.size();
+        return s_tuple.data_.size();
     }
 
     inline ALWAYS_INLINE bool FindStock(void *txn, const stock::key &k, size_t w_id, stock::value &v) {
@@ -660,7 +662,8 @@ public:
                 FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(s_tuple.id_thread_, 1);
                 s_disk.DiskTupleRead(&v, s_tuple.id_pos_);
                 stat.SwapTuple(s_tuple.data_.size(), "stock");
-            } else stock_zstd->ZstdDecompress(s_tuple.data_, &v);
+            } else stock_block.Decompress(s_tuple, v);
+
         }
         return success;
     }
@@ -673,18 +676,35 @@ public:
 
     inline ALWAYS_INLINE size_t
     InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t w_id) {
-        std::string codes = customer_zstd->ZstdCompress(v);
+        std::string codes = Encode(str(), v);
 //        bool in_mem = stat.ToMemory(codes.size());
         bool in_mem = true;
         if (likely(in_mem)) {
-            c_tuple.Set(codes, true, stat.n_ol_mem++, worker_id);
+            c_tuple.Set(codes, true, -1, worker_id, customer_block.CprNum(), false);
             std::string &serial_str = Serialize(str(), c_tuple);
             tbl_customer(w_id)->put(txn, Encode(str(), k), serial_str);
+
+            // raman block compression
+            auto tuples = RamanInsertCustomerBlock(k, v);
+            if (!tuples.empty()) {
+                for (size_t i = 0; i < tuples.size(); ++i) {
+                    auto &key = customer_block.keys_[i];
+                    auto &tuple = tuples[i];
+                    uint32_t w_id = GetWarehouseID(key);
+                    tbl_customer(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
+
+                    if (i % 256 == 0) {
+                        db->commit_txn(txn);
+                        txn = db->new_txn(txn_flags, arena, txn_buf());
+                    }
+                }
+            }
+            return codes.size();
         } else {
             FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(worker_id, 0);
             c_disk.SeqDiskTupleWrite(&v);
 
-            c_tuple.Set(codes, false, stat.n_c_disk++, worker_id);
+            c_tuple.Set(codes, false, stat.n_c_disk++, worker_id, -1, false);
             std::string &serial_str = Serialize(str(), c_tuple);
             tbl_customer(w_id)->put(txn, Encode(str(), k), serial_str);
         }
@@ -699,7 +719,7 @@ public:
                 FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(c_tuple.id_thread_, 0);
                 c_disk.DiskTupleRead(&v, c_tuple.id_pos_);
                 stat.SwapTuple(c_tuple.data_.size(), "customer");
-            } else customer_zstd->ZstdDecompress(c_tuple.data_, &v);
+            } else customer_block.Decompress(c_tuple, v);
         }
         return success;
     }
@@ -715,10 +735,10 @@ protected:
 
     inline ALWAYS_INLINE string &str() { return *arena.next(); }
 
-    using vector_tuple = std::vector<tuple_raman::value>;
+    using vector_tuple = std::vector<Tuple<std::string>>;
 
     inline ALWAYS_INLINE vector_tuple
-    RamanInsertOrderBlock(const oorder::key &k, oorder::value &v) {
+    RamanInsertOrderBlock(const oorder::key &k, const oorder::value &v) {
         RamanTupleBlock<oorder> &block = order_block;
 
         vector_tuple cpr_tuples;
@@ -730,9 +750,10 @@ protected:
             cpr_tuples.resize(block.n_tuple);
             for (size_t i = 0; i < block.n_tuple; ++i) {
                 auto &tuple = cpr_tuples[i];
-                tuple.data = std::move(compressed_codes[i]);
-                tuple.dict_id = dict_id;
-                tuple.is_cprd = true;
+                tuple.data_ = std::move(compressed_codes[i]);
+                tuple.in_memory_ = true;
+                tuple.id_dict_ = dict_id;
+                tuple.is_cprd_ = true;
             }
 
             block.n_tuple = 0;
@@ -740,7 +761,8 @@ protected:
         return cpr_tuples;
     }
 
-    inline ALWAYS_INLINE vector_tuple RamanInsertOrderLineBlock(const order_line::key &k, order_line::value &v) {
+    inline ALWAYS_INLINE vector_tuple
+    RamanInsertOrderLineBlock(const order_line::key &k, const order_line::value &v) {
         RamanTupleBlock<order_line> &block = order_line_block;
 
         vector_tuple cpr_tuples;
@@ -752,9 +774,10 @@ protected:
             cpr_tuples.resize(block.n_tuple);
             for (size_t i = 0; i < block.n_tuple; ++i) {
                 auto &tuple = cpr_tuples[i];
-                tuple.data = std::move(compressed_codes[i]);
-                tuple.dict_id = dict_id;
-                tuple.is_cprd = true;
+                tuple.data_ = std::move(compressed_codes[i]);
+                tuple.in_memory_ = true;
+                tuple.id_dict_ = dict_id;
+                tuple.is_cprd_ = true;
             }
 
             block.n_tuple = 0;
@@ -763,7 +786,7 @@ protected:
     }
 
     inline ALWAYS_INLINE vector_tuple
-    RamanInsertStockBlock(const stock::key &k, stock::value &v) {
+    RamanInsertStockBlock(const stock::key &k, const stock::value &v) {
         RamanTupleBlock<stock> &block = stock_block;
 
         vector_tuple cpr_tuples;
@@ -775,9 +798,10 @@ protected:
             cpr_tuples.resize(block.n_tuple);
             for (size_t i = 0; i < block.n_tuple; ++i) {
                 auto &tuple = cpr_tuples[i];
-                tuple.data = std::move(compressed_codes[i]);
-                tuple.dict_id = dict_id;
-                tuple.is_cprd = true;
+                tuple.data_ = std::move(compressed_codes[i]);
+                tuple.in_memory_ = true;
+                tuple.id_dict_ = dict_id;
+                tuple.is_cprd_ = true;
             }
 
             block.n_tuple = 0;
@@ -786,7 +810,7 @@ protected:
     }
 
     inline ALWAYS_INLINE vector_tuple
-    RamanInsertCustomerBlock(const customer::key &k, customer::value &v) {
+    RamanInsertCustomerBlock(const customer::key &k, const customer::value &v) {
         RamanTupleBlock<customer> &block = customer_block;
 
         vector_tuple cpr_tuples;
@@ -798,9 +822,10 @@ protected:
             cpr_tuples.resize(block.n_tuple);
             for (size_t i = 0; i < block.n_tuple; ++i) {
                 auto &tuple = cpr_tuples[i];
-                tuple.data = std::move(compressed_codes[i]);
-                tuple.dict_id = dict_id;
-                tuple.is_cprd = true;
+                tuple.data_ = std::move(compressed_codes[i]);
+                tuple.in_memory_ = true;
+                tuple.id_dict_ = dict_id;
+                tuple.is_cprd_ = true;
             }
 
             block.n_tuple = 0;
@@ -818,13 +843,13 @@ private:
     string obj_key1;
     string obj_v;
 
-    Tuple <string> s_tuple;
-    Tuple <string> ol_tuple;
-    Tuple <string> c_tuple;
-    Tuple <new_order::value> no_tuple;
+    Tuple<string> s_tuple;
+    Tuple<string> ol_tuple;
+    Tuple<string> c_tuple;
+    Tuple<new_order::value> no_tuple;
     // Tuple<oorder::value> o_tuple;
-    Tuple <string> o_tuple;
-    Tuple <history::value> h_tuple;
+    Tuple<string> o_tuple;
+    Tuple<history::value> h_tuple;
     string obj_tuple;
 };
 
@@ -992,8 +1017,8 @@ public:
 
     int avg_stock_sz;
     uint64_t stock_total_sz = 0, n_stocks = 0;
-    Tuple <std::string> s_tuple;
-    Tuple <std::string> s_data_tuple;
+    Tuple<std::string> s_tuple;
+    Tuple<std::string> s_data_tuple;
 
     RamanCompressor *stock_cpr_;
     RamanCompressor *stock_data_cpr_;
@@ -1006,16 +1031,15 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t warehouse_id, string obj_buf) {
-        s_tuple.Set(stock_zstd_->ZstdCompress(v));
+    InsertStock(void *txn, const stock::key &k, vector_of_string &v, size_t warehouse_id, string obj_buf) {
+        s_tuple.Set(stock_cpr_->RamanCompress(v));
         tbl_stock(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf, s_tuple));
         return s_tuple.data_.size();
     }
 
     inline ALWAYS_INLINE size_t
-    InsertStockData(void *txn, const stock_data::key &k, const stock_data::value &v, size_t warehouse_id,
-                    string obj_buf1) {
-        s_data_tuple.Set(stock_data_zstd_->ZstdCompress(v));
+    InsertStockData(void *txn, const stock_data::key &k, vector_of_string &v, size_t warehouse_id, string obj_buf1) {
+        s_data_tuple.Set(stock_data_cpr_->RamanCompress(v));
         tbl_stock_data(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf1, s_data_tuple));
         return s_data_tuple.data_.size();
     }
@@ -1024,7 +1048,6 @@ protected:
     void CprTraining() {
         if (verbose) { cerr << "[INFO] Start Loading Stock\n"; }
 
-        uint64_t stock_total_sz = 0, n_stocks = 0;
         const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
         const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
 
@@ -1042,11 +1065,9 @@ protected:
                 v.s_remote_cnt = blitz_generator.StockIntDist("remote_cnt");
 
                 stock_data::value v_data;
-                if (RandomNumber(r, 1, 100) > 10) {
-                    v_data.s_data.assign(blitz_generator.StockData(50, false));
-                } else {
-                    v_data.s_data.assign(blitz_generator.StockData(50, true));
-                }
+                if (RandomNumber(r, 1, 100) > 10) v_data.s_data.assign(blitz_generator.StockData(50, false));
+                else v_data.s_data.assign(blitz_generator.StockData(50, true));
+
                 v_data.s_dist_01.assign(TPCCRandomGenerator::DistInfo(1, w, i));
                 v_data.s_dist_02.assign(TPCCRandomGenerator::DistInfo(2, w, i));
                 v_data.s_dist_03.assign(TPCCRandomGenerator::DistInfo(3, w, i));
@@ -1083,7 +1104,8 @@ protected:
         // ----------------- Training Done, Load Compressed Value Into KV Store ----------------------- //
 
         string obj_buf, obj_buf1;
-        string obj_buf2, obj_buf3;
+        stock_total_sz = 0;
+        n_stocks = 0;
 
         const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
         const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
@@ -1105,15 +1127,9 @@ protected:
                         auto &v = tmp_db_stock_.GetTuple((w - w_start) * NumItems() + i - 1);
                         auto &v_data = tmp_db_stock_data_.GetTuple((w - w_start) * NumItems() + i - 1);
 
-                        std::string v_codes = stock_cpr_->RamanCompress(v);
-                        std::string v_data_codes = stock_data_cpr_->RamanCompress(v_data);
-
-                        stock_total_sz += v_codes.size() + v_data_codes.size();
+                        stock_total_sz += InsertStock(txn, k, v, w, obj_buf);
+                        stock_total_sz += InsertStockData(txn, k_data, v_data, w, obj_buf1);
                         n_stocks++;
-
-                        tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, CreateTuple(v_codes, 0, true)));
-                        tbl_stock_data(w)->insert(txn, Encode(k_data),
-                                                  Encode(obj_buf1, CreateTuple(v_data_codes, 0, true)));
                     }
 
                     if (db->commit_txn(txn)) b++;
@@ -1135,7 +1151,6 @@ protected:
         avg_stock_sz = double(stock_total_sz) / double(n_stocks);
 
         if (verbose) cerr << "[INFO]   * Compressed Total Size: " << (double(stock_total_sz) / (1 << 20)) << " MB\n";
-
     }
 
 private:
@@ -1225,7 +1240,7 @@ public:
 
     double avg_customer_sz = 0;
     uint64_t total_sz = 0;
-    Tuple <std::string> c_tuple;
+    Tuple<std::string> c_tuple;
 
     RamanCompressor *customer_cpr_;
     RamanTable<customer::value> tmp_db_customer_;
@@ -1237,10 +1252,11 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t warehouse_id, string obj_buf) {
-        std::string str;
-        c_tuple.Set(customer_zstd_->ZstdCompress(v));
+    InsertCustomer(void *txn, const customer::key &k, vector_of_string &v, size_t warehouse_id, string obj_buf) {
+        c_tuple.Set(customer_cpr_->RamanCompress(v));
         tbl_customer(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf, c_tuple));
+
+        ALWAYS_ASSERT(c_tuple.in_memory_ == 1);
         return c_tuple.data_.size();
     }
 
@@ -1340,7 +1356,7 @@ protected:
         CprTraining();
 
         // ----------------------- Training Done, Load Compressed Value Into KV Store -------------------------------- //
-        uint64_t total_sz = 0;
+        total_sz = 0;
         string obj_buf;
 
         scoped_str_arena s_arena(arena);
@@ -1349,10 +1365,7 @@ protected:
             for (size_t i = 0; i < customer_keys.size(); ++i) {
                 customer::key &k = customer_keys[i];
                 auto &v = tmp_db_customer_.GetTuple(i);
-
-                std::string v_codes = customer_cpr_->RamanCompress(v);
-                total_sz += v_codes.size();
-                tbl_customer(k.c_w_id)->insert(txn, Encode(k), Encode(obj_buf, CreateTuple(v_codes, 0, true)));
+                total_sz += InsertCustomer(txn, k, v, k.c_w_id, obj_buf);
             }
             if (db->commit_txn(txn)) b++;
             else {
@@ -1391,13 +1404,12 @@ public:
 
     double avg_order_sz = 0, avg_new_order_sz = 0, avg_order_line_sz = 0;
     uint64_t order_line_total_sz = 0, n_order_lines = 0;
-    uint64_t oorder_total_sz = 0, n_oorders = 0;
+    uint64_t order_total_sz = 0, n_orders = 0;
     uint64_t new_order_total_sz = 0, n_new_orders = 0;
-    Tuple <std::string> ol_tuple;
-    Tuple <std::string> o_tuple;
-    // Tuple<oorder::value> o_tuple;
-    //
-    // RamanCompressor *order_cpr_;
+    Tuple<std::string> ol_tuple;
+    Tuple<std::string> o_tuple;
+
+    RamanCompressor *order_cpr_;
     RamanCompressor *order_line_cpr_;
     RamanCompressor *history_;
     RamanTable<oorder::value> tmp_db_order_;
@@ -1417,23 +1429,18 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t warehouse_id,
+    InsertOrderLine(void *txn, const order_line::key &k, vector_of_string &v, size_t warehouse_id,
                     string obj_buf) {
-        ol_tuple.Set(order_line_zstd_->ZstdCompress(v));
+        ol_tuple.Set(order_line_cpr_->RamanCompress(v));
         tbl_order_line(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf, ol_tuple));
         return ol_tuple.data_.size();
     }
 
-    // Zstandard has very weak compression ability for short tuples like oorder::value. So we do not compress it,
-    // along with other tables which has the short tuple.
     inline ALWAYS_INLINE size_t
-    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, string obj_buf) {
-        o_tuple.Set(order_zstd_->ZstdCompress(v));
+    InsertOrder(void *txn, const oorder::key &k, vector_of_string &v, size_t warehouse_id, string obj_buf) {
+        o_tuple.Set(order_cpr_->RamanCompress(v));
         tbl_oorder(warehouse_id)->put(txn, Encode(k), Serialize(obj_buf, o_tuple));
         return o_tuple.data_.size();
-//        o_tuple.Set(v);
-//        tbl_oorder(warehouse_id)->insert(txn, Encode(k), Tuple<oorder::value>::Serialize(obj_buf, o_tuple));
-//        return Size(v);
     }
 
 protected:
@@ -1473,8 +1480,8 @@ protected:
 
                         checker::SanityCheckOOrder(&k_oo, &v_oo);
                         const size_t sz = Size(v_oo);
-                        oorder_total_sz += sz;
-                        n_oorders++;
+                        order_total_sz += sz;
+                        n_orders++;
 
                         order_keys.push_back(k_oo);
                         tmp_db_order_.PushTuple(v_oo);
@@ -1537,21 +1544,22 @@ protected:
             }
         }
 
-        order_line_zstd_->Train(tmp_db_order_line_);
-        order_zstd_->Train(tmp_db_order_);
-
         order_line_cpr_->RamanLearning(tmp_db_order_line_.table_);
         order_cpr_->RamanLearning(tmp_db_order_.table_);
 
         avg_new_order_sz = double(new_order_total_sz) / double(n_new_orders);
-        avg_order_sz = double(oorder_total_sz) / double(n_oorders);
+        avg_order_sz = double(order_total_sz) / double(n_orders);
 
         if (verbose) {
             cerr << "[INFO]   * #Order Line: " << n_order_lines << "\t"
-                 << "#OOrder: " << n_oorders << "\t"
+                                                                << "#OOrder: " << n_orders << "\t"
                  << "#New Order: " << n_new_orders << "\n";
             cerr << "[INFO]   * Order Line Total Size: " << (double(order_line_total_sz) / (1 << 20)) << " MB\t"
-                 << "OOrder Total Size: " << (double(oorder_total_sz) / (1 << 20)) << " MB\t"
+                                                                                                      << "OOrder Total Size: "
+                                                                                                      << (double(
+                                                                                                              order_total_sz) /
+                                                                                                          (1 << 20))
+                                                                                                      << " MB\t"
                  << "New Order Total Size: " << (double(new_order_total_sz) / (1 << 20)) << " MB\n";
         }
     }
@@ -1561,8 +1569,10 @@ protected:
         CprTraining();
 
         // ----------------- Training Done, Load Compressed Value Into KV Store ----------------------- //
-        uint64_t order_line_total_sz = 0, n_order_lines = 0;
-        uint64_t order_total_sz = 0, n_order = 0;
+        order_line_total_sz = 0;
+        n_order_lines = 0;
+        order_total_sz = 0;
+        n_orders = 0;
         string obj_buf;
 
         scoped_str_arena s_arena(arena);
@@ -1570,26 +1580,21 @@ protected:
         try {
             for (size_t i = 0; i < order_keys.size(); ++i) {
                 oorder::key &k_oo = order_keys[i];
-                std::string v_codes = order_cpr_->RamanCompress(tmp_db_order_.GetTuple(i));
+                vector_of_string &v_oo = tmp_db_order_.GetTuple(i);
 
-                order_total_sz += v_codes.size();
-                n_order++;
-
-                tbl_oorder(k_oo.o_w_id)->insert(txn, Encode(k_oo), Encode(obj_buf, CreateTuple(v_codes, 0, true)));
+                order_total_sz += InsertOrder(txn, k_oo, v_oo, k_oo.o_w_id, obj_buf);
+                n_orders++;
             }
 
             for (size_t i = 0; i < order_line_keys.size(); ++i) {
                 order_line::key &k_ol = order_line_keys[i];
-                std::string v_codes = order_line_cpr_->RamanCompress(tmp_db_order_line_.GetTuple(i));
+                vector_of_string &v_ol = tmp_db_order_line_.GetTuple(i);
 
-                order_line_total_sz += v_codes.size();
+                order_line_total_sz += InsertOrderLine(txn, k_ol, v_ol, k_ol.ol_w_id, obj_buf);
                 n_order_lines++;
-
-                tbl_order_line(k_ol.ol_w_id)->insert(txn, Encode(k_ol), Encode(obj_buf, CreateTuple(v_codes, 0, true)));
             }
-            if (db->commit_txn(txn)) {
-                b++;
-            } else {
+            if (db->commit_txn(txn)) b++;
+            else {
                 db->abort_txn(txn);
                 ALWAYS_ASSERT(warehouse_id != -1);
                 cerr << "[WARNING] order line loader loading abort" << endl;
@@ -1603,7 +1608,7 @@ protected:
         tmp_db_order_.Clear();
 
         avg_order_line_sz = double(order_line_total_sz) / double(n_order_lines);
-        avg_order_sz = double(order_total_sz) / double(n_order);
+        avg_order_sz = double(order_total_sz) / double(n_orders);
 
         if (verbose) {
             cerr << "[INFO]   * Order Line Compressed Size: " << (double(order_line_total_sz) / (1 << 20)) << " MB\t"
@@ -1686,9 +1691,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
     try {
         ssize_t ret = 0;
         const customer::key k_c(warehouse_id, districtID, customerID);
-        ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-        tuple_raman::value tuple = DecodeTuple(obj_v);
-        customer_block.Decompress(tuple, customer_buffer);
+        ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
         const customer::value *v_c = &customer_buffer;
         checker::SanityCheckCustomer(&k_c, v_c);
 
@@ -1726,22 +1729,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
         v_oo.o_ol_cnt = int8_t(numItems);
         v_oo.o_all_local = allLocal;
         v_oo.o_entry_d = GetCurrentTimeMillis();
-
-        const size_t oorder_sz = Size(v_oo);
-        ret += oorder_sz;
-
-        auto tuple_oo = CreateTuple(Encode(obj_tuple, v_oo), order_block.CprNum(), false, order_block.id);
-        tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k_oo), Encode(str(), tuple_oo));
-        auto tuples = RamanInsertOrderBlock(k_oo, v_oo);
-//        if (!tuples.empty()) {
-//            size_t n = tuples.size();
-//            for (size_t i = 0; i < n; ++i) {
-//                auto &key = order_block.keys_[i];
-//                auto &tuple = tuples[i];
-//                uint32_t w_id = GetWarehouseID(key);
-//                tbl_oorder(w_id)->put(txn, Encode(str(), key), Encode(str(), tuple));
-//            }
-//        }
+        ret += InsertOrder(txn, k_oo, v_oo, warehouse_id, false);
 
         const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
         const oorder_c_id_idx::value v_oo_idx(0);
@@ -1760,9 +1748,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
             checker::SanityCheckItem(&k_i, v_i);
 
             const stock::key k_s(ol_supply_w_id, ol_i_id);
-            ALWAYS_ASSERT(tbl_stock(ol_supply_w_id)->get(txn, Encode(obj_key0, k_s), obj_v));
-            tuple_raman::value tuple = DecodeTuple(obj_v);
-            stock_block.Decompress(tuple, stock_buffer);
+            ALWAYS_ASSERT(FindStock(txn, k_s, ol_supply_w_id, stock_buffer));
             stock::value &v_s = stock_buffer;
             checker::SanityCheckStock(&k_s, &v_s);
 
@@ -1771,19 +1757,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
                 v_s.s_quantity += -int32_t(ol_quantity) + 91;
             v_s.s_ytd += ol_quantity;
             v_s.s_remote_cnt += (ol_supply_w_id == warehouse_id) ? 0 : 1;
-
-            auto tuple_s = CreateTuple(Encode(obj_tuple, v_s), stock_block.CprNum(), false, stock_block.id);
-            tbl_stock(ol_supply_w_id)->put(txn, Encode(str(), k_s), Encode(str(), tuple_s));
-            tuples = RamanInsertStockBlock(k_s, v_s);
-//            if (!tuples.empty()) {
-//                size_t n = tuples.size();
-//                for (size_t i = 0; i < n; ++i) {
-//                    auto &key = stock_block.keys_[i];
-//                    auto &tuple = tuples[i];
-//                    uint32_t w_id = GetWarehouseID(key);
-//                    tbl_stock(w_id)->put(txn, Encode(str(), key), Encode(str(), tuple));
-//                }
-//            }
+            InsertStock(txn, k_s, v_s, ol_supply_w_id);
 
             const order_line::key k_ol(warehouse_id, districtID, k_no.no_o_id, ol_number);
             order_line::value v_ol;
@@ -1792,22 +1766,7 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
             v_ol.ol_amount = float(ol_quantity) * v_i->i_price;
             v_ol.ol_supply_w_id = int32_t(ol_supply_w_id);
             v_ol.ol_quantity = int8_t(ol_quantity);
-
-            const size_t order_line_sz = Size(v_ol);
-            ret += order_line_sz;
-
-            auto tuple_ol = CreateTuple(Encode(obj_tuple, v_ol), order_line_block.CprNum(), false, order_line_block.id);
-            tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), Encode(str(), tuple_ol));
-            tuples = RamanInsertOrderLineBlock(k_ol, v_ol);
-//            if (!tuples.empty()) {
-//                size_t n = tuples.size();
-//                for (size_t i = 0; i < n; ++i) {
-//                    auto &key = order_line_block.keys_[i];
-//                    auto &tuple = tuples[i];
-//                    uint32_t w_id = GetWarehouseID(key);
-//                    tbl_order_line(w_id)->put(txn, Encode(str(), key), Encode(str(), tuple));
-//                }
-//            }
+            ret += InsertOrderLine(txn, k_ol, v_ol, warehouse_id, false);
         }
         measure_txn_counters(txn, "txn_new_order");
         if (likely(db->commit_txn(txn))) return txn_result(true, ret);
@@ -1822,7 +1781,7 @@ public:
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(new_order::key));
         INVARIANT(value.size() == sizeof(new_order::value));
-        k_no = Decode(keyp, k_no_temp);
+        // k_no = Decode(keyp, k_no_temp);
         return false;
     }
 
@@ -1870,8 +1829,7 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             {
                 ANON_REGION("DeliverNewOrderScan:", &delivery_probe0_cg);
                 tbl_new_order(warehouse_id)
-                        ->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c,
-                               s_arena.get());
+                        ->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c, s_arena.get());
             }
 
             const new_order::key *k_no = new_order_c.get_key();
@@ -1886,9 +1844,6 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
                 db->abort_txn(txn);
                 return txn_result(false, 0);
             }
-            oorder::value v_oo_temp;
-            auto tuple_o = DecodeTuple(obj_v);
-            order_block.Decompress(tuple_o, order_buffer);
             const oorder::value *v_oo = &order_buffer;
             checker::SanityCheckOOrder(&k_oo, v_oo);
 
@@ -1901,30 +1856,14 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
                                                s_arena.get());
             float sum = 0.0;
             for (size_t i = 0; i < c.size(); i++) {
-                auto tuple_ol = DecodeTuple(*c.values[i].second);
-                order_line_block.Decompress(tuple_ol, order_line_buffer);
+                FindOrderLineInternal(*c.values[i].second, order_line_buffer, ol_tuple, &order_line_block);
                 const order_line::value *v_ol = &order_line_buffer;
-                sum += v_ol->ol_amount;
-                order_line::value v_ol_new(*v_ol);
-                v_ol_new.ol_delivery_d = ts;
-                INVARIANT(s_arena.get()->manages(c.values[i].first));
+                sum += order_line_buffer.ol_amount;
+                order_line_buffer.ol_delivery_d = ts;
 
                 order_line::key k_ol;
                 Decode(*c.values[i].first, k_ol);
-
-                tuple_ol = CreateTuple(Encode(obj_tuple, v_ol_new), order_line_block.CprNum(), false,
-                                       order_line_block.id);
-                tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), Encode(str(), tuple_ol));
-                auto tuples = RamanInsertOrderLineBlock(k_ol, v_ol_new);
-//                if (!tuples.empty()) {
-//                    size_t n = tuples.size();
-//                    for (size_t i = 0; i < n; ++i) {
-//                        auto &key = order_line_block.keys_[i];
-//                        auto &tuple = tuples[i];
-//                        uint32_t w_id = GetWarehouseID(key);
-//                        tbl_order_line(w_id)->put(txn, Encode(str(), key), Encode(str(), tuple));
-//                    }
-//                }
+                InsertOrderLine(txn, k_ol, order_line_buffer, warehouse_id);
             }
 
             // delete new order
@@ -1934,43 +1873,17 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             // update oorder
             oorder::value v_oo_new(*v_oo);
             v_oo_new.o_carrier_id = o_carrier_id;
-
-            auto tuple_oo = CreateTuple(Encode(obj_tuple, v_oo_new), order_block.CprNum(), false, order_block.id);
-            tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k_oo), Encode(str(), tuple_oo));
-            auto tuples = RamanInsertOrderBlock(k_oo, v_oo_new);
-//            if (!tuples.empty()) {
-//                size_t n = tuples.size();
-//                for (size_t i = 0; i < n; ++i) {
-//                    auto &key = order_block.keys_[i];
-//                    auto &tuple = tuples[i];
-//                    uint32_t w_id = GetWarehouseID(key);
-//                    tbl_oorder(w_id)->put(txn, Encode(str(), key), Encode(str(), tuple));
-//                }
-//            }
+            InsertOrder(txn, k_oo, v_oo_new, warehouse_id);
 
             const uint c_id = v_oo->o_c_id;
             const float ol_total = sum;
 
             // update customer
             const customer::key k_c(warehouse_id, d, c_id);
-            ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-            auto tuple = DecodeTuple(obj_v);
-            customer_block.Decompress(tuple, customer_buffer);
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
             customer::value &v_c = customer_buffer;
             v_c.c_balance += ol_total;
-
-            auto tuple_c = CreateTuple(Encode(obj_tuple, v_c), customer_block.CprNum(), false, customer_block.id);
-            tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), Encode(str(), tuple_c));
-            tuples = RamanInsertCustomerBlock(k_c, v_c);
-//            if (!tuples.empty()) {
-//                size_t n = tuples.size();
-//                for (size_t i = 0; i < n; ++i) {
-//                    auto &key = customer_block.keys_[i];
-//                    auto &tuple = tuples[i];
-//                    uint32_t w_id = GetWarehouseID(key);
-//                    tbl_customer(w_id)->put(txn, Encode(str(), key), Encode(str(), tuple));
-//                }
-//            }
+            InsertCustomer(txn, k_c, v_c, warehouse_id);
         }
         measure_txn_counters(txn, "txn_delivery");
         if (likely(db->commit_txn(txn))) return txn_result(true, ret);
@@ -2075,9 +1988,7 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
             k_c.c_w_id = customerWarehouseID;
             k_c.c_d_id = customerDistrictID;
             k_c.c_id = v_c_idx->c_id;
-            ALWAYS_ASSERT(tbl_customer(customerWarehouseID)->get(txn, Encode(obj_key0, k_c), obj_v));
-            auto tuple = DecodeTuple(obj_v);
-            customer_block.Decompress(tuple, customer_buffer);
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, customerWarehouseID, customer_buffer));
             v_c = &customer_buffer;
         } else {
             // cust by ID
@@ -2085,9 +1996,7 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
             k_c.c_w_id = customerWarehouseID;
             k_c.c_d_id = customerDistrictID;
             k_c.c_id = customerID;
-            ALWAYS_ASSERT(tbl_customer(customerWarehouseID)->get(txn, Encode(obj_key0, k_c), obj_v));
-            tuple_raman::value tuple = DecodeTuple(obj_v);
-            customer_block.Decompress(tuple, customer_buffer);
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, customerWarehouseID, customer_buffer));
             v_c = &customer_buffer;
         }
         checker::SanityCheckCustomer(&k_c, v_c);
@@ -2103,18 +2012,7 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
             v_c_new.c_data.resize_junk(min(static_cast<size_t>(n), v_c_new.c_data.max_size()));
             NDB_MEMCPY((void *) v_c_new.c_data.data(), &buf[0], v_c_new.c_data.size());
         }
-        auto tuple_c = CreateTuple(Encode(obj_tuple, v_c_new), customer_block.CprNum(), false, customer_block.id);
-        tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), Encode(str(), tuple_c));
-        auto tuples = RamanInsertCustomerBlock(k_c, v_c_new);
-//        if (!tuples.empty()) {
-//            size_t n = tuples.size();
-//            for (size_t i = 0; i < n; ++i) {
-//                auto &key = customer_block.keys_[i];
-//                auto &tuple = tuples[i];
-//                uint32_t w_id = GetWarehouseID(key);
-//                tbl_customer(w_id)->put(txn, Encode(str(), key), Encode(str(), tuple));
-//            }
-//        }
+        InsertCustomer(txn, k_c, v_c_new, customerWarehouseID);
 
         const history::key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, districtID, warehouse_id, ts);
         history::value v_h;
@@ -2210,9 +2108,7 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             k_c.c_w_id = warehouse_id;
             k_c.c_d_id = districtID;
             k_c.c_id = v_c_idx->c_id;
-            ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-            auto tuple_c = DecodeTuple(obj_v);
-            customer_block.Decompress(tuple_c, customer_buffer);
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
             v_c = &customer_buffer;
         } else {
             // cust by ID
@@ -2220,9 +2116,7 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             k_c.c_w_id = warehouse_id;
             k_c.c_d_id = districtID;
             k_c.c_id = customerID;
-            ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k_c), obj_v));
-            auto tuple_c = DecodeTuple(obj_v);
-            customer_block.Decompress(tuple_c, customer_buffer);
+            ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
             v_c = &customer_buffer;
         }
         checker::SanityCheckCustomer(&k_c, v_c);
@@ -2267,7 +2161,7 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
         const order_line::key k_ol_1(warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
         tbl_order_line(warehouse_id)
                 ->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c_order_line, s_arena.get());
-        // ALWAYS_ASSERT(c_order_line.n >= 5 && c_order_line.n <= 15);
+        ALWAYS_ASSERT(c_order_line.n >= 5 && c_order_line.n <= 15);
 
         measure_txn_counters(txn, "txn_order_status");
         if (likely(db->commit_txn(txn))) return txn_result(true, 0);
@@ -2281,9 +2175,8 @@ public:
 
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(order_line::key));
+        tpcc_worker::FindOrderLineInternal(value, order_line_buffer, ol_tuple, order_line_block);
 
-        auto tuple = DecodeTuple(value);
-        order_line_block->Decompress(tuple, order_line_buffer);
         s_i_ids[order_line_buffer.ol_i_id] = 1;
         n++;
         return true;
@@ -2291,8 +2184,10 @@ public:
 
     size_t n;
     small_unordered_map<uint, bool, 512> s_i_ids;
+
     RamanTupleBlock<order_line> *order_line_block;
     order_line::value order_line_buffer;
+    Tuple<std::string> ol_tuple;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe0_tod, stock_level_probe0_cg)
@@ -2508,13 +2403,12 @@ protected:
             auto loader = new tpcc_order_loader(2343352, db, open_tables, partitions, -1);
             loaders.push_back(loader);
 
-            n_order = &loader->n_oorders;
+            n_order = &loader->n_orders;
             n_order_line = &loader->n_order_lines;
             n_new_order = &loader->n_new_orders;
-            size_order = &loader->oorder_total_sz;
+            size_order = &loader->order_total_sz;
             size_new_order = &loader->new_order_total_sz;
             size_order_line = &loader->order_line_total_sz;
-
 
             order_cpr = loader->order_cpr_;
             order_line_cpr = loader->order_line_cpr_;

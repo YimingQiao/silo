@@ -7,6 +7,9 @@
 #include <utility>
 #include <stdexcept>
 #include <vector>
+#include <cstring>
+#include <mutex>
+
 #include "../record/encoder.h"
 #include "tpcc.h"
 
@@ -17,13 +20,20 @@ struct Tuple {
     int64_t id_pos_;    // on disk
     int32_t id_thread_;
 
-    Tuple() : in_memory_(false), data_(), id_pos_(-1), id_thread_(-1) {}
+    int32_t id_dict_; // raman dict id
+    int32_t is_cprd_; // whether this tuple is in buffer or compressed
 
-    inline ALWAYS_INLINE void Set(const T &data, bool in_memory = true, int64_t id_pos = 0, int64_t id_thread = 0) {
+    Tuple() : in_memory_(false), data_(), id_pos_(-1), id_thread_(-1), id_dict_(-1), is_cprd_(true) {}
+
+    inline ALWAYS_INLINE void
+    Set(const T &data, bool in_memory = true, int64_t id_pos = 0, int64_t id_thread = 0, int64_t id_dict = 0,
+        bool is_cprd = true) {
         data_ = data;
         in_memory_ = in_memory;
         id_pos_ = id_pos;
         id_thread_ = id_thread;
+        id_dict_ = id_dict;
+        is_cprd_ = is_cprd;
     }
 
     static inline ALWAYS_INLINE std::string &Serialize(std::string &s, const Tuple<T> &data) {
@@ -52,12 +62,15 @@ static inline ALWAYS_INLINE std::string &Serialize(std::string &s, const Tuple<s
     s.append(reinterpret_cast<const char *>(&data.in_memory_), sizeof(data.in_memory_));
     s.append(reinterpret_cast<const char *>(&data.id_pos_), sizeof(data.id_pos_));
     s.append(reinterpret_cast<const char *>(&data.id_thread_), sizeof(data.id_thread_));
+    s.append(reinterpret_cast<const char *>(&data.id_dict_), sizeof(data.id_dict_));
+    s.append(reinterpret_cast<const char *>(&data.is_cprd_), sizeof(data.is_cprd_));
 
     return s;
 }
 
 static inline ALWAYS_INLINE void Deserialize(const std::string &s, Tuple<std::string> &data) {
-    size_t sz = sizeof(data.id_pos_) + sizeof(data.id_thread_) + sizeof(data.in_memory_);
+    size_t sz = sizeof(data.id_pos_) + sizeof(data.id_thread_) + sizeof(data.in_memory_) + sizeof(data.id_dict_) +
+                sizeof(data.is_cprd_);
     // Calculate the string size by subtracting 16 bytes from the total size
     size_t dataSize = s.size() - sz;
     // Extract string data
@@ -69,6 +82,10 @@ static inline ALWAYS_INLINE void Deserialize(const std::string &s, Tuple<std::st
     std::memcpy(&data.id_pos_, ptr, sizeof(data.id_pos_));
     ptr += sizeof(data.id_pos_);
     std::memcpy(&data.id_thread_, ptr, sizeof(data.id_thread_));
+    ptr += sizeof(data.id_thread_);
+    std::memcpy(&data.id_dict_, ptr, sizeof(data.id_dict_));
+    ptr += sizeof(data.is_cprd_);
+    std::memcpy(&data.is_cprd_, ptr, sizeof(data.is_cprd_));
 
     ALWAYS_ASSERT((data.in_memory_ == 0 && data.id_thread_ >= 0 && data.id_pos_ >= 0) || data.in_memory_ == 1);
 }

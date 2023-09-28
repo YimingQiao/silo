@@ -201,8 +201,6 @@ public:
 
     inline ssize_t get_size_delta() const { return size_delta; }
 
-    virtual uint64_t get_cpr_model_size() { return 0; }
-
 protected:
     virtual void on_run_setup() {}
 
