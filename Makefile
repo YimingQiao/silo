@@ -2,7 +2,7 @@
 
 ### Options ###
 
-DEBUG ?= 1
+DEBUG ?= 0
 CHECK_INVARIANTS ?= 0
 
 # 0 = libc malloc
@@ -282,5 +282,4 @@ $(O)/buildstamp $(O)/buildstamp.bench $(O)/buildstamp.masstree:
 
 .PHONY: clean
 clean:
-	rm -rf out-*
-	rm -rf benchmarks/workspace/*.tbl
+	rm -rf benchmarks/workspace/*.tbl benchmarks/workspace/*.blitz

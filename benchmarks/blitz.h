@@ -164,15 +164,31 @@ public:
     }
 
     inline ALWAYS_INLINE bool PushTuple(order_line::value &order_line) {
-        buffer_.attr_[0].value_ = (int) order_line.ol_i_id;
-        buffer_.attr_[1].value_ = (double) order_line.ol_amount;
-        buffer_.attr_[2].value_ = (int) order_line.ol_supply_w_id;
-        buffer_.attr_[3].value_ = (int) order_line.ol_quantity;
-        buffer_.attr_[4].value_ = (int) order_line.ol_delivery_d;
-        buffer_.attr_[5].value_ = order_line.ol_dist_info.str();
-
+        OrderLineToAttrVector(order_line, buffer_);
         table_.push_back(buffer_);
         return true;
+    }
+
+    // order_line::value to AttrVector
+    static inline ALWAYS_INLINE void
+    OrderLineToAttrVector(order_line::value &order_line, db_compress::AttrVector &attr_vector) {
+        attr_vector.attr_[0].value_ = (int) order_line.ol_i_id;
+        attr_vector.attr_[1].value_ = (double) order_line.ol_amount;
+        attr_vector.attr_[2].value_ = (int) order_line.ol_supply_w_id;
+        attr_vector.attr_[3].value_ = (int) order_line.ol_quantity;
+        attr_vector.attr_[4].value_ = (int) order_line.ol_delivery_d;
+        attr_vector.attr_[5].value_ = order_line.ol_dist_info.str();
+    }
+
+    // AttrVector to order_line::value
+    static inline ALWAYS_INLINE void
+    AttrVectorToOrderLine(db_compress::AttrVector &attr_vector, order_line::value &order_line) {
+        order_line.ol_i_id = attr_vector.attr_[0].Int();
+        order_line.ol_amount = attr_vector.attr_[1].Double();
+        order_line.ol_supply_w_id = attr_vector.attr_[2].Int();
+        order_line.ol_quantity = attr_vector.attr_[3].Int();
+        order_line.ol_delivery_d = attr_vector.attr_[4].Int();
+        order_line.ol_dist_info = attr_vector.attr_[5].String();
     }
 };
 

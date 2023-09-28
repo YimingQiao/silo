@@ -413,14 +413,21 @@ public:
         NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
         if (verbose) {
             cerr << "tpcc: worker id " << worker_id << " => warehouses [" << warehouse_id_start << ", "
-                 << warehouse_id_end
-                 << ")" << endl;
+                                                                                                << warehouse_id_end
+                                                                                                << ")" << endl;
         }
         obj_key0.reserve(str_arena::MinStrReserveLength);
         obj_key1.reserve(str_arena::MinStrReserveLength);
         obj_v.reserve(str_arena::MinStrReserveLength);
 
         customer_data_buffer.attr_[0].value_ = "";
+        order_line_buffer.attr_[5].value_ = "";
+
+        // yiqiao: init the disk storage
+        auto &disk_manager = FileManager::GetInstance();
+        disk_manager.AddFile(worker_id, "stock");
+        disk_manager.AddFile(worker_id, "order_line");
+        disk_manager.AddFile(worker_id, "customer");
     }
 
     // XXX(stephentu): tune this
@@ -541,7 +548,7 @@ public:
     inline ALWAYS_INLINE size_t
     InsertOrderLine(void *txn, const std::string &k_encoded, blitz_vector &v, size_t w_id, bool update = true,
                     int32_t stop_idx = 5) {
-        std::string codes = BlitzCpr(order_line_blitz, order_line_buffer, stop_idx);
+        std::string codes = BlitzCpr(order_line_blitz, v, stop_idx);
         bool in_mem = stat.ToMemory(codes.size());
         if (likely(in_mem)) {
             ol_tuple.Set(codes, true, stat.n_ol_mem++, worker_id);
@@ -551,20 +558,22 @@ public:
                 stat.Insert(codes.size(), true, "order_line");
                 tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
             }
+            return codes.size();
         } else {
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(worker_id, 2);
-            ol_disk.SeqDiskTupleWrite(&v);
+            order_line::value v_;
+            OrderLineBlitz::AttrVectorToOrderLine(v, v_);
+            ol_disk.SeqDiskTupleWrite(&v_);
 
-            ol_tuple.Set(codes, false, stat.n_ol_disk++, worker_id);
+            ol_tuple.Set("", false, stat.n_ol_disk++, worker_id);
             std::string &serial_str = Serialize(str(), ol_tuple);
             if (update) tbl_order_line(w_id)->put(txn, k_encoded, serial_str);
             else {
-                stat.Insert(codes.size(), false, "order_line");
+                stat.Insert(sizeof(order_line::value), false, "order_line");
                 tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
             }
+            return sizeof(order_line::value);
         }
-
-        return codes.size();
     }
 
     inline ALWAYS_INLINE bool
@@ -584,8 +593,12 @@ public:
         if (!tuple.in_memory_) {
             ALWAYS_ASSERT(tuple.id_thread_ >= 0);
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(tuple.id_thread_, 2);
-            ol_disk.DiskTupleRead(&v, tuple.id_pos_);
+            order_line::value v_;
+            ol_disk.DiskTupleRead(&v_, tuple.id_pos_);
+            OrderLineBlitz::OrderLineToAttrVector(v_, v);
         } else BlitzDpr(order_line_blitz, tuple.data_, v, stop_idx);
+
+        ALWAYS_ASSERT(v.attr_[0].Int() > 0 && v.attr_[0].Int() <= NumItems());
     }
 
     inline ALWAYS_INLINE size_t
@@ -1700,19 +1713,15 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
                                                s_arena.get());
             float sum = 0.0;
             for (size_t i = 0; i < c.size(); i++) {
-                std::string str = *c.values[i].second;
-                vector <uint8_t> v_codes(str.begin(), str.end());
-
-                FindOrderLineInternal(str, order_line_buffer, ol_tuple, order_line_blitz, 5);
+                FindOrderLineInternal(*c.values[i].second, order_line_buffer, ol_tuple, order_line_blitz, 5);
                 sum += order_line_buffer.attr_[1].Double();  // sum += v_ol->ol_amount;
                 order_line_buffer.attr_[4].value_ = (int) ts;// v_ol->ol_delivery_d = ts;
-                InsertOrderLine(txn, str, order_line_buffer, warehouse_id, 5);
+                InsertOrderLine(txn, *c.values[i].first, order_line_buffer, warehouse_id, 5);
             }
 
             // delete new order
             tbl_new_order(warehouse_id)->remove(txn, Encode(str(), *k_no));
             ret -= 0 /*new_order_c.get_value_size()*/;
-
 
             // update oorder
             oorder::value v_oo_new(*v_oo);
@@ -2019,12 +2028,13 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
 
 class order_line_scan_callback : public abstract_ordered_index::scan_callback {
 public:
-    order_line_scan_callback() : n(0), order_line_buffer(1) {}
+    order_line_scan_callback() : n(0), order_line_buffer(6) {}
 
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(order_line::key));
         tpcc_worker::FindOrderLineInternal(value, order_line_buffer, ol_tuple, order_line_blitz, 1);
         int ol_i_id = order_line_buffer.attr_[0].Int();
+        ALWAYS_ASSERT(ol_i_id > 0 && ol_i_id <= NumItems());
         s_i_ids[ol_i_id] = 1;
         n++;
         return true;
