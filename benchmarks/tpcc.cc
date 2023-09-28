@@ -541,8 +541,9 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertOrderLine(void *txn, const order_line::key &k, blitz_vector &v, size_t w_id, bool update = true) {
-        return InsertOrderLine(txn, Encode(str(), k), v, w_id, update);
+    InsertOrderLine(void *txn, const order_line::key &k, blitz_vector &v, size_t w_id, bool update = true,
+                    int32_t stop_idx = 5) {
+        return InsertOrderLine(txn, Encode(str(), k), v, w_id, update, stop_idx);
     }
 
     inline ALWAYS_INLINE size_t
