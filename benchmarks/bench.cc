@@ -30,6 +30,7 @@ using namespace std;
 using namespace util;
 
 size_t nthreads = 1;
+double mem_limit = 512;
 volatile bool running = true;
 int verbose = 0;
 uint64_t txn_flags = 0;
@@ -89,8 +90,7 @@ static void write_cb(void *p, const char *s) {
 static event_avg_counter evt_avg_abort_spins("avg_abort_spins");
 
 void bench_worker::run() {
-    // XXX(stephentu): so many nasty hacks here. should actually
-    // fix some of this stuff one day
+    // XXX(stephentu): so many nasty hacks here. should actually fix some of this stuff one day
     if (set_core_id) coreid::set_core_id(worker_id);// cringe
     {
         scoped_rcu_region r;// register this thread in rcu region
@@ -101,7 +101,13 @@ void bench_worker::run() {
     txn_counts.resize(workload.size());
     barrier_a->count_down();
     barrier_b->wait_for();
+
+    uint64_t total_txn_counts = 0;
+    uint64_t interval_used_time_us = 0;
+    uint64_t used_time_us = 0;
+
     while (running && (run_mode != RUNMODE_OPS || ntxn_commits < ops_per_worker)) {
+        timer t;
         double d = r.next_uniform();
         for (size_t i = 0; i < workload.size(); i++) {
             if ((i + 1) == workload.size() || d < workload[i].frequency) {
@@ -131,18 +137,36 @@ void bench_worker::run() {
                     }
                 }
                 size_delta += ret.second;// should be zero on abort
-                txn_counts[i]++;         // txn_counts aren't used to compute throughput (is
-                // just an informative number to print to the console
-                // in verbose mode)
+                txn_counts[i]++;         // txn_counts aren't used to compute throughput (is just an informative number to print to the console in verbose mode)
                 break;
             }
             d -= workload[i].frequency;
+        }
+
+        used_time_us += t.lap();
+        total_txn_counts++;
+        if (total_txn_counts % kTxnsInterval == 0 && total_txn_counts > 0) {
+            executed_txns.push_back(total_txn_counts);
+            // calculate throughput
+            double intervalDifference = static_cast<double>(used_time_us - interval_used_time_us);
+            throughputs.push_back(1e6 * kTxnsInterval / intervalDifference - throughput_overhead);
+            interval_used_time_us = used_time_us;
+            // calculate cpr model size
+            cpr_model_size.push_back(get_cpr_model_size());
+            // calculate table size
+            std::vector <uint64_t> table_size = get_table_size();
+            ALWAYS_ASSERT(table_size.size() == 2);
+            disk_size.push_back(table_size[1]);
+            mem_size.push_back(table_size[0]);
+
+            // if (worker_id == 128 && total_txn_counts % (kTxnsInterval << 3) == 0) print_extra_stats();
         }
     }
 }
 
 void bench_runner::run() {
     // load data
+    cerr << "------------------------ Loading data ------------------------\n";
     const vector<bench_loader *> loaders = make_loaders();
     {
         // spin_barrier b(1);
@@ -174,13 +198,11 @@ void bench_runner::run() {
         const auto persisted_info = db->get_ntxn_persisted();
         if (get<0>(persisted_info) != get<1>(persisted_info)) cerr << "ERROR: " << persisted_info << endl;
         // ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
-        if (verbose) cerr << persisted_info << " txns persisted in loading phase" << endl;
     }
     db->reset_ntxn_persisted();
 
     if (!no_reset_counters) {
-        event_counter::reset_all_counters();// XXX: for now - we really should have
-        // a before/after loading
+        event_counter::reset_all_counters();// XXX: for now - we really should have a before/after loading
         PERF_EXPR(scopedperf::perfsum_base::resetall());
     }
     {
@@ -192,8 +214,8 @@ void bench_runner::run() {
     }
 
     map <string, size_t> table_sizes_before;
+    double inital_tbl_size = 0;
     if (verbose) {
-        double total_size = 0;
         for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin(); it != open_tables.end(); ++it) {
             scoped_rcu_region guard;
             const size_t s = it->second->size();
@@ -203,19 +225,22 @@ void bench_runner::run() {
             if (table_index_map.count(name) == 0) continue;
             size_t table_idx = table_index_map[name];
             double table_size = it->second->size() * table_avg_length[table_idx];
-            std::cerr << "Table: " << name << "\tSize: " << (((double) table_size) / (1 << 20)) << " MB\n";
+            // std::cerr << "Table: " << name << "\tSize: " << (((double) table_size) / (1 << 20)) << " MB\n";
 
-            total_size += table_size;
+            inital_tbl_size += table_size;
         }
-        std::cerr << "Total Size: " << (((double) total_size) / (1 << 20)) << " MB\n";
-        cerr << "starting benchmark..." << endl;
+        std::cerr << "Total Size: " << (((double) inital_tbl_size) / (1 << 20)) << " MB\n";
+        cerr << "------------------------ Running ------------------------\n";
     }
 
     const pair <uint64_t, uint64_t> mem_info_before = get_system_memory_info();
 
     const vector<bench_worker *> workers = make_workers();
     ALWAYS_ASSERT(!workers.empty());
-    for (vector<bench_worker *>::const_iterator it = workers.begin(); it != workers.end(); ++it) (*it)->start();
+    for (vector<bench_worker *>::const_iterator it = workers.begin(); it != workers.end(); ++it) {
+        (*it)->init_table_size = inital_tbl_size / nthreads;
+        (*it)->start();
+    }
 
     barrier_a.wait_for();// wait for all threads to start up
     timer t, t_nosync;
@@ -237,9 +262,8 @@ void bench_runner::run() {
         latency_numer_us += workers[i]->get_latency_numer_us();
     }
     const auto persisted_info = db->get_ntxn_persisted();
-
-    const unsigned long elapsed = t.lap();// lap() must come after do_txn_finish(),
-    // because do_txn_finish() potentially waits a bit
+    // lap() must come after do_txn_finish(), because do_txn_finish() potentially waits a bit
+    const unsigned long elapsed = t.lap();
 
     // various sanity checks
     ALWAYS_ASSERT(get<0>(persisted_info) == get<1>(persisted_info));
@@ -278,38 +302,6 @@ void bench_runner::run() {
             size_delta += workers[i]->get_size_delta();
         }
         const double size_delta_mb = double(size_delta) / 1048576.0;
-        map <string, counter_data> ctrs = event_counter::get_all_counters();
-
-        cerr << "--- table statistics ---" << endl;
-        double total_size = 0;
-        for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin(); it != open_tables.end(); ++it) {
-            scoped_rcu_region guard;
-            const size_t s = it->second->size();
-            const ssize_t delta = ssize_t(s) - ssize_t(table_sizes_before[it->first]);
-            cerr << "table: " << it->first << "\t#tuple: " << it->second->size();
-            if (delta < 0) cerr << " (" << delta << " records)\t";
-            else
-                cerr << " (+" << delta << " records)\t";
-
-            const std::string &name = it->first;
-            if (table_index_map.count(name) == 0) {
-                std::cerr << "\n";
-                continue;
-            }
-            size_t table_idx = table_index_map[name];
-            double table_size = it->second->size() * table_avg_length[table_idx];
-            std::cerr << "Size: " << (((double) table_size) / (1 << 20)) << " MB\n";
-
-            total_size += table_size;
-        }
-        std::cerr << "Total Size: " << (((double) total_size) / (1 << 20)) << " MB\n";
-
-        uint64_t cpr_model_size = 0;
-        for (auto *worker: workers) {
-            cpr_model_size += worker->get_cpr_model_size();
-        }
-        std::cerr << "Compression Model Size: " << (((double) cpr_model_size) / (1 << 20)) << " MB\n";
-
 
 #ifdef ENABLE_BENCH_TXN_COUNTERS
         cerr << "--- txn counter statistics ---" << endl;
@@ -322,7 +314,7 @@ void bench_runner::run() {
           }
         }
 #endif
-        cerr << "--- benchmark statistics ---" << endl;
+        cerr << "------------------------ benchmark statistics ------------------------" << endl;
         cerr << "runtime: " << elapsed_sec << " sec" << endl;
         cerr << "memory delta: " << delta_mb << " MB" << endl;
         cerr << "memory delta rate: " << (delta_mb / elapsed_sec) << " MB/sec" << endl;
@@ -339,29 +331,46 @@ void bench_runner::run() {
         cerr << "agg_abort_rate: " << agg_abort_rate << " aborts/sec" << endl;
         cerr << "avg_per_core_abort_rate: " << avg_per_core_abort_rate << " aborts/sec/core" << endl;
         cerr << "txn breakdown: " << format_list(agg_txn_counts.begin(), agg_txn_counts.end()) << endl;
-        cerr << "--- system counters (for benchmark) ---" << endl;
-        for (map<string, counter_data>::iterator it = ctrs.begin(); it != ctrs.end(); ++it)
-            cerr << it->first << ": " << it->second << endl;
-        cerr << "--- perf counters (if enabled, for benchmark) ---" << endl;
-        PERF_EXPR(scopedperf::perfsum_base::printall());
-        cerr << "--- allocator stats ---" << endl;
-        ::allocator::DumpStats();
-        cerr << "---------------------------------------" << endl;
-
-#ifdef USE_JEMALLOC
-        cerr << "dumping heap profile..." << endl;
-        mallctl("prof.dump", NULL, NULL, NULL, 0);
-        cerr << "printing jemalloc stats..." << endl;
-        malloc_stats_print(write_cb, NULL, "");
-#endif
-#ifdef USE_TCMALLOC
-        HeapProfilerDump("before-exit");
-#endif
     }
 
+    cerr << "------------------------ process statistics ------------------------\n";
+    cerr << "[Executed Txns]\t[Throughput]\t[Mem Size]\t[Disk Size]\t[Model Size]\n";
+    std::vector <uint64_t> &executed_txns = workers[0]->executed_txns;
+    size_t num_intervals = executed_txns.size();
+    std::vector<double> throughputs(num_intervals, 0);
+    std::vector <uint64_t> table_size(num_intervals, 0);
+    std::vector <uint64_t> cpr_model_size(num_intervals, 0);
+    std::vector <uint64_t> disk_size(num_intervals, 0);
+    for (size_t i = 0; i < num_intervals; ++i) {
+        for (auto *worker: workers) {
+            if (worker->throughputs[i] == 0) {
+                num_intervals = i;
+                break;
+            }
+            throughputs[i] += worker->throughputs[i];
+            cpr_model_size[i] += worker->cpr_model_size[i];
+            table_size[i] += worker->mem_size[i];
+            disk_size[i] += worker->disk_size[i];
+        }
+    }
+    for (size_t i = 0; i < num_intervals; ++i) {
+        cerr << executed_txns[i] * nthreads << "\t" << double(throughputs[i]) << "\t"
+             << double(table_size[i] / (1 << 20)) << "\t" << double(disk_size[i]) / (1 << 20) << "\t"
+                                                                                              <<
+                                                                                              double(cpr_model_size[i]) /
+                                                                                              (1 << 20) << "\n";
+    }
+    cerr << "--------------------------------------\n";
+
     // output for plotting script
+    ALWAYS_ASSERT(!table_size.empty());
+    double final_table_size = double(table_size.back()) / (1 << 20);
+    double model_size = double(cpr_model_size.back()) / (1 << 20);
     cout << agg_throughput << " " << agg_persist_throughput << " " << avg_latency_ms << " " << avg_persist_latency_ms
-         << " " << agg_abort_rate << endl;
+         << " " << agg_abort_rate
+         << " " << final_table_size
+         << " " << model_size
+         << endl;
     cout.flush();
 
     if (!slow_exit) return;

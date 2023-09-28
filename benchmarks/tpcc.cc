@@ -23,6 +23,8 @@
 #include "bench.h"
 #include "tpcc_random_generator.h"
 #include "tpcc_raman.h"
+#include "disk_storage.h"
+#include "tpcc_stat.h"
 
 using namespace std;
 using namespace util;
@@ -410,7 +412,8 @@ public:
             : bench_worker(worker_id, true, seed, db, open_tables, barrier_a, barrier_b),
               tpcc_worker_mixin(partitions),
               warehouse_id_start(warehouse_id_start),
-              warehouse_id_end(warehouse_id_end) {
+              warehouse_id_end(warehouse_id_end),
+              stat((1 << 30) * mem_limit / nthreads) {
         INVARIANT(warehouse_id_start >= 1);
         INVARIANT(warehouse_id_start <= NumWarehouses());
         INVARIANT(warehouse_id_end > warehouse_id_start);
@@ -424,11 +427,18 @@ public:
         obj_key0.reserve(str_arena::MinStrReserveLength);
         obj_key1.reserve(str_arena::MinStrReserveLength);
         obj_v.reserve(str_arena::MinStrReserveLength);
+
+        // yiqiao: init the disk storage
+        auto &disk_manager = FileManager::GetInstance();
+        disk_manager.AddFile(worker_id, "stock");
+        disk_manager.AddFile(worker_id, "order_line");
+        disk_manager.AddFile(worker_id, "customer");
     }
 
     // XXX(stephentu): tune this
     static const size_t NMaxCustomerIdxScanElems = 512;
-
+    TPCCStat stat;
+public:
     txn_result txn_new_order();
 
     static txn_result TxnNewOrder(bench_worker *w) {
@@ -469,10 +479,9 @@ public:
         // numbers from sigmod.csail.mit.edu:
         // w.push_back(workload_desc("NewOrder", 1.0, TxnNewOrder)); // ~10k ops/sec
         // w.push_back(workload_desc("Payment", 1.0, TxnPayment)); // ~32k ops/sec
-        // w.push_back(workload_desc("Delivery", 1.0, TxnDelivery)); // ~104k
-        // ops/sec w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus));
-        // // ~33k ops/sec w.push_back(workload_desc("StockLevel", 1.0,
-        // TxnStockLevel)); // ~2k ops/sec
+        // w.push_back(workload_desc("Delivery", 1.0, TxnDelivery)); // ~104k ops/sec
+        // w.push_back(workload_desc("OrderStatus", 1.0, TxnOrderStatus)); ~33k ops/sec
+        // w.push_back(workload_desc("StockLevel", 1.0, TxnStockLevel)); // ~2k ops/sec
         unsigned m = 0;
         for (size_t i = 0; i < ARRAY_NELEMS(g_txn_workload_mix); i++) m += g_txn_workload_mix[i];
         ALWAYS_ASSERT(m == 100);
@@ -489,11 +498,210 @@ public:
         return w;
     }
 
+    void print_extra_stats() override {
+        stat.Print(false);
+    }
+
+    std::vector<uint64_t> get_table_size() override { return std::vector<uint64_t>{stat.total_mem_, stat.total_disk_}; }
+
     uint64_t get_cpr_model_size() override {
         uint64_t ret = 0;
         ret += stock_block.Size() + order_block.Size() + order_line_block.Size() + customer_block.Size() +
                history_block.Size();
         return ret;
+    }
+
+
+    inline ALWAYS_INLINE size_t
+    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, bool update = true) {
+        std::string codes = order_zstd->ZstdCompress(v);
+        // bool in_mem = stat.ToMemory(codes.size());
+        bool in_mem = true;
+        if (in_mem) {
+            o_tuple.Set(codes);
+            if (update) tbl_oorder(warehouse_id)->put(txn, Encode(str(), k), Serialize(str(), o_tuple));
+            else {
+                stat.Insert(codes.size(), true, "order");
+                tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k), Serialize(str(), o_tuple));
+            }
+        }
+        return codes.size();
+        // bool in_mem = stat.ToMemory(codes.size());
+//        bool in_mem = true;
+//        size_t sz = Size(v);
+//        if (in_mem) {
+//            o_tuple.Set(v);
+//            if (update)
+//                tbl_oorder(warehouse_id)->put(txn, Encode(str(), k), Tuple<oorder::value>::Serialize(str(), o_tuple));
+//            else {
+//                stat.Insert(sz, true, "order");
+//                tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k),
+//                                                 Tuple<oorder::value>::Serialize(str(), o_tuple));
+//            }
+//        }
+//        return sz;
+
+    }
+
+    inline ALWAYS_INLINE bool FindOrder(void *txn, const oorder::key &k, size_t warehouse_id, oorder::value &v) {
+        bool success = tbl_oorder(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (likely(success)) {
+            Deserialize(obj_v, o_tuple);
+            order_zstd->ZstdDecompress(o_tuple.data_, &v);
+//            Tuple<oorder::value>::Deserialize(obj_v, o_tuple);
+//            v = o_tuple.data_;
+        }
+        return success;
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertNewOrder(void *txn, const new_order::key &k, const new_order::value &v, size_t w_id) {
+        tbl_new_order(w_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+        size_t sz = Size(v);
+        stat.Insert(sz, true, "new_order");
+        return Size(v);
+    }
+
+    inline ALWAYS_INLINE bool FindNewOrder(void *txn, const new_order::key &k, size_t w_id, new_order::value &v) {
+        bool success = tbl_new_order(w_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (success) Decode(obj_v, v);
+        return success;
+    }
+
+    inline ALWAYS_INLINE size_t InsertHistory(void *txn, const history::key &k, const history::value &v, size_t w_id) {
+        tbl_history(w_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+        size_t sz = Size(v);
+        stat.Insert(sz, true, "history");
+        return Size(v);
+    }
+
+    inline ALWAYS_INLINE bool FindHistory(void *txn, const history::key &k, size_t warehouse_id, history::value &v) {
+        bool success = tbl_history(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (success) Decode(obj_v, v);
+        return success;
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t w_id, bool update = true) {
+        return InsertOrderLine(txn, Encode(str(), k), v, w_id, update);
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertOrderLine(void *txn, const std::string &k_encoded, const order_line::value &v, size_t w_id,
+                    bool update = true) {
+        std::string codes = order_line_zstd->ZstdCompress(v);
+        bool in_mem = stat.ToMemory(codes.size());
+        if (likely(in_mem)) {
+            ol_tuple.Set(codes, true, stat.n_ol_mem++, worker_id);
+            std::string &serial_str = Serialize(str(), ol_tuple);
+            if (update) tbl_order_line(w_id)->put(txn, k_encoded, serial_str);
+            else {
+                stat.Insert(codes.size(), true, "order_line");
+                tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
+            }
+            return codes.size();
+        } else {
+            FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(worker_id, 2);
+            ol_disk.SeqDiskTupleWrite(&v);
+
+            ol_tuple.Set(codes, false, stat.n_ol_disk++, worker_id);
+            std::string &serial_str = Serialize(str(), ol_tuple);
+            if (update) tbl_order_line(w_id)->put(txn, k_encoded, serial_str);
+            else {
+                stat.Insert(sizeof(order_line::value), false, "order_line");
+                tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
+            }
+            return sizeof(order_line::value);
+        }
+    }
+
+    inline ALWAYS_INLINE bool FindOrderLine(void *txn, const order_line::key &k, size_t w_id, order_line::value &v) {
+        bool success = tbl_order_line(w_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (success) {
+            FindOrderLineInternal(obj_v, v, ol_tuple, order_line_zstd);
+            if (!ol_tuple.in_memory_) stat.SwapTuple(Size(v), "order_line");
+        }
+        return success;
+    }
+
+    static inline ALWAYS_INLINE void
+    FindOrderLineInternal(const std::string &obj, order_line::value &v, Tuple <std::string> &tuple,
+                          ZSTD <order_line::value> *order_line_zstd) {
+        Deserialize(obj, tuple);
+        if (!tuple.in_memory_) {
+            ALWAYS_ASSERT(tuple.id_thread_ >= 0);
+            FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(tuple.id_thread_, 2);
+            ol_disk.DiskTupleRead(&v, tuple.id_pos_);
+        } else order_line_zstd->ZstdDecompress(tuple.data_, &v);
+    }
+
+    inline ALWAYS_INLINE size_t InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t w_id) {
+        std::string codes = stock_zstd->ZstdCompress(v);
+//        bool in_mem = stat.ToMemory(codes.size());
+        bool in_mem = true;
+        if (likely(in_mem)) {
+            s_tuple.Set(codes);
+            tbl_stock(w_id)->put(txn, Encode(str(), k), Serialize(str(), s_tuple));
+        } else {
+            FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(worker_id, 1);
+            s_disk.SeqDiskTupleWrite(&v);
+
+            s_tuple.Set(codes, false, stat.n_s_disk++, worker_id);
+            tbl_stock(w_id)->put(txn, Encode(str(), k), Serialize(str(), s_tuple));
+        }
+        return codes.size();
+    }
+
+    inline ALWAYS_INLINE bool FindStock(void *txn, const stock::key &k, size_t w_id, stock::value &v) {
+        bool success = tbl_stock(w_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (likely(success)) {
+            Deserialize(obj_v, s_tuple);
+            if (!s_tuple.in_memory_) {
+                FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(s_tuple.id_thread_, 1);
+                s_disk.DiskTupleRead(&v, s_tuple.id_pos_);
+                stat.SwapTuple(s_tuple.data_.size(), "stock");
+            } else stock_zstd->ZstdDecompress(s_tuple.data_, &v);
+        }
+        return success;
+    }
+
+    inline ALWAYS_INLINE bool FindStock(void *txn, const stock::key &k, size_t w_id, std::string &v_data,
+                                        size_t max_bytes_read = std::string::npos) {
+        bool success = tbl_stock(w_id)->get(txn, Encode(obj_key0, k), v_data, max_bytes_read);
+        return success;
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t w_id) {
+        std::string codes = customer_zstd->ZstdCompress(v);
+//        bool in_mem = stat.ToMemory(codes.size());
+        bool in_mem = true;
+        if (likely(in_mem)) {
+            c_tuple.Set(codes, true, stat.n_ol_mem++, worker_id);
+            std::string &serial_str = Serialize(str(), c_tuple);
+            tbl_customer(w_id)->put(txn, Encode(str(), k), serial_str);
+        } else {
+            FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(worker_id, 0);
+            c_disk.SeqDiskTupleWrite(&v);
+
+            c_tuple.Set(codes, false, stat.n_c_disk++, worker_id);
+            std::string &serial_str = Serialize(str(), c_tuple);
+            tbl_customer(w_id)->put(txn, Encode(str(), k), serial_str);
+        }
+        return codes.size();
+    }
+
+    inline ALWAYS_INLINE bool FindCustomer(void *txn, const customer::key &k, size_t w_id, customer::value &v) {
+        bool success = tbl_customer(w_id)->get(txn, Encode(obj_key0, k), obj_v);
+        if (likely(success)) {
+            Deserialize(obj_v, c_tuple);
+            if (!c_tuple.in_memory_) {
+                FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(c_tuple.id_thread_, 0);
+                c_disk.DiskTupleRead(&v, c_tuple.id_pos_);
+                stat.SwapTuple(c_tuple.data_.size(), "customer");
+            } else customer_zstd->ZstdDecompress(c_tuple.data_, &v);
+        }
+        return success;
     }
 
 protected:
@@ -609,6 +817,14 @@ private:
     string obj_key0;
     string obj_key1;
     string obj_v;
+
+    Tuple <string> s_tuple;
+    Tuple <string> ol_tuple;
+    Tuple <string> c_tuple;
+    Tuple <new_order::value> no_tuple;
+    // Tuple<oorder::value> o_tuple;
+    Tuple <string> o_tuple;
+    Tuple <history::value> h_tuple;
     string obj_tuple;
 };
 
@@ -620,6 +836,7 @@ public:
               tpcc_worker_mixin(partitions) {}
 
     double avg_warehouse_sz = 0;
+    uint64_t warehouse_total_sz = 0, n_warehouses = 0;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Warehouse");
@@ -632,7 +849,6 @@ protected:
 
         string obj_buf;
         void *txn = db->new_txn(txn_flags, arena, txn_buf());
-        uint64_t warehouse_total_sz = 0, n_warehouses = 0;
         try {
             vector <warehouse::value> warehouses;
             for (uint i = 1; i <= NumWarehouses(); i++) {
@@ -657,9 +873,9 @@ protected:
                 v.w_zip.assign(w_zip);
 
                 checker::SanityCheckWarehouse(&k, &v);
+                n_warehouses++;
                 const size_t sz = Size(v);
                 warehouse_total_sz += sz;
-                n_warehouses++;
                 tbl_warehouse(i)->insert(txn, Encode(k), Encode(obj_buf, v));
 
                 warehouses.push_back(v);
@@ -700,6 +916,7 @@ public:
               tpcc_worker_mixin(partitions) {}
 
     double avg_item_sz = 0;
+    uint64_t total_sz = 0;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Item");
@@ -713,7 +930,6 @@ protected:
         string obj_buf;
         const ssize_t bsize = db->txn_max_batch_size();
         void *txn = db->new_txn(txn_flags, arena, txn_buf());
-        uint64_t total_sz = 0;
         try {
             for (uint i = 1; i <= NumItems(); i++) {
                 // items don't "belong" to a certain warehouse, so no pinning
@@ -775,6 +991,10 @@ public:
     }
 
     int avg_stock_sz;
+    uint64_t stock_total_sz = 0, n_stocks = 0;
+    Tuple <std::string> s_tuple;
+    Tuple <std::string> s_data_tuple;
+
     RamanCompressor *stock_cpr_;
     RamanCompressor *stock_data_cpr_;
     RamanTable<stock::value> tmp_db_stock_;
@@ -783,6 +1003,21 @@ public:
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Stock");
         avg_lengths.push_back(avg_stock_sz);
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t warehouse_id, string obj_buf) {
+        s_tuple.Set(stock_zstd_->ZstdCompress(v));
+        tbl_stock(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf, s_tuple));
+        return s_tuple.data_.size();
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertStockData(void *txn, const stock_data::key &k, const stock_data::value &v, size_t warehouse_id,
+                    string obj_buf1) {
+        s_data_tuple.Set(stock_data_zstd_->ZstdCompress(v));
+        tbl_stock_data(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf1, s_data_tuple));
+        return s_data_tuple.data_.size();
     }
 
 protected:
@@ -850,55 +1085,57 @@ protected:
         string obj_buf, obj_buf1;
         string obj_buf2, obj_buf3;
 
-        uint64_t stock_total_sz = 0, n_stocks = 0;
         const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
         const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
 
         for (uint w = w_start; w <= w_end; w++) {
+            const size_t batchsize = (db->txn_max_batch_size() == -1) ? NumItems() : db->txn_max_batch_size();
+            const size_t nbatches = (batchsize > NumItems()) ? 1 : (NumItems() / batchsize);
+
             if (pin_cpus) PinToWarehouseId(w);
 
-            scoped_str_arena s_arena(arena);
-            void *const txn = db->new_txn(txn_flags, arena, txn_buf());
-            try {
-                for (uint i = 1; i <= NumItems(); i++) {
-                    const stock::key k(w, i);
-                    const stock_data::key k_data(w, i);
-                    auto &v = tmp_db_stock_.GetTuple((w - w_start) * NumItems() + i - 1);
-                    auto &v_data = tmp_db_stock_data_.GetTuple((w - w_start) * NumItems() + i - 1);
+            for (uint b = 0; b < nbatches;) {
+                scoped_str_arena s_arena(arena);
+                void *const txn = db->new_txn(txn_flags, arena, txn_buf());
+                try {
+                    const size_t iend = std::min((b + 1) * batchsize + 1, NumItems());
+                    for (uint i = (b * batchsize + 1); i <= iend; i++) {
+                        const stock::key k(w, i);
+                        const stock_data::key k_data(w, i);
+                        auto &v = tmp_db_stock_.GetTuple((w - w_start) * NumItems() + i - 1);
+                        auto &v_data = tmp_db_stock_data_.GetTuple((w - w_start) * NumItems() + i - 1);
 
-                    std::string v_codes = stock_cpr_->RamanCompress(v);
-                    std::string v_data_codes = stock_data_cpr_->RamanCompress(v_data);
+                        std::string v_codes = stock_cpr_->RamanCompress(v);
+                        std::string v_data_codes = stock_data_cpr_->RamanCompress(v_data);
 
-                    stock_total_sz += v_codes.size() + v_data_codes.size();
-                    n_stocks++;
+                        stock_total_sz += v_codes.size() + v_data_codes.size();
+                        n_stocks++;
 
-                    tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, CreateTuple(v_codes, 0, true)));
-                    tbl_stock_data(w)->insert(txn, Encode(k_data),
-                                              Encode(obj_buf1, CreateTuple(v_data_codes, 0, true)));
-                }
+                        tbl_stock(w)->insert(txn, Encode(k), Encode(obj_buf, CreateTuple(v_codes, 0, true)));
+                        tbl_stock_data(w)->insert(txn, Encode(k_data),
+                                                  Encode(obj_buf1, CreateTuple(v_data_codes, 0, true)));
+                    }
 
-                if (db->commit_txn(txn)) {
-                    b++;
-                } else {
+                    if (db->commit_txn(txn)) b++;
+                    else {
+                        db->abort_txn(txn);
+                        cerr << "[WARNING] stock loader loading abort" << endl;
+                    }
+                } catch (abstract_db::abstract_abort_exception &ex) {
                     db->abort_txn(txn);
-                    if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
+                    ALWAYS_ASSERT(warehouse_id != -1);
+                    cerr << "[WARNING] stock loader loading abort" << endl;
                 }
-            } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
-                ALWAYS_ASSERT(warehouse_id != -1);
-                if (verbose) cerr << "[WARNING] stock loader loading abort" << endl;
             }
-        }
-
-        avg_stock_sz = double(stock_total_sz) / double(n_stocks);
-
-        if (verbose) {
-            cerr << "[INFO]   * Compressed Total Size: " << (double(stock_total_sz) / (1 << 20)) << " MB\n";
         }
 
         // delete the training data
         tmp_db_stock_.Clear();
         tmp_db_stock_data_.Clear();
+        avg_stock_sz = double(stock_total_sz) / double(n_stocks);
+
+        if (verbose) cerr << "[INFO]   * Compressed Total Size: " << (double(stock_total_sz) / (1 << 20)) << " MB\n";
+
     }
 
 private:
@@ -913,6 +1150,7 @@ public:
               tpcc_worker_mixin(partitions) {}
 
     double avg_district_sz = 0;
+    uint64_t district_total_sz = 0, n_districts = 0;
 
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("District");
@@ -927,7 +1165,6 @@ protected:
 
         const ssize_t bsize = db->txn_max_batch_size();
         void *txn = db->new_txn(txn_flags, arena, txn_buf());
-        uint64_t district_total_sz = 0, n_districts = 0;
         try {
             uint cnt = 0;
             for (uint w = 1; w <= NumWarehouses(); w++) {
@@ -987,6 +1224,9 @@ public:
     }
 
     double avg_customer_sz = 0;
+    uint64_t total_sz = 0;
+    Tuple <std::string> c_tuple;
+
     RamanCompressor *customer_cpr_;
     RamanTable<customer::value> tmp_db_customer_;
     std::vector<customer::key> customer_keys;
@@ -994,6 +1234,14 @@ public:
     void GetAvgLength(std::vector<std::string> &names, std::vector<double> &avg_lengths) override {
         names.push_back("Customer");
         avg_lengths.push_back(avg_customer_sz);
+    }
+
+    inline ALWAYS_INLINE size_t
+    InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t warehouse_id, string obj_buf) {
+        std::string str;
+        c_tuple.Set(customer_zstd_->ZstdCompress(v));
+        tbl_customer(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf, c_tuple));
+        return c_tuple.data_.size();
     }
 
 protected:
@@ -1106,9 +1354,8 @@ protected:
                 total_sz += v_codes.size();
                 tbl_customer(k.c_w_id)->insert(txn, Encode(k), Encode(obj_buf, CreateTuple(v_codes, 0, true)));
             }
-            if (db->commit_txn(txn)) {
-                b++;
-            } else {
+            if (db->commit_txn(txn)) b++;
+            else {
                 db->abort_txn(txn);
                 if (verbose) cerr << "[WARNING] customer loader loading abort" << endl;
             }
@@ -1117,12 +1364,11 @@ protected:
             if (verbose) cerr << "[WARNING] customer loader Compression abort" << endl;
         }
 
+        tmp_db_customer_.Clear();
         avg_customer_sz =
                 double(total_sz) / double(NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict());
 
         if (verbose) { cerr << "[INFO]   * Compressed Total size: " << (double(total_sz) / (1 << 20)) << " MB\n"; }
-
-        tmp_db_customer_.Clear();
     }
 
 private:
@@ -1144,7 +1390,14 @@ public:
     }
 
     double avg_order_sz = 0, avg_new_order_sz = 0, avg_order_line_sz = 0;
-    RamanCompressor *order_cpr_;
+    uint64_t order_line_total_sz = 0, n_order_lines = 0;
+    uint64_t oorder_total_sz = 0, n_oorders = 0;
+    uint64_t new_order_total_sz = 0, n_new_orders = 0;
+    Tuple <std::string> ol_tuple;
+    Tuple <std::string> o_tuple;
+    // Tuple<oorder::value> o_tuple;
+    //
+    // RamanCompressor *order_cpr_;
     RamanCompressor *order_line_cpr_;
     RamanCompressor *history_;
     RamanTable<oorder::value> tmp_db_order_;
@@ -1163,15 +1416,31 @@ public:
         avg_lengths.push_back(avg_order_line_sz);
     }
 
+    inline ALWAYS_INLINE size_t
+    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t warehouse_id,
+                    string obj_buf) {
+        ol_tuple.Set(order_line_zstd_->ZstdCompress(v));
+        tbl_order_line(warehouse_id)->insert(txn, Encode(k), Serialize(obj_buf, ol_tuple));
+        return ol_tuple.data_.size();
+    }
+
+    // Zstandard has very weak compression ability for short tuples like oorder::value. So we do not compress it,
+    // along with other tables which has the short tuple.
+    inline ALWAYS_INLINE size_t
+    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, string obj_buf) {
+        o_tuple.Set(order_zstd_->ZstdCompress(v));
+        tbl_oorder(warehouse_id)->put(txn, Encode(k), Serialize(obj_buf, o_tuple));
+        return o_tuple.data_.size();
+//        o_tuple.Set(v);
+//        tbl_oorder(warehouse_id)->insert(txn, Encode(k), Tuple<oorder::value>::Serialize(obj_buf, o_tuple));
+//        return Size(v);
+    }
+
 protected:
     void CprTraining() {
         if (verbose) { cerr << "[INFO] Start Loading Order, New Order, Order Line\n"; }
 
         string obj_buf;
-
-        uint64_t order_line_total_sz = 0, n_order_lines = 0;
-        uint64_t oorder_total_sz = 0, n_oorders = 0;
-        uint64_t new_order_total_sz = 0, n_new_orders = 0;
 
         const uint w_start = (warehouse_id == -1) ? 1 : static_cast<uint>(warehouse_id);
         const uint w_end = (warehouse_id == -1) ? NumWarehouses() : static_cast<uint>(warehouse_id);
@@ -1257,16 +1526,19 @@ protected:
                         } else {
                             db->abort_txn(txn);
                             ALWAYS_ASSERT(warehouse_id != -1);
-                            if (verbose) cerr << "[WARNING] order loader loading abort" << endl;
+                            cerr << "[WARNING] order loader loading abort" << endl;
                         }
                     } catch (abstract_db::abstract_abort_exception &ex) {
                         db->abort_txn(txn);
                         ALWAYS_ASSERT(warehouse_id != -1);
-                        if (verbose) cerr << "[WARNING] order loader loading abort" << endl;
+                        cerr << "[WARNING] order loader loading abort" << endl;
                     }
                 }
             }
         }
+
+        order_line_zstd_->Train(tmp_db_order_line_);
+        order_zstd_->Train(tmp_db_order_);
 
         order_line_cpr_->RamanLearning(tmp_db_order_line_.table_);
         order_cpr_->RamanLearning(tmp_db_order_.table_);
@@ -1320,13 +1592,15 @@ protected:
             } else {
                 db->abort_txn(txn);
                 ALWAYS_ASSERT(warehouse_id != -1);
-                if (verbose) cerr << "[WARNING] order line loader loading abort" << endl;
+                cerr << "[WARNING] order line loader loading abort" << endl;
             }
         } catch (abstract_db::abstract_abort_exception &ex) {
             db->abort_txn(txn);
             ALWAYS_ASSERT(warehouse_id != -1);
-            if (verbose) cerr << "[WARNING] order line loader loading abort" << endl;
+            cerr << "[WARNING] order line loader loading abort" << endl;
         }
+        tmp_db_order_line_.Clear();
+        tmp_db_order_.Clear();
 
         avg_order_line_sz = double(order_line_total_sz) / double(n_order_lines);
         avg_order_sz = double(order_total_sz) / double(n_order);
@@ -1335,9 +1609,6 @@ protected:
             cerr << "[INFO]   * Order Line Compressed Size: " << (double(order_line_total_sz) / (1 << 20)) << " MB\t"
                  << "OOrder Compressed Size: " << (double(order_total_sz) / (1 << 20)) << " MB\n";
         }
-
-        tmp_db_order_line_.Clear();
-        tmp_db_order_.Clear();
     }
 
 private:
@@ -1538,7 +1809,6 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
 //                }
 //            }
         }
-
         measure_txn_counters(txn, "txn_new_order");
         if (likely(db->commit_txn(txn))) return txn_result(true, ret);
     } catch (abstract_db::abstract_abort_exception &ex) { db->abort_txn(txn); }
@@ -1600,7 +1870,8 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             {
                 ANON_REGION("DeliverNewOrderScan:", &delivery_probe0_cg);
                 tbl_new_order(warehouse_id)
-                        ->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c, s_arena.get());
+                        ->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c,
+                               s_arena.get());
             }
 
             const new_order::key *k_no = new_order_c.get_key();
@@ -1608,7 +1879,7 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             last_no_o_ids[d - 1] = k_no->no_o_id + 1;// XXX: update last seen
 
             const oorder::key k_oo(warehouse_id, d, k_no->no_o_id);
-            if (unlikely(!tbl_oorder(warehouse_id)->get(txn, Encode(obj_key0, k_oo), obj_v))) {
+            if (unlikely(!FindOrder(txn, k_oo, warehouse_id, order_buffer))) {
                 // even if we read the new order entry, there's no guarantee
                 // we will read the oorder entry: in this case the txn will abort,
                 // but we're simply bailing out early
@@ -1718,7 +1989,8 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
         customerWarehouseID = warehouse_id;
     } else {
         customerDistrictID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
-        do { customerWarehouseID = RandomNumber(r, 1, NumWarehouses()); } while (customerWarehouseID == warehouse_id);
+        do { customerWarehouseID = RandomNumber(r, 1, NumWarehouses()); }
+        while (customerWarehouseID == warehouse_id);
     }
     const float paymentAmount = (float) (RandomNumber(r, 100, 500000) / 100.0);
     const uint32_t ts = GetCurrentTimeMillis();
@@ -1848,7 +2120,8 @@ tpcc_worker::txn_result tpcc_worker::txn_payment() {
         history::value v_h;
         v_h.h_amount = paymentAmount;
         v_h.h_data.resize_junk(v_h.h_data.max_size());
-        int n = snprintf((char *) v_h.h_data.data(), v_h.h_data.max_size() + 1, "%.10s    %.10s", v_w->w_name.c_str(),
+        int n = snprintf((char *) v_h.h_data.data(), v_h.h_data.max_size() + 1, "%.10s    %.10s",
+                         v_w->w_name.c_str(),
                          v_d->d_name.c_str());
         v_h.h_data.resize_junk(min(static_cast<size_t>(n), v_h.h_data.max_size()));
 
@@ -1967,7 +2240,8 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             // are making it worse for us)
             latest_key_callback c_oorder(*newest_o_c_id, (r.next() % 15) + 1);
             const oorder_c_id_idx::key k_oo_idx_0(warehouse_id, districtID, k_c.c_id, 0);
-            const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
+            const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id,
+                                                  numeric_limits<int32_t>::max());
             {
                 ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
                 tbl_oorder_c_id_idx(warehouse_id)
@@ -1977,7 +2251,8 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             ALWAYS_ASSERT(c_oorder.size());
         } else {
             latest_key_callback c_oorder(*newest_o_c_id, 1);
-            const oorder_c_id_idx::key k_oo_idx_hi(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
+            const oorder_c_id_idx::key k_oo_idx_hi(warehouse_id, districtID, k_c.c_id,
+                                                   numeric_limits<int32_t>::max());
             tbl_oorder_c_id_idx(warehouse_id)->rscan(txn, Encode(obj_key0, k_oo_idx_hi), nullptr, c_oorder,
                                                      s_arena.get());
             ALWAYS_ASSERT(c_oorder.size() == 1);
@@ -2188,17 +2463,33 @@ protected:
         vector < bench_loader * > loaders;
 
         // warehouse
-        loaders.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions));
+        {
+            auto loader = new tpcc_warehouse_loader(9324, db, open_tables, partitions);
+            loaders.push_back(loader);
+
+            size_warehouse = &loader->warehouse_total_sz;
+        }
         // item
-        loaders.push_back(new tpcc_item_loader(235443, db, open_tables, partitions));
+        {
+            auto loader = new tpcc_item_loader(235443, db, open_tables, partitions);
+            loaders.push_back(loader);
+
+            size_item = &loader->total_sz;
+        }
         // district
-        loaders.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions));
+        {
+            auto loader = new tpcc_district_loader(129856349, db, open_tables, partitions);
+            loaders.push_back(loader);
+
+            size_district = &loader->district_total_sz;
+        }
 
         // stock
         {
             auto loader = new tpcc_stock_loader(89785943, db, open_tables, partitions, -1);
             loaders.push_back(loader);
 
+            size_stock = &loader->stock_total_sz;
             stock_cpr = loader->stock_cpr_;
             stock_data_cpr = loader->stock_data_cpr_;
         }
@@ -2208,6 +2499,7 @@ protected:
             auto loader = new tpcc_customer_loader(92358785, db, open_tables, partitions, -1);
             loaders.push_back(loader);
 
+            size_customer = &loader->total_sz;
             customer_cpr = loader->customer_cpr_;
         }
 
@@ -2215,6 +2507,14 @@ protected:
         {
             auto loader = new tpcc_order_loader(2343352, db, open_tables, partitions, -1);
             loaders.push_back(loader);
+
+            n_order = &loader->n_oorders;
+            n_order_line = &loader->n_order_lines;
+            n_new_order = &loader->n_new_orders;
+            size_order = &loader->oorder_total_sz;
+            size_new_order = &loader->new_order_total_sz;
+            size_order_line = &loader->order_line_total_sz;
+
 
             order_cpr = loader->order_cpr_;
             order_line_cpr = loader->order_line_cpr_;
@@ -2234,7 +2534,8 @@ protected:
         if (NumWarehouses() <= nthreads) {
             for (size_t i = 0; i < nthreads; i++)
                 workers.push_back(
-                        new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
+                        new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a,
+                                        &barrier_b,
                                         (i % NumWarehouses()) + 1, (i % NumWarehouses()) + 2));
 
         } else {
@@ -2243,18 +2544,37 @@ protected:
                 const unsigned wstart = i * nwhse_per_partition;
                 const unsigned wend = (i + 1 == nthreads) ? NumWarehouses() : (i + 1) * nwhse_per_partition;
                 workers.push_back(
-                        new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a, &barrier_b,
+                        new tpcc_worker(blockstart + i, r.next(), db, open_tables, partitions, &barrier_a,
+                                        &barrier_b,
                                         wstart + 1, wend + 1));
             }
         }
 
-        for (auto worker: workers) {
+        for (auto *worker: workers) {
             tpcc_worker *w = (tpcc_worker *) worker;
+            w->stat.n_ol_mem = *n_order_line / nthreads;
+            w->stat.n_c_mem = NumWarehouses() * NumDistrictsPerWarehouse() * NumCustomersPerDistrict() / nthreads;
+            w->stat.n_s_mem = NumItems() * NumWarehouses() / nthreads;
+
+            w->stat.warehouse_mem_ = *size_warehouse / nthreads;
+            w->stat.item_mem_ = *size_item / nthreads;
+            w->stat.district_mem_ = *size_district / nthreads;
+            w->stat.customer_mem_ = *size_customer / nthreads;
+            w->stat.stock_mem_ = *size_stock / nthreads;
+            w->stat.order_mem_ = *size_order / nthreads;
+            w->stat.new_order_mem_ = *size_new_order / nthreads;
+            w->stat.order_line_mem_ = *size_order_line / nthreads;
+
+            w->stat.total_mem_ =
+                    w->stat.warehouse_mem_ + w->stat.item_mem_ + w->stat.district_mem_ + w->stat.customer_mem_ +
+                    w->stat.stock_mem_ + w->stat.order_mem_ + w->stat.new_order_mem_ + w->stat.order_line_mem_;
+
             w->stock_block.AddCompressor(stock_cpr->Copy());
             w->order_line_block.AddCompressor(order_line_cpr->Copy());
             w->order_block.AddCompressor(order_cpr->Copy());
             w->customer_block.AddCompressor(customer_cpr->Copy());
             w->history_block.AddCompressor(history_cpr->Copy());
+
         }
 
         return workers;
@@ -2262,6 +2582,9 @@ protected:
 
 private:
     map <string, vector<abstract_ordered_index *>> partitions;
+
+    uint64_t *n_order, *n_new_order, *n_order_line;
+    uint64_t *size_warehouse, *size_item, *size_district, *size_stock, *size_customer, *size_order, *size_new_order, *size_order_line;
 
     // Raman
     RamanCompressor *stock_cpr;
@@ -2296,13 +2619,11 @@ void tpcc_do_test(abstract_db *db, int argc, char **argv) {
                 if (long_options[option_index].flag != 0) break;
                 abort();
                 break;
-
             case 'r':
                 g_new_order_remote_item_pct = strtoul(optarg, NULL, 10);
                 ALWAYS_ASSERT(g_new_order_remote_item_pct >= 0 && g_new_order_remote_item_pct <= 100);
                 did_spec_remote_pct = true;
                 break;
-
             case 'w': {
                 const vector <string> toks = split(optarg, ',');
                 ALWAYS_ASSERT(toks.size() == ARRAY_NELEMS(g_txn_workload_mix));
@@ -2316,11 +2637,9 @@ void tpcc_do_test(abstract_db *db, int argc, char **argv) {
                 ALWAYS_ASSERT(s == 100);
             }
                 break;
-
             case '?':
                 /* getopt_long already printed an error message. */
                 exit(1);
-
             default:
                 abort();
         }
@@ -2331,20 +2650,6 @@ void tpcc_do_test(abstract_db *db, int argc, char **argv) {
                 "--disable-cross-partition-transactions"
              << endl;
         cerr << "  --new-order-remote-item-pct will have no effect" << endl;
-    }
-
-    if (verbose) {
-        cerr << "tpcc settings:" << endl;
-        cerr << "  cross_partition_transactions : " << !g_disable_xpartition_txn << endl;
-        cerr << "  read_only_snapshots          : " << !g_disable_read_only_scans << endl;
-        cerr << "  partition_locks              : " << g_enable_partition_locks << endl;
-        cerr << "  separate_tree_per_partition  : " << g_enable_separate_tree_per_partition << endl;
-        cerr << "  new_order_remote_item_pct    : " << g_new_order_remote_item_pct << endl;
-        cerr << "  new_order_fast_id_gen        : " << g_new_order_fast_id_gen << endl;
-        cerr << "  uniform_item_dist            : " << g_uniform_item_dist << endl;
-        cerr << "  order_status_scan_hack       : " << g_order_status_scan_hack << endl;
-        cerr << "  workload_mix                 : "
-             << format_list(g_txn_workload_mix, g_txn_workload_mix + ARRAY_NELEMS(g_txn_workload_mix)) << endl;
     }
 
     tpcc_bench_runner r(db);

@@ -142,9 +142,7 @@ public:
     }
 
 private:
-    void SetNumFields(size_t num_fields) {
-        stats_.resize(num_fields);
-    }
+    void SetNumFields(size_t num_fields) { stats_.resize(num_fields); }
 };
 
 // -------------------------------- Raman Tuple Block -------------------------------------\
@@ -206,15 +204,11 @@ public:
     }
 
     inline ALWAYS_INLINE value &GetValue(key &key) {
-        for (int32_t i = 0; i < n_tuple; ++i) {
-            if (keys_[i] == key) return &values_[i];
-        }
+        for (int32_t i = 0; i < n_tuple; ++i) { if (keys_[i] == key) return &values_[i]; }
         return nullptr;
     }
 
-    inline ALWAYS_INLINE void AddCompressor(RamanCompressor *compressor) {
-        compressors_.push_back(compressor);
-    }
+    inline ALWAYS_INLINE void AddCompressor(RamanCompressor *compressor) { compressors_.push_back(compressor); }
 
     inline ALWAYS_INLINE uint32_t Size() {
         uint32_t raman_dict_size = 0;

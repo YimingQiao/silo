@@ -15,6 +15,11 @@
 #include "../util.h"
 #include "abstract_db.h"
 #include "tpcc_random_generator.h"
+#include "disk_storage.h"
+
+static const uint64_t kTxnsInterval = 1e4;
+static const uint64_t kNumDP = 1e5;
+static const uint64_t throughput_overhead = 0;
 
 extern void ycsb_do_test(abstract_db *db, int argc, char **argv);
 
@@ -32,6 +37,7 @@ enum {
 
 // benchmark global variables
 extern size_t nthreads;
+extern double mem_limit;
 extern volatile bool running;
 extern int verbose;
 extern uint64_t txn_flags;
@@ -127,10 +133,24 @@ public:
               size_delta(0) {
         txn_obj_buf.reserve(str_arena::MinStrReserveLength);
         txn_obj_buf.resize(db->sizeof_txn_object(txn_flags));
+
+        executed_txns.reserve(kNumDP);
+        throughputs.reserve(kNumDP);
+        mem_size.reserve(kNumDP);
+        cpr_model_size.reserve(kNumDP);
     }
 
     virtual ~bench_worker() {}
 
+    // stats
+    std::vector <uint64_t> executed_txns;
+    std::vector<double> throughputs;
+    std::vector <uint64_t> mem_size;
+    std::vector <uint64_t> cpr_model_size;
+    std::vector <uint64_t> disk_size;
+    int64_t init_table_size = 0;
+
+public:
     // returns [did_commit?, size_increase_bytes]
     typedef std::pair<bool, ssize_t> txn_result;
 
@@ -165,6 +185,12 @@ public:
     inline double get_avg_latency_us() const { return double(latency_numer_us) / double(ntxn_commits); }
 
     std::map <std::string, size_t> get_txn_counts() const;
+
+    virtual uint64_t get_cpr_model_size() { return 0; }
+
+    virtual std::vector <uint64_t> get_table_size() { return std::vector<uint64_t>(); }
+
+    virtual void print_extra_stats() {}
 
     typedef abstract_db::counter_map counter_map;
     typedef abstract_db::txn_counter_map txn_counter_map;
