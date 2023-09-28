@@ -265,8 +265,7 @@ public:
 
     explicit Blitzcrank(const std::string &name)
             : name_(std::to_string(rand()) + "_" + name + "_model.blitz"),
-              cpr_(nullptr),
-              dpr_(nullptr) {}
+              cpr_(nullptr), dpr_(nullptr), model_size_(0) {}
 
     Blitzcrank(const Blitzcrank &other) {
         name_ = other.name_;
@@ -286,10 +285,10 @@ public:
         dpr_ = new db_compress::RelationDecompressor(name_.c_str(), schema_, kBlockSize);
         dpr_->InitWithoutIndex();
 
-        size_t model_size = filesize(name_.c_str());
-        std::cerr << "[INFO]   * Compressor for " << name_ << " trained, Size: " << ((double) model_size) / (1 << 20)
-                  << " MB\n";
+        model_size_ = filesize(name_.c_str());
     }
+
+    size_t ModelSize() { return model_size_; }
 
     // copy blitzcrank, this function is only called after training
     Blitzcrank *Copy() {
@@ -298,6 +297,7 @@ public:
         ret->cpr_ = new db_compress::RelationCompressor(name_.c_str(), schema_, kBlockSize);
         ret->dpr_ = new db_compress::RelationDecompressor(name_.c_str(), schema_, kBlockSize);
         ret->dpr_->InitWithoutIndex();
+        ret->model_size_ = model_size_;
         return ret;
     }
 
@@ -305,6 +305,7 @@ private:
     std::string name_;
     db_compress::Schema schema_;
     db_compress::CompressionConfig config_;
+    size_t model_size_;
 
     static void BlitzLearning(BlitzTable &table, db_compress::RelationCompressor &compressor);
 

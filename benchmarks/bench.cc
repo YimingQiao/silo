@@ -342,8 +342,6 @@ void bench_runner::run() {
     std::vector <uint64_t> cpr_model_size(num_intervals, 0);
     std::vector <uint64_t> disk_size(num_intervals, 0);
     for (size_t i = 0; i < num_intervals; ++i) {
-        if (i != 0) cpr_model_size[i] = cpr_model_size[i - 1];
-
         for (auto *worker: workers) {
             if (worker->throughputs[i] == 0) {
                 num_intervals = i;
@@ -358,7 +356,9 @@ void bench_runner::run() {
     for (size_t i = 0; i < num_intervals; ++i) {
         cerr << executed_txns[i] * nthreads << "\t" << double(throughputs[i]) << "\t"
              << double(table_size[i] / (1 << 20)) << "\t" << double(disk_size[i]) / (1 << 20) << "\t"
-             << cpr_model_size[i] << "\n";
+                                                                                              <<
+                                                                                              double(cpr_model_size[i]) /
+                                                                                              (1 << 20) << "\n";
     }
     cerr << "--------------------------------------\n";
 

@@ -493,11 +493,14 @@ public:
         return w;
     }
 
-    void print_extra_stats() override {
-        stat.Print(false);
-    }
+    void print_extra_stats() override { stat.Print(false); }
 
-    std::vector<uint64_t> get_table_size() { return std::vector<uint64_t>{stat.total_mem_, stat.total_disk_}; }
+    std::vector<uint64_t> get_table_size() override { return std::vector<uint64_t>{stat.total_mem_, stat.total_disk_}; }
+
+    uint64_t get_cpr_model_size() override {
+        return stock_blitz->ModelSize() + stock_data_blitz->ModelSize() + order_line_blitz->ModelSize() +
+               customer_blitz->ModelSize() + customer_data_blitz->ModelSize();
+    }
 
     inline ALWAYS_INLINE size_t
     InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, bool update = true) {
