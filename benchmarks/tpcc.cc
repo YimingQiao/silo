@@ -406,7 +406,12 @@ public:
               tpcc_worker_mixin(partitions),
               warehouse_id_start(warehouse_id_start),
               warehouse_id_end(warehouse_id_end),
-              stat((1 << 30) * mem_limit / nthreads) {
+              stat((1 << 30) * mem_limit / nthreads),
+              stock_block(worker_id),
+              order_block(worker_id),
+              order_line_block(worker_id),
+              customer_block(worker_id),
+              history_block(worker_id) {
         INVARIANT(warehouse_id_start >= 1);
         INVARIANT(warehouse_id_start <= NumWarehouses());
         INVARIANT(warehouse_id_end > warehouse_id_start);
@@ -414,8 +419,8 @@ public:
         NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
         if (verbose) {
             cerr << "tpcc: worker id " << worker_id << " => warehouses [" << warehouse_id_start << ", "
-                 << warehouse_id_end
-                 << ")" << endl;
+                                                                                                << warehouse_id_end
+                                                                                                << ")" << endl;
         }
         obj_key0.reserve(str_arena::MinStrReserveLength);
         obj_key1.reserve(str_arena::MinStrReserveLength);
@@ -802,6 +807,7 @@ protected:
                 tuple.in_memory_ = true;
                 tuple.id_dict_ = dict_id;
                 tuple.is_cprd_ = true;
+                tuple.id_thread_ = worker_id;
             }
 
             block.n_tuple = 0;
@@ -2109,7 +2115,6 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             k_c.c_d_id = districtID;
             k_c.c_id = v_c_idx->c_id;
             ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
-            v_c = &customer_buffer;
         } else {
             // cust by ID
             const uint customerID = GetCustomerId(r);
@@ -2117,8 +2122,8 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             k_c.c_d_id = districtID;
             k_c.c_id = customerID;
             ALWAYS_ASSERT(FindCustomer(txn, k_c, warehouse_id, customer_buffer));
-            v_c = &customer_buffer;
         }
+        v_c = &customer_buffer;
         checker::SanityCheckCustomer(&k_c, v_c);
 
         string *newest_o_c_id = s_arena.get()->next();

@@ -131,14 +131,12 @@ class RamanTupleBlock {
 public:
     const size_t kBufferSize = 1024 * 8;
 
-    static int32_t block_counter;
-
 public:
     const int32_t id;
     int32_t n_tuple;
     std::vector<typename T::key> keys_;
 
-    RamanTupleBlock() : n_tuple(0), values_(kBufferSize), keys_(kBufferSize), id(block_counter++) {}
+    RamanTupleBlock(int32_t worker_id) : n_tuple(0), values_(kBufferSize), keys_(kBufferSize), id(worker_id) {}
 
 public:
     using key = typename T::key;
@@ -207,6 +205,3 @@ private:
         return compressors_[dict_id];
     }
 };
-
-template<typename T>
-int32_t RamanTupleBlock<T>::block_counter = 0;
