@@ -502,18 +502,12 @@ public:
 
     std::vector<uint64_t> get_table_size() override { return std::vector<uint64_t>{stat.total_mem_, stat.total_disk_}; }
 
-    uint64_t get_cpr_model_size() override {
-        uint64_t ret = 0;
-        ret += stock_block.Size() + order_block.Size() + order_line_block.Size() + customer_block.Size() +
-               history_block.Size();
-        return ret;
-    }
-
+    uint64_t get_cpr_model_size() override { return RamanDictionaryManager::GetInstance().GetSize(worker_id); }
 
     inline ALWAYS_INLINE size_t
     InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t w_id, bool update = true) {
         std::string &codes = Encode(str(), v);
-        o_tuple.Set(codes, true, -1, worker_id, order_block.CprNum(), false);
+        o_tuple.Set(codes, true, -1, worker_id, -1, false);
         if (update) tbl_oorder(w_id)->put(txn, Encode(str(), k), Serialize(str(), o_tuple));
         else {
             stat.Insert(codes.size(), true, "order");
@@ -521,10 +515,10 @@ public:
         }
 
         // raman block compression
-        auto tuples = RamanInsertOrderBlock(k, v);
+        auto tuples = RamanInsertBlockInternal(k, v, order_block);
         if (!tuples.empty()) {
             for (size_t i = 0; i < tuples.size(); ++i) {
-                auto &key = order_block.keys_[i];
+                auto &key = order_block.GetKeys(i);
                 auto &tuple = tuples[i];
                 uint32_t w_id = GetWarehouseID(key);
                 tbl_oorder(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
@@ -581,7 +575,7 @@ public:
         std::string &codes = Encode(str(), v);
         bool in_mem = stat.ToMemory(codes.size());
         if (likely(in_mem)) {
-            ol_tuple.Set(codes, true, -1, worker_id, order_line_block.CprNum(), false);
+            ol_tuple.Set(codes, true, -1, worker_id, -1, false);
             std::string &serial_str = Serialize(str(), ol_tuple);
             if (update) tbl_order_line(w_id)->put(txn, Encode(str(), k), serial_str);
             else {
@@ -590,14 +584,18 @@ public:
             }
 
             // raman block compression
-            auto tuples = RamanInsertOrderLineBlock(k, v);
+            auto tuples = RamanInsertBlockInternal(k, v, order_line_block);
             if (!tuples.empty()) {
                 size_t n = tuples.size();
                 for (size_t i = 0; i < tuples.size(); ++i) {
-                    auto &key = order_line_block.keys_[i];
+                    auto &key = order_line_block.GetKeys(i);
                     auto &tuple = tuples[i];
                     uint32_t w_id = GetWarehouseID(key);
                     tbl_order_line(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
+                    if (i % 256 == 0) {
+                        db->commit_txn(txn);
+                        txn = db->new_txn(txn_flags, arena, txn_buf());
+                    }
                 }
             }
 
@@ -606,7 +604,7 @@ public:
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(worker_id, 2);
             ol_disk.SeqDiskTupleWrite(&v);
 
-            ol_tuple.Set(codes, false, stat.n_ol_disk++, worker_id, order_line_block.CprNum(), false);
+            ol_tuple.Set(codes, false, stat.n_ol_disk++, worker_id, order_line_block.dict_num_, false);
             std::string &serial_str = Serialize(str(), ol_tuple);
             if (update) tbl_order_line(w_id)->put(txn, Encode(str(), k), serial_str);
             else {
@@ -638,14 +636,14 @@ public:
     }
 
     inline ALWAYS_INLINE size_t InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t w_id) {
-        s_tuple.Set(Encode(str(), v), true, -1, worker_id, stock_block.CprNum(), false);
+        s_tuple.Set(Encode(str(), v), true, -1, worker_id, -1, false);
         tbl_oorder(w_id)->put(txn, Encode(str(), k), Serialize(str(), s_tuple));
 
         // raman block compression
-        auto tuples = RamanInsertStockBlock(k, v);
+        auto tuples = RamanInsertBlockInternal(k, v, stock_block);
         if (!tuples.empty()) {
             for (size_t i = 0; i < tuples.size(); ++i) {
-                auto &key = stock_block.keys_[i];
+                auto &key = stock_block.GetKeys(i);
                 auto &tuple = tuples[i];
                 uint32_t w_id = GetWarehouseID(key);
                 tbl_stock(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
@@ -685,15 +683,15 @@ public:
 //        bool in_mem = stat.ToMemory(codes.size());
         bool in_mem = true;
         if (likely(in_mem)) {
-            c_tuple.Set(codes, true, -1, worker_id, customer_block.CprNum(), false);
+            c_tuple.Set(codes, true, -1, worker_id, -1, false);
             std::string &serial_str = Serialize(str(), c_tuple);
             tbl_customer(w_id)->put(txn, Encode(str(), k), serial_str);
 
             // raman block compression
-            auto tuples = RamanInsertCustomerBlock(k, v);
+            auto tuples = RamanInsertBlockInternal(k, v, customer_block);
             if (!tuples.empty()) {
                 for (size_t i = 0; i < tuples.size(); ++i) {
-                    auto &key = customer_block.keys_[i];
+                    auto &key = customer_block.GetKeys(i);
                     auto &tuple = tuples[i];
                     uint32_t w_id = GetWarehouseID(key);
                     tbl_customer(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
@@ -742,10 +740,9 @@ protected:
 
     using vector_tuple = std::vector<Tuple<std::string>>;
 
+    template<typename T>
     inline ALWAYS_INLINE vector_tuple
-    RamanInsertOrderBlock(const oorder::key &k, const oorder::value &v) {
-        RamanTupleBlock<oorder> &block = order_block;
-
+    RamanInsertBlockInternal(const typename T::key &k, const typename T::value &v, RamanTupleBlock<T> &block) {
         vector_tuple cpr_tuples;
         if (block.Insert(k, v)) {
             std::vector<std::string> compressed_codes;
@@ -755,83 +752,7 @@ protected:
             cpr_tuples.resize(block.n_tuple);
             for (size_t i = 0; i < block.n_tuple; ++i) {
                 auto &tuple = cpr_tuples[i];
-                tuple.data_ = std::move(compressed_codes[i]);
-                tuple.in_memory_ = true;
-                tuple.id_dict_ = dict_id;
-                tuple.is_cprd_ = true;
-            }
-
-            block.n_tuple = 0;
-        }
-        return cpr_tuples;
-    }
-
-    inline ALWAYS_INLINE vector_tuple
-    RamanInsertOrderLineBlock(const order_line::key &k, const order_line::value &v) {
-        RamanTupleBlock<order_line> &block = order_line_block;
-
-        vector_tuple cpr_tuples;
-        if (block.Insert(k, v)) {
-            std::vector<std::string> compressed_codes;
-            uint64_t dict_id;
-            block.BlockCompress(compressed_codes, dict_id);
-
-            cpr_tuples.resize(block.n_tuple);
-            for (size_t i = 0; i < block.n_tuple; ++i) {
-                auto &tuple = cpr_tuples[i];
-                tuple.data_ = std::move(compressed_codes[i]);
-                tuple.in_memory_ = true;
-                tuple.id_dict_ = dict_id;
-                tuple.is_cprd_ = true;
-            }
-
-            block.n_tuple = 0;
-        }
-        return cpr_tuples;
-    }
-
-    inline ALWAYS_INLINE vector_tuple
-    RamanInsertStockBlock(const stock::key &k, const stock::value &v) {
-        RamanTupleBlock<stock> &block = stock_block;
-
-        vector_tuple cpr_tuples;
-        if (block.Insert(k, v)) {
-            std::vector<std::string> compressed_codes;
-            uint64_t dict_id;
-            block.BlockCompress(compressed_codes, dict_id);
-
-            cpr_tuples.resize(block.n_tuple);
-            for (size_t i = 0; i < block.n_tuple; ++i) {
-                auto &tuple = cpr_tuples[i];
-                tuple.data_ = std::move(compressed_codes[i]);
-                tuple.in_memory_ = true;
-                tuple.id_dict_ = dict_id;
-                tuple.is_cprd_ = true;
-                tuple.id_thread_ = worker_id;
-            }
-
-            block.n_tuple = 0;
-        }
-        return cpr_tuples;
-    }
-
-    inline ALWAYS_INLINE vector_tuple
-    RamanInsertCustomerBlock(const customer::key &k, const customer::value &v) {
-        RamanTupleBlock<customer> &block = customer_block;
-
-        vector_tuple cpr_tuples;
-        if (block.Insert(k, v)) {
-            std::vector<std::string> compressed_codes;
-            uint64_t dict_id;
-            block.BlockCompress(compressed_codes, dict_id);
-
-            cpr_tuples.resize(block.n_tuple);
-            for (size_t i = 0; i < block.n_tuple; ++i) {
-                auto &tuple = cpr_tuples[i];
-                tuple.data_ = std::move(compressed_codes[i]);
-                tuple.in_memory_ = true;
-                tuple.id_dict_ = dict_id;
-                tuple.is_cprd_ = true;
+                tuple.SetBlockCompression(compressed_codes[i], worker_id, dict_id);
             }
 
             block.n_tuple = 0;
@@ -1787,7 +1708,7 @@ public:
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(new_order::key));
         INVARIANT(value.size() == sizeof(new_order::value));
-        // k_no = Decode(keyp, k_no_temp);
+        k_no = Decode(keyp, k_no_temp);
         return false;
     }
 
@@ -2448,7 +2369,6 @@ protected:
                                         wstart + 1, wend + 1));
             }
         }
-
         for (auto *worker: workers) {
             tpcc_worker *w = (tpcc_worker *) worker;
             w->stat.n_ol_mem = *n_order_line / nthreads;
@@ -2467,14 +2387,14 @@ protected:
             w->stat.total_mem_ =
                     w->stat.warehouse_mem_ + w->stat.item_mem_ + w->stat.district_mem_ + w->stat.customer_mem_ +
                     w->stat.stock_mem_ + w->stat.order_mem_ + w->stat.new_order_mem_ + w->stat.order_line_mem_;
-
-            w->stock_block.AddCompressor(stock_cpr->Copy());
-            w->order_line_block.AddCompressor(order_line_cpr->Copy());
-            w->order_block.AddCompressor(order_cpr->Copy());
-            w->customer_block.AddCompressor(customer_cpr->Copy());
-            w->history_block.AddCompressor(history_cpr->Copy());
-
         }
+
+        RamanDictionaryManager::GetInstance().AddCompressor(stock_cpr, 0, 0, 0);
+        RamanDictionaryManager::GetInstance().AddCompressor(stock_data_cpr, 0, 0, 1);
+        RamanDictionaryManager::GetInstance().AddCompressor(customer_cpr, 0, 0, 2);
+        RamanDictionaryManager::GetInstance().AddCompressor(history_cpr, 0, 0, 3);
+        RamanDictionaryManager::GetInstance().AddCompressor(order_cpr, 0, 0, 5);
+        RamanDictionaryManager::GetInstance().AddCompressor(order_line_cpr, 0, 0, 6);
 
         return workers;
     }

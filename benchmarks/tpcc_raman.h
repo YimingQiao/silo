@@ -1,5 +1,8 @@
 #pragma once
 
+
+#include <type_traits>
+
 #include "../util.h"
 #include "../third-party/libraman/bit_stream.h"
 #include "../third-party/libraman/canonical_code.h"
@@ -124,20 +127,62 @@ private:
     void SetNumFields(size_t num_fields) { stats_.resize(num_fields); }
 };
 
-// -------------------------------- Raman Tuple Block -------------------------------------\
+// -------------------------------- Raman Tuple Block -------------------------------------
+class RamanDictionaryManager {
+public:
+    // delete copy constructor and copy assignment operator
+    RamanDictionaryManager(const RamanDictionaryManager &) = delete;
+
+    RamanDictionaryManager &operator=(const RamanDictionaryManager &) = delete;
+
+    inline ALWAYS_INLINE static RamanDictionaryManager &GetInstance() {
+        static RamanDictionaryManager instance;  // Guaranteed to be destroyed. Initialized on first use.
+        return instance;
+    }
+
+    inline ALWAYS_INLINE void
+    AddCompressor(RamanCompressor *cpr, int64_t thread_id, int64_t cpr_id, int64_t tbl_id) {
+        int64_t idx = Encode(thread_id, cpr_id, tbl_id);
+        std::lock_guard <std::mutex> lock(mutex_);
+        ALWAYS_ASSERT(compressors_.count(idx) == 0);
+        compressors_[idx] = std::shared_ptr<RamanCompressor>(cpr);
+    }
+
+    inline ALWAYS_INLINE RamanCompressor &GetCompressor(int64_t thread_id, int64_t cpr_id, int64_t tbl_id) {
+        int64_t idx = Encode(thread_id, cpr_id, tbl_id);
+        std::lock_guard <std::mutex> lock(mutex_);
+        ALWAYS_ASSERT(compressors_.count(idx));
+        return *compressors_[idx];
+    }
+
+    inline ALWAYS_INLINE int64_t Encode(int64_t thread_id, int64_t cpr_id, int64_t tbl_id) {
+        return (((cpr_id << 3) + tbl_id) << 9) + thread_id;
+    }
+
+    inline ALWAYS_INLINE int64_t GetSize(int64_t thread) {
+        int64_t size = 0;
+        for (auto &cpr: compressors_) if ((cpr.first & 0xFF) == thread) size += cpr.second->Size();
+        return size;
+    }
+
+private:
+    RamanDictionaryManager() {}  // private constructor so that it can't be called
+    std::mutex mutex_;
+    std::map <int64_t, std::shared_ptr<RamanCompressor>> compressors_;
+};
 
 template<typename T>
 class RamanTupleBlock {
 public:
     const size_t kBufferSize = 1024 * 8;
+    const int32_t thread_id;
 
 public:
-    const int32_t id;
+    RamanTupleBlock(int32_t worker_id) : n_tuple(0), values_(kBufferSize), keys_(kBufferSize),
+                                         thread_id(worker_id), dict_num_(0) {}
+
     int32_t n_tuple;
-    std::vector<typename T::key> keys_;
-
-    RamanTupleBlock(int32_t worker_id) : n_tuple(0), values_(kBufferSize), keys_(kBufferSize), id(worker_id) {}
-
+    size_t dict_num_;
 public:
     using key = typename T::key;
     using value = typename T::value;
@@ -149,59 +194,55 @@ public:
     }
 
     uint64_t BlockCompress(vector_of_string &compressed_values, uint64_t &dict_id) {
-        // block learning
+        // format samples
         std::vector <std::vector<std::string>> samples;
         for (auto &sample: values_) samples.push_back(ToRamanFormat(sample));
+
+        // block learning
         RamanCompressor *cpr = new RamanCompressor();
         cpr->RamanLearning(samples);
-        compressors_.push_back(cpr);
+
+        // register compressor
+        dict_id = dict_num_++;
+        RamanDictionaryManager::GetInstance().AddCompressor(cpr, thread_id, dict_id, GetTableID());
 
         // block compress
         for (auto &sample: samples) compressed_values.push_back(cpr->RamanCompress(sample));
-
-        // set dict id
-        dict_id = compressors_.size() - 1;
 
         return cpr->Size();
     }
 
     inline ALWAYS_INLINE void Decompress(Tuple<std::string> &tuple, value &sample) {
         if (tuple.is_cprd_) {
-            RamanCompressor *cpr = GetCompressor(tuple.id_dict_);
-            cpr->RamanDecompress(tuple.data_, sample);
+            RamanCompressor &cpr = RamanDictionaryManager::GetInstance().GetCompressor(tuple.id_thread_, tuple.id_dict_,
+                                                                                       GetTableID());
+            cpr.RamanDecompress(tuple.data_, sample);
         } else {
             Decode(tuple.data_, sample);
-            if (CprNum() > tuple.id_dict_ && tuple.id_thread_ == id) {
-                RamanCompressor *cpr = GetCompressor(tuple.id_dict_);
-                std::string codes = cpr->RamanCompress(sample);
-                cpr->RamanDecompress(codes, sample);
+            if (dict_num_ > tuple.id_dict_ && tuple.id_thread_ == thread_id) {
+                RamanCompressor &cpr = RamanDictionaryManager::GetInstance().GetCompressor(tuple.id_thread_,
+                                                                                           tuple.id_dict_,
+                                                                                           GetTableID());
+                std::string codes = cpr.RamanCompress(sample);
+                cpr.RamanDecompress(codes, sample);
             }
         }
         return;
     }
 
-    inline ALWAYS_INLINE value &GetValue(key &key) {
-        for (int32_t i = 0; i < n_tuple; ++i) { if (keys_[i] == key) return &values_[i]; }
-        return nullptr;
+    inline ALWAYS_INLINE typename T::key &GetKeys(size_t idx) { return keys_[idx]; }
+
+    inline ALWAYS_INLINE int64_t GetTableID() {
+        if (std::is_same_v < T, stock >) return 0;
+        else if (std::is_same_v < T, stock_data >) return 1;
+        else if (std::is_same_v < T, customer >) return 2;
+        else if (std::is_same_v < T, history >) return 3;
+        else if (std::is_same_v < T, new_order >) return 4;
+        else if (std::is_same_v < T, oorder >) return 5;
+        else if (std::is_same_v < T, order_line >) return 6;
     }
-
-    inline ALWAYS_INLINE void AddCompressor(RamanCompressor *compressor) { compressors_.push_back(compressor); }
-
-    inline ALWAYS_INLINE uint32_t Size() {
-        uint32_t raman_dict_size = 0;
-        for (auto *compressor: compressors_) raman_dict_size += compressor->Size();
-        return raman_dict_size;
-    }
-
-    inline ALWAYS_INLINE uint32_t CprNum() { return compressors_.size(); }
 
 private:
+    std::vector<typename T::key> keys_;
     std::vector<typename T::value> values_;
-    std::vector<RamanCompressor *> compressors_;
-
-    inline ALWAYS_INLINE RamanCompressor *GetCompressor(int32_t dict_id) {
-        if (dict_id < 0 || dict_id >= compressors_.size())
-            throw std::runtime_error("Invalid dict id in GetCompressor");
-        return compressors_[dict_id];
-    }
 };

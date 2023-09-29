@@ -23,7 +23,7 @@ struct Tuple {
     int32_t id_dict_; // raman dict id
     int32_t is_cprd_; // whether this tuple is in buffer or compressed
 
-    Tuple() : in_memory_(false), data_(), id_pos_(-1), id_thread_(-1), id_dict_(-1), is_cprd_(true) {}
+    Tuple() : in_memory_(false), data_(), id_pos_(0), id_thread_(0), id_dict_(0), is_cprd_(true) {}
 
     inline ALWAYS_INLINE void
     Set(const T &data, bool in_memory = true, int64_t id_pos = 0, int64_t id_thread = 0, int64_t id_dict = 0,
@@ -36,19 +36,15 @@ struct Tuple {
         is_cprd_ = is_cprd;
     }
 
-    static inline ALWAYS_INLINE std::string &Serialize(std::string &s, const Tuple<T> &data) {
-        ALWAYS_ASSERT(data.id_thread_ >= -1 && data.id_thread_ <= 256);
-        ALWAYS_ASSERT(std::is_pod<Tuple<T>>::value);
+    inline ALWAYS_INLINE void SetBlockCompression(T &data, int64_t id_thread, int64_t id_dict) {
+        data_ = std::move(data);
+        id_thread_ = id_thread;
+        id_dict_ = id_dict;
 
-        s.resize(sizeof(data));
-        std::memcpy(&s[0], &data, sizeof(data));
-        return s;
-    }
+        in_memory_ = true;
+        is_cprd_ = true;
 
-    static inline ALWAYS_INLINE void Deserialize(const std::string &s, Tuple<T> &tuple) {
-        ALWAYS_ASSERT(s.size() == sizeof(tuple));
-
-        memcpy(&tuple, s.data(), sizeof(tuple));
+        id_pos_ = -1;
     }
 };
 
