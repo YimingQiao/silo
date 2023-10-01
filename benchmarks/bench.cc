@@ -342,8 +342,6 @@ void bench_runner::run() {
     std::vector <uint64_t> cpr_model_size(num_intervals, 0);
     std::vector <uint64_t> disk_size(num_intervals, 0);
     for (size_t i = 0; i < num_intervals; ++i) {
-        if (i != 0) cpr_model_size[i] = cpr_model_size[i - 1];
-
         for (auto *worker: workers) {
             if (worker->throughputs[i] == 0) {
                 num_intervals = i;
@@ -356,20 +354,23 @@ void bench_runner::run() {
         }
     }
     for (size_t i = 0; i < num_intervals; ++i) {
-        cerr << executed_txns[i] * nthreads << "\t" << double(throughputs[i]) << "\t"
-             << double(table_size[i] / (1 << 20)) << "\t" << double(disk_size[i]) / (1 << 20) << "\t"
-             << cpr_model_size[i] << "\n";
+        cerr << executed_txns[i] * nthreads << "\t"
+             << double(throughputs[i]) << "\t"
+             << double(table_size[i] / (1 << 20)) << "\t"
+             << double(disk_size[i]) / (1 << 20) << "\t"
+             << double(cpr_model_size[i]) / (1 << 20) << "\n";
     }
     cerr << "--------------------------------------\n";
 
     // output for plotting script
     ALWAYS_ASSERT(!table_size.empty());
-    double final_table_size = double(table_size.back()) / (1 << 20);
-    double model_size = double(cpr_model_size.back()) / (1 << 20);
-    cout << agg_throughput << " " << agg_persist_throughput << " " << avg_latency_ms << " " << avg_persist_latency_ms
-         << " " << agg_abort_rate
-         << " " << final_table_size
-         << " " << model_size
+    int64_t final_table_size = table_size[num_intervals - 1];
+    int64_t model_size = cpr_model_size[num_intervals - 1] / nthreads;
+    cout << agg_throughput << " "
+         << avg_latency_ms << " "
+         << agg_abort_rate << " "
+         << final_table_size << " "
+         << model_size << " "
          << endl;
     cout.flush();
 
@@ -380,9 +381,7 @@ void bench_runner::run() {
         map_agg(agg_stats, it->second->clear());
         delete it->second;
     }
-    if (verbose) {
-        for (auto &p: agg_stats) cerr << p.first << " : " << p.second << endl;
-    }
+    if (verbose) for (auto &p: agg_stats) cerr << p.first << " : " << p.second << endl;
     open_tables.clear();
 
     delete_pointers(loaders);
