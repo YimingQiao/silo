@@ -43,7 +43,7 @@ public:
                                            samples.size());
         if (ZDICT_isError(dict_size_)) {
             std::cout << "Error: " << ZDICT_getErrorName(dict_size_) << std::endl;
-            exit(1);
+            ALWAYS_ASSERT(false);
         }
         cdict_ = ZSTD_createCDict(dict_buffer_, dict_size_, kCompressLevel);
         ddict_ = ZSTD_createDDict(dict_buffer_, dict_size_);

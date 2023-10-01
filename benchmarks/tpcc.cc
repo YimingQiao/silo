@@ -1161,15 +1161,17 @@ protected:
                         if (c <= 1000) v.c_last.assign(GetCustomerLastName(r, c - 1));
                         else
                             v.c_last.assign(GetNonUniformCustomerLastNameLoad(r));
-                        v.c_first.assign(blitz_generator.CustomerString(16, "first_name"));
                         v.c_credit_lim = 50000;
                         v.c_delivery_cnt = blitz_generator.CustomerIntDist("delivery_cnt");
+
+                        v.c_first.assign(blitz_generator.CustomerString(16, "first_name"));
                         v.c_street_1.assign(blitz_generator.CustomerString(20, "street"));
                         v.c_street_2.assign(blitz_generator.DepartmentData(20));
                         v.c_city.assign(blitz_generator.CustomerString(20, "city"));
                         v.c_state.assign(blitz_generator.CustomerString(2, "state"));
                         v.c_zip.assign(blitz_generator.CustomerString(5, "zip") + "1111");
                         v.c_phone.assign(blitz_generator.PhoneData(16));
+
                         v.c_since = GetCurrentTimeMillis();
                         v.c_middle.assign("OE");
                         v.c_data.assign(blitz_generator.CustomerData(500, bad_credit));
