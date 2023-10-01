@@ -339,7 +339,7 @@ void bench_runner::run() {
     size_t num_intervals = executed_txns.size();
     std::vector<double> throughputs(num_intervals, 0);
     std::vector <uint64_t> table_size(num_intervals, 0);
-    std::vector <uint64_t> cpr_model_size(num_intervals, 0);
+    std::vector <uint64_t> &cpr_model_size = workers[0]->cpr_model_size;
     std::vector <uint64_t> disk_size(num_intervals, 0);
     for (size_t i = 0; i < num_intervals; ++i) {
         for (auto *worker: workers) {
@@ -348,7 +348,6 @@ void bench_runner::run() {
                 break;
             }
             throughputs[i] += worker->throughputs[i];
-            cpr_model_size[i] += worker->cpr_model_size[i];
             table_size[i] += worker->mem_size[i];
             disk_size[i] += worker->disk_size[i];
         }
@@ -363,15 +362,18 @@ void bench_runner::run() {
     cerr << "--------------------------------------\n";
 
     // output for plotting script
+    double training_time = workers[0]->get_training_time();
     ALWAYS_ASSERT(!table_size.empty());
     int64_t final_table_size = table_size[num_intervals - 1];
-    int64_t model_size = cpr_model_size[num_intervals - 1] / nthreads;
+    int64_t model_size = cpr_model_size[num_intervals - 1];
+    int64_t disk_model_size = disk_size[num_intervals - 1];
     cout << agg_throughput << " "
          << avg_latency_ms << " "
          << agg_abort_rate << " "
          << final_table_size << " "
+                             << disk_model_size << " "
          << model_size << " "
-         << endl;
+                             << training_time << " " << endl;
     cout.flush();
 
     if (!slow_exit) return;

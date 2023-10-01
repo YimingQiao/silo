@@ -113,6 +113,7 @@ public:
             raman::CanonicalCode code(tree, stat.getSymbolLimit());
             ret->forest_.push_back(code.toCodeTree());
         }
+        ret->training_time_ = training_time_;
         return ret;
     }
 
@@ -123,7 +124,11 @@ public:
         return ret;
     }
 
+    double GetTrainingTime() { return training_time_; }
+
 private:
+    double training_time_;
+
     void SetNumFields(size_t num_fields) { stats_.resize(num_fields); }
 };
 
@@ -159,9 +164,9 @@ public:
         return (((cpr_id << 3) + tbl_id) << 9) + thread_id;
     }
 
-    inline ALWAYS_INLINE int64_t GetSize(int64_t thread) {
+    inline ALWAYS_INLINE int64_t GetSize() {
         int64_t size = 0;
-        for (auto &cpr: compressors_) if ((cpr.first & 0xFF) == thread) size += cpr.second->Size();
+        for (auto &cpr: compressors_) size += cpr.second->Size();
         return size;
     }
 
@@ -174,7 +179,7 @@ private:
 template<typename T>
 class RamanTupleBlock {
 public:
-    const size_t kBufferSize = 1024 * 16;
+    const size_t kBufferSize = 1024 * 256;
     const int32_t thread_id;
 
 public:

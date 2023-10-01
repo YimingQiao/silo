@@ -190,6 +190,8 @@ public:
 
     virtual std::vector <uint64_t> get_table_size() { return std::vector<uint64_t>(); }
 
+    virtual double get_training_time() { return 0; }
+
     virtual void print_extra_stats() {}
 
     typedef abstract_db::counter_map counter_map;

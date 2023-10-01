@@ -397,6 +397,8 @@ public:
     stock::value stock_buffer;
     stock_data::value stock_data_buffer;
 
+    double training_time_;
+
     // resp for [warehouse_id_start, warehouse_id_end)
     tpcc_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
                 const map<string, abstract_ordered_index *> &open_tables,
@@ -502,7 +504,7 @@ public:
 
     std::vector<uint64_t> get_table_size() override { return std::vector<uint64_t>{stat.total_mem_, stat.total_disk_}; }
 
-    uint64_t get_cpr_model_size() override { return RamanDictionaryManager::GetInstance().GetSize(worker_id); }
+    uint64_t get_cpr_model_size() override { return RamanDictionaryManager::GetInstance().GetSize(); }
 
     inline ALWAYS_INLINE size_t
     InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t w_id, bool update = true) {
@@ -542,6 +544,8 @@ public:
         }
         return success;
     }
+
+    double get_training_time() override { return training_time_; }
 
     inline ALWAYS_INLINE size_t
     InsertNewOrder(void *txn, const new_order::key &k, const new_order::value &v, size_t w_id) {
@@ -2369,6 +2373,11 @@ protected:
                                         wstart + 1, wend + 1));
             }
         }
+
+        double training_time =
+                stock_cpr->GetTrainingTime() + stock_data_cpr->GetTrainingTime() + customer_cpr->GetTrainingTime() +
+                history_cpr->GetTrainingTime() + order_cpr->GetTrainingTime() + order_line_cpr->GetTrainingTime();
+
         for (auto *worker: workers) {
             tpcc_worker *w = (tpcc_worker *) worker;
             w->stat.n_ol_mem = *n_order_line / nthreads;
@@ -2387,7 +2396,10 @@ protected:
             w->stat.total_mem_ =
                     w->stat.warehouse_mem_ + w->stat.item_mem_ + w->stat.district_mem_ + w->stat.customer_mem_ +
                     w->stat.stock_mem_ + w->stat.order_mem_ + w->stat.new_order_mem_ + w->stat.order_line_mem_;
+
+            w->training_time_ = training_time;
         }
+
 
         RamanDictionaryManager::GetInstance().AddCompressor(stock_cpr, 0, 0, 0);
         RamanDictionaryManager::GetInstance().AddCompressor(stock_data_cpr, 0, 0, 1);
