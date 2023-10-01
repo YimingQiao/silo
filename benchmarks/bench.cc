@@ -371,6 +371,7 @@ void bench_runner::run() {
          << agg_abort_rate << " "
          << final_table_size << " "
          << model_size << " "
+                       << 0 << " "
          << endl;
     cout.flush();
 
