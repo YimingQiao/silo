@@ -500,6 +500,11 @@ public:
                order_zstd->GetDictSize() + customer_zstd->GetDictSize();
     }
 
+    double get_training_time() override {
+        return stock_zstd->GetTrainingTime() + stock_data_zstd->GetTrainingTime() + order_line_zstd->GetTrainingTime() +
+               order_zstd->GetTrainingTime() + customer_zstd->GetTrainingTime();
+    }
+
     inline ALWAYS_INLINE size_t
     InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, bool update = true) {
         std::string codes = order_zstd->ZstdCompress(v);

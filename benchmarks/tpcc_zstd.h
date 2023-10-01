@@ -8,6 +8,7 @@
 #include "../third-party/libzstd/zdict.h"
 #include "../third-party/libzstd/common.h"
 #include "../macros.h"
+#include "../util.h"
 
 template<typename T>
 class ZSTDTable {
@@ -38,9 +39,13 @@ public:
         std::vector <T> &samples = table.table_;
         std::vector <size_t> sample_sizes(samples.size(), table.sample_size_);
 
-        dict_size_ = ZDICT_trainFromBuffer(dict_buffer_, kDictCapacity,
-                                           samples.data(), sample_sizes.data(),
-                                           samples.size());
+        {
+            util::scoped_timer t("ZSTD::Train", true, &training_time_);
+            dict_size_ = ZDICT_trainFromBuffer(dict_buffer_, kDictCapacity,
+                                               samples.data(), sample_sizes.data(),
+                                               samples.size());
+        }
+
         if (ZDICT_isError(dict_size_)) {
             std::cout << "Error: " << ZDICT_getErrorName(dict_size_) << std::endl;
             ALWAYS_ASSERT(false);
@@ -69,12 +74,17 @@ public:
         ret->cdict_ = ZSTD_createCDict(dict_buffer_, dict_size_, kCompressLevel);
         ret->ddict_ = ZSTD_createDDict(dict_buffer_, dict_size_);
         ret->dict_size_ = dict_size_;
+        ret->training_time_ = training_time_;
         return ret;
     }
 
     size_t GetDictSize() { return dict_size_; }
 
+    double GetTrainingTime() { return training_time_; }
+
 private:
+    double training_time_;
+
     ZSTD_CCtx *const cctx_;
     ZSTD_DCtx *const dctx_;
 
