@@ -502,6 +502,11 @@ public:
                customer_blitz->ModelSize() + customer_data_blitz->ModelSize();
     }
 
+    double get_training_time() override {
+        return stock_blitz->TrainingTime() + stock_data_blitz->TrainingTime() + order_line_blitz->TrainingTime() +
+               customer_blitz->TrainingTime() + customer_data_blitz->TrainingTime();
+    }
+
     inline ALWAYS_INLINE size_t
     InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, bool update = true) {
         tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));

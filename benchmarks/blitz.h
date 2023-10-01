@@ -279,7 +279,7 @@ public:
 
         cpr_ = new db_compress::RelationCompressor(name_.c_str(), schema_, config_, kBlockSize);
         {
-            util::scoped_timer t(name_, verbose);
+            util::scoped_timer t(name_, verbose, &training_time_);
             BlitzLearning(table, *cpr_);
         }
         dpr_ = new db_compress::RelationDecompressor(name_.c_str(), schema_, kBlockSize);
@@ -298,10 +298,15 @@ public:
         ret->dpr_ = new db_compress::RelationDecompressor(name_.c_str(), schema_, kBlockSize);
         ret->dpr_->InitWithoutIndex();
         ret->model_size_ = model_size_;
+        ret->training_time_ = training_time_;
         return ret;
     }
 
+    double TrainingTime() { return training_time_; }
+
 private:
+    double training_time_;
+
     std::string name_;
     db_compress::Schema schema_;
     db_compress::CompressionConfig config_;

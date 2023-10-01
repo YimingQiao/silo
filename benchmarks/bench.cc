@@ -363,15 +363,18 @@ void bench_runner::run() {
     cerr << "--------------------------------------\n";
 
     // output for plotting script
+    double training_time = workers[0]->get_training_time();
     ALWAYS_ASSERT(!table_size.empty());
     int64_t final_table_size = table_size[num_intervals - 1];
     int64_t model_size = cpr_model_size[num_intervals - 1] / nthreads;
+    int64_t disk_model_size = disk_size[num_intervals - 1];
     cout << agg_throughput << " "
          << avg_latency_ms << " "
          << agg_abort_rate << " "
          << final_table_size << " "
+                             << disk_model_size << " "
          << model_size << " "
-         << endl;
+                             << training_time << " " << endl;
     cout.flush();
 
     if (!slow_exit) return;
