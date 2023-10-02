@@ -234,7 +234,7 @@ masstree/configure masstree/config.h.in: masstree/configure.ac
 dbtest: $(O)/benchmarks/dbtest
 
 $(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES) third-party/lz4/liblz4.so third-party/libzstd/libzstd.a
-	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) $(ZSTDLDFLAGS)
+	$(CXX) -o $(O)/benchmarks/tpcc_zstd $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) $(ZSTDLDFLAGS)
 
 .PHONY: kvtest
 kvtest: $(O)/benchmarks/masstree/kvtest
