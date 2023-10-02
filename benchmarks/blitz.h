@@ -68,6 +68,8 @@ public:
 
     inline ALWAYS_INLINE void Clear() { table_.clear(); }
 
+    inline ALWAYS_INLINE void PushTuple(db_compress::AttrVector &tuple) { table_.push_back(tuple); }
+
 protected:
     db_compress::AttrVector buffer_;
     std::vector <db_compress::AttrVector> table_;
@@ -277,10 +279,16 @@ public:
         schema_ = table.Schema();
         config_ = table.CompressionConfig();
 
+        // training using 8 warehouses
+        size_t target_n_warehouse = 8;
+        size_t jump = std::max(int(scale_factor / target_n_warehouse), 1);
+        BlitzTable training_table(table.Schema().size());
+        for (size_t i = 0; i < table.RowsNum(); i += jump) training_table.PushTuple(table.GetTuple(i));
+
         cpr_ = new db_compress::RelationCompressor(name_.c_str(), schema_, config_, kBlockSize);
         {
             util::scoped_timer t(name_, verbose, &training_time_);
-            BlitzLearning(table, *cpr_);
+            BlitzLearning(training_table, *cpr_);
         }
         dpr_ = new db_compress::RelationDecompressor(name_.c_str(), schema_, kBlockSize);
         dpr_->InitWithoutIndex();
