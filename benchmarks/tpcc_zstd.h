@@ -9,6 +9,7 @@
 #include "../third-party/libzstd/common.h"
 #include "../macros.h"
 #include "../util.h"
+#include "bench.h"
 
 template<typename T>
 class ZSTDTable {
@@ -36,22 +37,30 @@ public:
              dict_size_(0), codes(ZSTD_compressBound(sizeof(T)), '\0') {}
 
     void Train(ZSTDTable<T> &table) {
-        std::vector <T> &samples = table.table_;
-        std::vector <size_t> sample_sizes(samples.size(), table.sample_size_);
+        // training using 8 warehouses
+        size_t target_n_warehouse = 8;
+        size_t jump = std::max(int(scale_factor / target_n_warehouse), 1);
+        std::vector <T> samples;
+        std::vector <size_t> sample_sizes;
+        for (size_t i = 0; i < table.table_.size(); i += jump) {
+            samples.push_back(table.table_[i]);
+            sample_sizes.push_back(table.sample_size_);
+        }
 
         {
             util::scoped_timer t("ZSTD::Train", true, &training_time_);
             dict_size_ = ZDICT_trainFromBuffer(dict_buffer_, kDictCapacity,
                                                samples.data(), sample_sizes.data(),
                                                samples.size());
-        }
 
-        if (ZDICT_isError(dict_size_)) {
-            std::cout << "Error: " << ZDICT_getErrorName(dict_size_) << std::endl;
-            ALWAYS_ASSERT(false);
+
+            if (ZDICT_isError(dict_size_)) {
+                std::cout << "Error: " << ZDICT_getErrorName(dict_size_) << std::endl;
+                ALWAYS_ASSERT(false);
+            }
+            cdict_ = ZSTD_createCDict(dict_buffer_, dict_size_, kCompressLevel);
+            ddict_ = ZSTD_createDDict(dict_buffer_, dict_size_);
         }
-        cdict_ = ZSTD_createCDict(dict_buffer_, dict_size_, kCompressLevel);
-        ddict_ = ZSTD_createDDict(dict_buffer_, dict_size_);
     }
 
     inline ALWAYS_INLINE std::string ZstdCompress(const T &src) {
