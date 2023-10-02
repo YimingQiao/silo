@@ -237,7 +237,7 @@ masstree/configure masstree/config.h.in: masstree/configure.ac
 dbtest: $(O)/benchmarks/dbtest
 
 $(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES) third-party/libraman/build/libraman.a
-	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) $(RAMANLDFLAGS)
+	$(CXX) -o $(O)/benchmarks/tpcc_raman $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) $(RAMANLDFLAGS)
 
 .PHONY: kvtest
 kvtest: $(O)/benchmarks/masstree/kvtest
