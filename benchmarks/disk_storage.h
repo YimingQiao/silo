@@ -7,6 +7,8 @@
 #include <utility>
 #include <stdexcept>
 #include <vector>
+#include <random>
+
 #include "../record/encoder.h"
 #include "tpcc.h"
 
@@ -228,7 +230,12 @@ public:
 
     void AddFile(int64_t thread_id, const std::string &filename) {
         int64_t idx = Encode(thread_id, filename);
-        std::string name = std::to_string(thread_id) + "_" + filename + "_" + std::to_string(rand()) + ".tbl";
+
+        // random seed
+        std::random_device rd;
+        std::mt19937 random_rng(rd());
+
+        std::string name = std::to_string(thread_id) + "_" + filename + "_" + std::to_string(random_rng()) + ".tbl";
         files_[idx] = std::make_shared<FileDescriptor>(name);
     }
 
