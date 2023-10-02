@@ -231,7 +231,7 @@ masstree/configure masstree/config.h.in: masstree/configure.ac
 dbtest: $(O)/benchmarks/dbtest
 
 $(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES)
-	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS)
+	$(CXX) -o $(O)/benchmarks/tpcc_orig $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS)
 
 .PHONY: kvtest
 kvtest: $(O)/benchmarks/masstree/kvtest
