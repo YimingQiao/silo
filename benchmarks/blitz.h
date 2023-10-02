@@ -266,8 +266,12 @@ public:
     db_compress::RelationDecompressor *dpr_;
 
     explicit Blitzcrank(const std::string &name)
-            : name_(std::to_string(rand()) + "_" + name + "_model.blitz"),
-              cpr_(nullptr), dpr_(nullptr), model_size_(0) {}
+            : cpr_(nullptr), dpr_(nullptr), model_size_(0) {
+        // random seed
+        std::random_device rd;
+        std::mt19937 random_rng(rd());
+        name_ = name + "_model_" + std::to_string(random_rng()) + ".blitz";
+    }
 
     Blitzcrank(const Blitzcrank &other) {
         name_ = other.name_;
