@@ -237,7 +237,7 @@ masstree/configure masstree/config.h.in: masstree/configure.ac
 dbtest: $(O)/benchmarks/dbtest
 
 $(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(BENCH_OBJFILES) third-party/lz4/liblz4.so third-party/libblitz/build/libdb_compress.a
-	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) ${BlitzLDFLAGS}
+	$(CXX) -o $(O)/benchmarks/tpcc_blitz $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) ${BlitzLDFLAGS}
 
 .PHONY: kvtest
 kvtest: $(O)/benchmarks/masstree/kvtest
