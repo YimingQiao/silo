@@ -155,12 +155,12 @@ public:
 
     OrderLineBlitz() : BlitzTable(kNumAttrs) {
         config_ = {
-                {kInteger, 0,  0.5},
-                {kDouble,  0,  0.0025},
-                {kEnum,    64, 0},
-                {kEnum,    10, 0},
-                {kInteger, 0,  0.5},
-                {kString,  0,  0},
+                {kInteger, 0,    0.5},
+                {kDouble,  0,    0.0025},
+                {kEnum,    1024, 0},
+                {kEnum,    10,   0},
+                {kInteger, 0,    0.5},
+                {kString,  0,    0},
         };
         RegisterAttrInterpreter();
     }
@@ -284,7 +284,7 @@ public:
         config_ = table.CompressionConfig();
 
         // training using 8 warehouses
-        size_t target_n_warehouse = 8;
+        size_t target_n_warehouse = 16;
         size_t jump = std::max(int(scale_factor / target_n_warehouse), 1);
         BlitzTable training_table(table.Schema().size());
         for (size_t i = 0; i < table.RowsNum(); i += jump) training_table.PushTuple(table.GetTuple(i));
