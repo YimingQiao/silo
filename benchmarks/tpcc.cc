@@ -481,71 +481,67 @@ public:
     std::vector<uint64_t> get_table_size() { return std::vector<uint64_t>{stat.total_mem_, stat.total_disk_}; }
 
     inline ALWAYS_INLINE size_t
-    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t warehouse_id, bool update = true) {
+    InsertOrder(void *txn, const oorder::key &k, const oorder::value &v, size_t w_id, bool update = true) {
         size_t sz = Size(v);
-        if (update) tbl_oorder(warehouse_id)->put(txn, Encode(str(), k), Encode(str(), v));
+        if (update) tbl_oorder(w_id)->put(txn, Encode(str(), k), Encode(str(), v));
         else {
             stat.Insert(sz, true, "order");
-            tbl_oorder(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+            tbl_oorder(w_id)->insert(txn, Encode(str(), k), Encode(str(), v));
         }
         return sz;
     }
 
     inline ALWAYS_INLINE bool
-    FindOrder(void *txn, const oorder::key &k, size_t warehouse_id, oorder::value &v) {
-        bool success = tbl_oorder(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+    FindOrder(void *txn, const oorder::key &k, size_t w_id, oorder::value &v) {
+        bool success = tbl_oorder(w_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (success) Decode(obj_v, v);
         return success;
     }
 
     inline ALWAYS_INLINE size_t
-    InsertNewOrder(void *txn, const new_order::key &k, const new_order::value &v, size_t warehouse_id) {
-        tbl_new_order(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+    InsertNewOrder(void *txn, const new_order::key &k, const new_order::value &v, size_t w_id) {
+        tbl_new_order(w_id)->insert(txn, Encode(str(), k), Encode(str(), v));
         size_t sz = Size(v);
         stat.Insert(sz, true, "new_order");
         return Size(v);
     }
 
-    inline ALWAYS_INLINE bool
-    FindNewOrder(void *txn, const new_order::key &k, size_t warehouse_id, new_order::value &v) {
-        bool success = tbl_new_order(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+    inline ALWAYS_INLINE bool FindNewOrder(void *txn, const new_order::key &k, size_t w_id, new_order::value &v) {
+        bool success = tbl_new_order(w_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (success) Decode(obj_v, v);
         return success;
     }
 
-    inline ALWAYS_INLINE size_t
-    InsertHistory(void *txn, const history::key &k, const history::value &v, size_t warehouse_id) {
-        tbl_history(warehouse_id)->insert(txn, Encode(str(), k), Encode(str(), v));
+    inline ALWAYS_INLINE size_t InsertHistory(void *txn, const history::key &k, const history::value &v, size_t w_id) {
+        tbl_history(w_id)->insert(txn, Encode(str(), k), Encode(str(), v));
         size_t sz = Size(v);
         stat.Insert(sz, true, "history");
         return Size(v);
     }
 
-    inline ALWAYS_INLINE bool
-    FindHistory(void *txn, const history::key &k, size_t warehouse_id, history::value &v) {
-        bool success = tbl_history(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+    inline ALWAYS_INLINE bool FindHistory(void *txn, const history::key &k, size_t w_id, history::value &v) {
+        bool success = tbl_history(w_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (success) Decode(obj_v, v);
         return success;
     }
 
     inline ALWAYS_INLINE size_t
-    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t warehouse_id,
-                    bool update = true) {
-        return InsertOrderLine(txn, Encode(str(), k), v, warehouse_id, update);
+    InsertOrderLine(void *txn, const order_line::key &k, const order_line::value &v, size_t w_id, bool update = true) {
+        return InsertOrderLine(txn, Encode(str(), k), v, w_id, update);
     }
 
     inline ALWAYS_INLINE size_t
-    InsertOrderLine(void *txn, const std::string &k_encoded, const order_line::value &v, size_t warehouse_id,
+    InsertOrderLine(void *txn, const std::string &k_encoded, const order_line::value &v, size_t w_id,
                     bool update = true) {
         size_t sz = Size(v);
         bool in_mem = stat.ToMemory(sz);
         if (likely(in_mem)) {
             ol_tuple.Set(v, true, stat.n_ol_mem++, worker_id);
             std::string &serial_str = Tuple<order_line::value>::Serialize(str(), ol_tuple);
-            if (update) tbl_order_line(warehouse_id)->put(txn, k_encoded, serial_str);
+            if (update) tbl_order_line(w_id)->put(txn, k_encoded, serial_str);
             else {
                 stat.Insert(sz, true, "order_line");
-                tbl_order_line(warehouse_id)->insert(txn, k_encoded, serial_str);
+                tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
             }
         } else {
             FileDescriptor &ol_disk = FileManager::GetInstance().GetDescriptor(worker_id, 2);
@@ -553,18 +549,18 @@ public:
 
             ol_tuple.Set(v, false, stat.n_ol_disk++, worker_id);
             std::string &serial_str = Tuple<order_line::value>::Serialize(str(), ol_tuple);
-            if (update) tbl_order_line(warehouse_id)->put(txn, k_encoded, serial_str);
+            if (update) tbl_order_line(w_id)->put(txn, k_encoded, serial_str);
             else {
                 stat.Insert(sz, false, "order_line");
-                tbl_order_line(warehouse_id)->insert(txn, k_encoded, serial_str);
+                tbl_order_line(w_id)->insert(txn, k_encoded, serial_str);
             }
         }
         return sz;
     }
 
     inline ALWAYS_INLINE bool
-    FindOrderLine(void *txn, const order_line::key &k, size_t warehouse_id, order_line::value &v) {
-        bool success = tbl_order_line(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+    FindOrderLine(void *txn, const order_line::key &k, size_t w_id, order_line::value &v) {
+        bool success = tbl_order_line(w_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (success) {
             FindOrderLineInternal(obj_v, v, ol_tuple);
             if (!ol_tuple.in_memory_) stat.SwapTuple(Size(v), "order_line");
@@ -583,29 +579,28 @@ public:
     }
 
     inline ALWAYS_INLINE size_t
-    InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t warehouse_id) {
+    InsertStock(void *txn, const stock::key &k, const stock::value &v, size_t w_id) {
         size_t sz = Size(v);
         // bool in_mem = stat.ToMemory(sz);
         bool in_mem = true;
         if (likely(in_mem)) {
             s_tuple.Set(v);
-            tbl_stock(warehouse_id)->put(txn, Encode(str(), k), Tuple<stock::value>::Serialize(str(), s_tuple));
+            tbl_stock(w_id)->put(txn, Encode(str(), k), Tuple<stock::value>::Serialize(str(), s_tuple));
         } else {
             FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(worker_id, 1);
             s_disk.SeqDiskTupleWrite(&v);
 
             s_tuple.Set(v, false, stat.n_s_disk++, worker_id);
-            tbl_stock(warehouse_id)->put(txn, Encode(str(), k), Tuple<stock::value>::Serialize(str(), s_tuple));
+            tbl_stock(w_id)->put(txn, Encode(str(), k), Tuple<stock::value>::Serialize(str(), s_tuple));
         }
         return sz;
     }
 
     inline ALWAYS_INLINE bool
-    FindStock(void *txn, const stock::key &k, size_t warehouse_id, stock::value &v) {
-        string str;
-        bool success = tbl_stock(warehouse_id)->get(txn, Encode(obj_key0, k), str);
+    FindStock(void *txn, const stock::key &k, size_t w_id, stock::value &v) {
+        bool success = tbl_stock(w_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (likely(success)) {
-            Tuple<stock::value>::Deserialize(str, s_tuple);
+            Tuple<stock::value>::Deserialize(obj_v, s_tuple);
             if (!s_tuple.in_memory_) {
                 FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(s_tuple.id_thread_, 1);
                 s_disk.DiskTupleRead(&s_tuple.data_, s_tuple.id_pos_);
@@ -617,36 +612,36 @@ public:
     }
 
     inline ALWAYS_INLINE bool
-    FindStock(void *txn, const stock::key &k, size_t warehouse_id, std::string &v_data,
+    FindStock(void *txn, const stock::key &k, size_t w_id, std::string &v_data,
               size_t max_bytes_read = std::string::npos) {
         // The first 2 bytes of Encode(Tuple(Encode(v))) are also the first 2 bytes of Encode(v)
-        bool success = tbl_stock(warehouse_id)->get(txn, Encode(obj_key0, k), v_data, max_bytes_read);
+        bool success = tbl_stock(w_id)->get(txn, Encode(obj_key0, k), v_data, max_bytes_read);
         return success;
     }
 
     inline ALWAYS_INLINE size_t
-    InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t warehouse_id) {
+    InsertCustomer(void *txn, const customer::key &k, const customer::value &v, size_t w_id) {
         size_t sz = Size(v);
         // bool in_mem = stat.ToMemory(sz);
         bool in_mem = true;
         if (likely(in_mem)) {
             c_tuple.Set(v, true, stat.n_ol_mem++, worker_id);
             std::string &serial_str = Tuple<customer::value>::Serialize(str(), c_tuple);
-            tbl_order_line(warehouse_id)->put(txn, Encode(str(), k), serial_str);
+            tbl_order_line(w_id)->put(txn, Encode(str(), k), serial_str);
         } else {
             FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(worker_id, 0);
             c_disk.SeqDiskTupleWrite(&v);
 
             c_tuple.Set(v, false, stat.n_c_disk++, worker_id);
             std::string &serial_str = Tuple<customer::value>::Serialize(str(), c_tuple);
-            tbl_customer(warehouse_id)->put(txn, Encode(str(), k), serial_str);
+            tbl_customer(w_id)->put(txn, Encode(str(), k), serial_str);
         }
         return sz;
     }
 
     inline ALWAYS_INLINE bool
-    FindCustomer(void *txn, const customer::key &k, size_t warehouse_id, customer::value &v) {
-        bool success = tbl_customer(warehouse_id)->get(txn, Encode(obj_key0, k), obj_v);
+    FindCustomer(void *txn, const customer::key &k, size_t w_id, customer::value &v) {
+        bool success = tbl_customer(w_id)->get(txn, Encode(obj_key0, k), obj_v);
         if (likely(success)) {
             Tuple<customer::value>::Deserialize(obj_v, c_tuple);
             if (!c_tuple.in_memory_) {
@@ -1269,12 +1264,12 @@ protected:
                         } else {
                             db->abort_txn(txn);
                             ALWAYS_ASSERT(warehouse_id != -1);
-                            if (verbose) cerr << "[WARNING] order loader loading abort" << endl;
+                            cerr << "[WARNING] order loader loading abort" << endl;
                         }
                     } catch (abstract_db::abstract_abort_exception &ex) {
                         db->abort_txn(txn);
                         ALWAYS_ASSERT(warehouse_id != -1);
-                        if (verbose) cerr << "[WARNING] order loader loading abort" << endl;
+                        cerr << "[WARNING] order loader loading abort" << endl;
                     }
                 }
             }
@@ -1445,7 +1440,6 @@ tpcc_worker::txn_result tpcc_worker::txn_new_order() {
             v_ol.ol_quantity = int8_t(ol_quantity);
             ret += InsertOrderLine(txn, k_ol, v_ol, warehouse_id, false);
         }
-
         measure_txn_counters(txn, "txn_new_order");
         if (likely(db->commit_txn(txn))) return txn_result(true, ret);
     } catch (abstract_db::abstract_abort_exception &ex) { db->abort_txn(txn); }
@@ -1460,11 +1454,6 @@ public:
         INVARIANT(keylen == sizeof(new_order::key));
         INVARIANT(value.size() == sizeof(new_order::value));
         k_no = Decode(keyp, k_no_temp);
-#ifdef CHECK_INVARIANTS
-        new_order::value v_no_temp;
-        const new_order::value *v_no = Decode(value, v_no_temp);
-        checker::SanityCheckNewOrder(k_no, v_no);
-#endif
         return false;
     }
 
@@ -1539,8 +1528,8 @@ tpcc_worker::txn_result tpcc_worker::txn_delivery() {
             tbl_order_line(warehouse_id)->scan(txn, Encode(obj_key0, k_oo_0), &Encode(obj_key1, k_oo_1), c,
                                                s_arena.get());
             float sum = 0.0;
+            order_line::value v_ol;
             for (size_t i = 0; i < c.size(); i++) {
-                order_line::value v_ol;
                 FindOrderLineInternal(*c.values[i].second, v_ol, ol_tuple);
 
                 sum += v_ol.ol_amount;
@@ -1807,7 +1796,8 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             // are making it worse for us)
             latest_key_callback c_oorder(*newest_o_c_id, (r.next() % 15) + 1);
             const oorder_c_id_idx::key k_oo_idx_0(warehouse_id, districtID, k_c.c_id, 0);
-            const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
+            const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id,
+                                                  numeric_limits<int32_t>::max());
             {
                 ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
                 tbl_oorder_c_id_idx(warehouse_id)
@@ -1817,7 +1807,8 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
             ALWAYS_ASSERT(c_oorder.size());
         } else {
             latest_key_callback c_oorder(*newest_o_c_id, 1);
-            const oorder_c_id_idx::key k_oo_idx_hi(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
+            const oorder_c_id_idx::key k_oo_idx_hi(warehouse_id, districtID, k_c.c_id,
+                                                   numeric_limits<int32_t>::max());
             tbl_oorder_c_id_idx(warehouse_id)->rscan(txn, Encode(obj_key0, k_oo_idx_hi), nullptr, c_oorder,
                                                      s_arena.get());
             ALWAYS_ASSERT(c_oorder.size() == 1);
@@ -1846,8 +1837,7 @@ public:
 
     virtual bool invoke(const char *keyp, size_t keylen, const string &value) {
         INVARIANT(keylen == sizeof(order_line::key));
-        order_line::value v_ol;
-        Tuple<order_line::value> ol_tuple;
+        if (value.size() != sizeof(Tuple<order_line::value>)) return true;// skip
         tpcc_worker::FindOrderLineInternal(value, v_ol, ol_tuple);
 
         s_i_ids[v_ol.ol_i_id] = 1;
@@ -1857,6 +1847,9 @@ public:
 
     size_t n;
     small_unordered_map<uint, bool, 512> s_i_ids;
+
+    order_line::value v_ol;
+    Tuple<order_line::value> ol_tuple;
 };
 
 STATIC_COUNTER_DECL(scopedperf::tod_ctr, stock_level_probe0_tod, stock_level_probe0_cg)
