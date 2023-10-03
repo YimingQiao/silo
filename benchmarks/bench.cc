@@ -365,16 +365,20 @@ void bench_runner::run() {
     // output for plotting script
     double training_time = workers[0]->get_training_time();
     ALWAYS_ASSERT(!table_size.empty());
+    ALWAYS_ASSERT(num_intervals >= 5);
+    double throughput = 0;
+    for (size_t i = num_intervals - 1; i >= num_intervals - 5; --i) throughput += double(throughputs[i]) / 5;
     int64_t final_table_size = table_size[num_intervals - 1];
     int64_t model_size = cpr_model_size[num_intervals - 1] / nthreads;
     int64_t disk_model_size = disk_size[num_intervals - 1];
-    cout << agg_throughput << " "
+
+    cout << throughput << " "
          << avg_latency_ms << " "
          << agg_abort_rate << " "
          << final_table_size << " "
-                             << disk_model_size << " "
+         << disk_model_size << " "
          << model_size << " "
-                             << training_time << " " << endl;
+         << training_time << " " << endl;
     cout.flush();
 
     if (!slow_exit) return;
