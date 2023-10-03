@@ -652,7 +652,7 @@ public:
             if (!s_tuple.in_memory_) {
                 FileDescriptor &s_disk = FileManager::GetInstance().GetDescriptor(s_tuple.id_thread_, 1);
                 s_disk.DiskTupleRead(&v, s_tuple.id_pos_);
-                stat.SwapTuple(s_tuple.data_.size(), "stock");
+                stat.SwapTuple(Size(v), "stock");
             } else stock_zstd->ZstdDecompress(s_tuple.data_, &v);
         }
         return success;
@@ -691,7 +691,7 @@ public:
             if (!c_tuple.in_memory_) {
                 FileDescriptor &c_disk = FileManager::GetInstance().GetDescriptor(c_tuple.id_thread_, 0);
                 c_disk.DiskTupleRead(&v, c_tuple.id_pos_);
-                stat.SwapTuple(c_tuple.data_.size(), "customer");
+                stat.SwapTuple(Size(v), "customer");
             } else customer_zstd->ZstdDecompress(c_tuple.data_, &v);
         }
         return success;
