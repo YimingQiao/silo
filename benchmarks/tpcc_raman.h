@@ -151,6 +151,7 @@ public:
         std::lock_guard <std::mutex> lock(mutex_);
         ALWAYS_ASSERT(compressors_.count(idx) == 0);
         compressors_[idx] = std::shared_ptr<RamanCompressor>(cpr);
+        dict_total_size_ += cpr->Size();
     }
 
     inline ALWAYS_INLINE RamanCompressor &GetCompressor(int64_t thread_id, int64_t cpr_id, int64_t tbl_id) {
@@ -164,16 +165,13 @@ public:
         return (((cpr_id << 3) + tbl_id) << 9) + thread_id;
     }
 
-    inline ALWAYS_INLINE int64_t GetSize() {
-        int64_t size = 0;
-        for (auto &cpr: compressors_) size += cpr.second->Size();
-        return size;
-    }
+    inline ALWAYS_INLINE int64_t GetSize() { return dict_total_size_; }
 
 private:
-    RamanDictionaryManager() {}  // private constructor so that it can't be called
+    RamanDictionaryManager() : dict_total_size_(0) {}  // private constructor so that it can't be called
     std::mutex mutex_;
     std::map <int64_t, std::shared_ptr<RamanCompressor>> compressors_;
+    size_t dict_total_size_;
 };
 
 template<typename T>
