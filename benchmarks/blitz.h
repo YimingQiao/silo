@@ -300,7 +300,7 @@ public:
         model_size_ = filesize(name_.c_str());
     }
 
-    size_t ModelSize() { return model_size_; }
+    inline ALWAYS_INLINE size_t ModelSize() { return model_size_; }
 
     // copy blitzcrank, this function is only called after training
     Blitzcrank *Copy() {
