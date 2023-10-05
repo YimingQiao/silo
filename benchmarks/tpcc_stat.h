@@ -11,6 +11,8 @@ public:
 
     explicit TPCCStat(uint64_t total_mem_limit) : total_mem_limit_(total_mem_limit) {}
 
+    uint64_t model_size = 0;
+
     uint64_t n_c_mem = 0;
     uint64_t n_c_disk = 0;
 
@@ -97,7 +99,7 @@ public:
     inline ALWAYS_INLINE void SwapTuple(uint64_t size, const std::string &table_name) {
         Insert(size, true, table_name);
 
-        while (total_mem_ + size > total_mem_limit_) {
+        while (total_mem_ + size + model_size > total_mem_limit_) {
             total_mem_ -= kPageSize;
             total_disk_ += kPageSize;
 
@@ -116,8 +118,10 @@ public:
     }
 
     inline ALWAYS_INLINE bool ToMemory(uint64_t size) const {
-        return total_mem_limit_ > total_mem_ + size;
+        return total_mem_limit_ > model_size + total_mem_ + size;
     }
+
+    inline ALWAYS_INLINE void InsertDictSize(uint64_t size) { model_size += size; }
 
     void Print(bool detailed = false) {
         if (detailed) {

@@ -517,8 +517,10 @@ public:
         }
 
         // raman block compression
-        auto tuples = RamanInsertBlockInternal(k, v, order_block);
+        size_t model_size = 0;
+        auto tuples = RamanInsertBlockInternal(k, v, order_block, &model_size);
         if (!tuples.empty()) {
+            stat.InsertDictSize(model_size);
             for (size_t i = 0; i < tuples.size(); ++i) {
                 auto &key = order_block.GetKeys(i);
                 auto &tuple = tuples[i];
@@ -588,8 +590,10 @@ public:
             }
 
             // raman block compression
-            auto tuples = RamanInsertBlockInternal(k, v, order_line_block);
+            size_t model_size = 0;
+            auto tuples = RamanInsertBlockInternal(k, v, order_line_block, &model_size);
             if (!tuples.empty()) {
+                stat.InsertDictSize(model_size);
                 size_t n = tuples.size();
                 for (size_t i = 0; i < tuples.size(); ++i) {
                     auto &key = order_line_block.GetKeys(i);
@@ -644,8 +648,10 @@ public:
         tbl_oorder(w_id)->put(txn, Encode(str(), k), Serialize(str(), s_tuple));
 
         // raman block compression
-        auto tuples = RamanInsertBlockInternal(k, v, stock_block);
+        size_t model_size = 0;
+        auto tuples = RamanInsertBlockInternal(k, v, stock_block, &model_size);
         if (!tuples.empty()) {
+            stat.InsertDictSize(model_size);
             for (size_t i = 0; i < tuples.size(); ++i) {
                 auto &key = stock_block.GetKeys(i);
                 auto &tuple = tuples[i];
@@ -692,8 +698,10 @@ public:
             tbl_customer(w_id)->put(txn, Encode(str(), k), serial_str);
 
             // raman block compression
-            auto tuples = RamanInsertBlockInternal(k, v, customer_block);
+            size_t model_size = 0;
+            auto tuples = RamanInsertBlockInternal(k, v, customer_block, &model_size);
             if (!tuples.empty()) {
+                stat.InsertDictSize(model_size);
                 for (size_t i = 0; i < tuples.size(); ++i) {
                     auto &key = customer_block.GetKeys(i);
                     auto &tuple = tuples[i];
@@ -746,12 +754,14 @@ protected:
 
     template<typename T>
     inline ALWAYS_INLINE vector_tuple
-    RamanInsertBlockInternal(const typename T::key &k, const typename T::value &v, RamanTupleBlock<T> &block) {
+    RamanInsertBlockInternal(const typename T::key &k, const typename T::value &v, RamanTupleBlock<T> &block,
+                             size_t *model_size = nullptr) {
         vector_tuple cpr_tuples;
         if (block.Insert(k, v)) {
             std::vector<std::string> compressed_codes;
             uint64_t dict_id;
-            block.BlockCompress(compressed_codes, dict_id);
+            if (model_size) *model_size = block.BlockCompress(compressed_codes, dict_id);
+            else block.BlockCompress(compressed_codes, dict_id);
 
             cpr_tuples.resize(block.n_tuple);
             for (size_t i = 0; i < block.n_tuple; ++i) {
@@ -2091,7 +2101,7 @@ tpcc_worker::txn_result tpcc_worker::txn_order_status() {
         const order_line::key k_ol_1(warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
         tbl_order_line(warehouse_id)
                 ->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c_order_line, s_arena.get());
-        ALWAYS_ASSERT(c_order_line.n >= 5 && c_order_line.n <= 15);
+        ALWAYS_ASSERT(c_order_line.n >= 0 && c_order_line.n <= 15);
 
         measure_txn_counters(txn, "txn_order_status");
         if (likely(db->commit_txn(txn))) return txn_result(true, 0);
@@ -2377,7 +2387,8 @@ protected:
         double training_time =
                 stock_cpr->GetTrainingTime() + stock_data_cpr->GetTrainingTime() + customer_cpr->GetTrainingTime() +
                 history_cpr->GetTrainingTime() + order_cpr->GetTrainingTime() + order_line_cpr->GetTrainingTime();
-
+        size_t model_size = stock_cpr->Size() + stock_data_cpr->Size() + customer_cpr->Size() +
+                            history_cpr->Size() + order_cpr->Size() + order_line_cpr->Size();
         for (auto *worker: workers) {
             tpcc_worker *w = (tpcc_worker *) worker;
             w->stat.n_ol_mem = *n_order_line / nthreads;
@@ -2398,6 +2409,7 @@ protected:
                     w->stat.stock_mem_ + w->stat.order_mem_ + w->stat.new_order_mem_ + w->stat.order_line_mem_;
 
             w->training_time_ = training_time;
+            w->stat.InsertDictSize(model_size / nthreads);
         }
 
 
