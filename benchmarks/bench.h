@@ -17,7 +17,7 @@
 #include "tpcc_random_generator.h"
 #include "disk_storage.h"
 
-static const uint64_t kTxnsInterval = 1e4;
+static const uint64_t kTxnsInterval = 1e4 / 20;
 static const uint64_t kNumDP = 1e5;
 static const uint64_t throughput_overhead = 0;
 
