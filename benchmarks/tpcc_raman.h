@@ -177,7 +177,7 @@ private:
 template<typename T>
 class RamanTupleBlock {
 public:
-    const size_t kBufferSize = 1024 * 256;
+    const size_t kBufferSize = 1024 * 64;
     const int32_t thread_id;
 
 public:

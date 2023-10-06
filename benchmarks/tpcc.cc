@@ -398,6 +398,8 @@ public:
     stock_data::value stock_data_buffer;
 
     double training_time_;
+    size_t order_insert_cnt = 0;
+    size_t order_line_insert_cnt = 0;
 
     // resp for [warehouse_id_start, warehouse_id_end)
     tpcc_worker(unsigned int worker_id, unsigned long seed, abstract_db *db,
@@ -512,25 +514,30 @@ public:
         o_tuple.Set(codes, true, -1, worker_id, -1, false);
         if (update) tbl_oorder(w_id)->put(txn, Encode(str(), k), Serialize(str(), o_tuple));
         else {
-            stat.Insert(codes.size(), true, "order");
             tbl_oorder(w_id)->insert(txn, Encode(str(), k), Serialize(str(), o_tuple));
-        }
+            order_insert_cnt++;
+            stat.Insert(codes.size(), true, "order");
 
-        // raman block compression
-        size_t model_size = 0;
-        auto tuples = RamanInsertBlockInternal(k, v, order_block, &model_size);
-        if (!tuples.empty()) {
-            stat.InsertDictSize(model_size);
-            for (size_t i = 0; i < tuples.size(); ++i) {
-                auto &key = order_block.GetKeys(i);
-                auto &tuple = tuples[i];
-                uint32_t w_id = GetWarehouseID(key);
-                tbl_oorder(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
-
-                if (i % 256 == 0) {
-                    db->commit_txn(txn);
-                    txn = db->new_txn(txn_flags, arena, txn_buf());
+            // raman block compression
+            size_t model_size = 0;
+            auto tuples = RamanInsertBlockInternal(k, v, order_block, &model_size);
+            if (!tuples.empty()) {
+                stat.InsertDictSize(model_size);
+                int64_t changed_size = 0;
+                for (size_t i = 0; i < tuples.size(); ++i) {
+                    auto &key = order_block.GetKeys(i);
+                    auto &tuple = tuples[i];
+                    uint32_t w_id = GetWarehouseID(key);
+                    tbl_oorder(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
+                    changed_size += tuple.data_.size();
+                    if (i % 256 == 0) {
+                        db->commit_txn(txn);
+                        txn = db->new_txn(txn_flags, arena, txn_buf());
+                    }
                 }
+                changed_size = changed_size * order_insert_cnt / tuples.size() - Size(v) * order_insert_cnt;
+                stat.order_mem_ += changed_size;
+                order_insert_cnt = 0;
             }
         }
 
@@ -585,25 +592,33 @@ public:
             std::string &serial_str = Serialize(str(), ol_tuple);
             if (update) tbl_order_line(w_id)->put(txn, Encode(str(), k), serial_str);
             else {
-                stat.Insert(codes.size(), true, "order_line");
                 tbl_order_line(w_id)->insert(txn, Encode(str(), k), serial_str);
-            }
+                stat.Insert(codes.size(), true, "order_line");
+                order_line_insert_cnt++;
 
-            // raman block compression
-            size_t model_size = 0;
-            auto tuples = RamanInsertBlockInternal(k, v, order_line_block, &model_size);
-            if (!tuples.empty()) {
-                stat.InsertDictSize(model_size);
-                size_t n = tuples.size();
-                for (size_t i = 0; i < tuples.size(); ++i) {
-                    auto &key = order_line_block.GetKeys(i);
-                    auto &tuple = tuples[i];
-                    uint32_t w_id = GetWarehouseID(key);
-                    tbl_order_line(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
-                    if (i % 256 == 0) {
-                        db->commit_txn(txn);
-                        txn = db->new_txn(txn_flags, arena, txn_buf());
+
+                // raman block compression
+                size_t model_size = 0;
+                auto tuples = RamanInsertBlockInternal(k, v, order_line_block, &model_size);
+                if (!tuples.empty()) {
+                    stat.InsertDictSize(model_size);
+                    int64_t changed_size = 0;
+                    for (size_t i = 0; i < tuples.size(); ++i) {
+                        auto &key = order_line_block.GetKeys(i);
+                        auto &tuple = tuples[i];
+                        uint32_t w_id = GetWarehouseID(key);
+                        tbl_order_line(w_id)->put(txn, Encode(key), Serialize(obj_v, tuple));
+                        changed_size += tuple.data_.size();
+                        if (i % 256 == 0) {
+                            db->commit_txn(txn);
+                            txn = db->new_txn(txn_flags, arena, txn_buf());
+                        }
                     }
+                    changed_size =
+                            changed_size * order_line_insert_cnt / tuples.size() - Size(v) * order_line_insert_cnt;
+                    stat.total_mem_ += changed_size;
+                    stat.order_line_mem_ += changed_size;
+                    order_line_insert_cnt = 0;
                 }
             }
 
